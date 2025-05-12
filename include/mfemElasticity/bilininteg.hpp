@@ -429,14 +429,52 @@ class DomainMatrixDeformationGradientIntegrator
 };
 
 /*
+BilinearFormIntegrator acting on a test symmetrix matrix field, v, and a trial
+vector field, u, according to:
+
+(v,u) \mapsto \frac{1}{2}\int_{\Omega} q v_{ij} (u_{i,j} + u_{j,i}) dx,
+
+where \Omega is the domain and q a scalar coefficient.
+
+The matrix field must be defined on a nodal finite element space formed from
+the product of a scalar space. The ordering of the matrix components corresponds
+to a dense matrix using column-major storage but storing only the lower
+triangle. The vector field must be defined on a nodel finite element space
+formed from the product of a scalar space for which the gradient operator is
+defined. The vector and matrix fields need to have compatible dimensions.
+*/
+class DomainSymmetricMatrixStrainIntegrator
+    : public mfem::BilinearFormIntegrator {};
+
+/*
+BilinearFormIntegrator acting on a test trace-free symmetrix matrix field, v,
+and a trial vector field, u, according to:
+
+(v,u) \mapsto \frac{1}{2}\int_{\Omega} q v_{ij} (u_{i,j} + u_{j,i} - (2/dim)
+u_{k,k}\delta_{ij}) dx,
+
+where \Omega is the domain and q a scalar coefficient.
+
+The matrix field must be defined on a nodal finite element space formed from
+the product of a scalar space. The ordering of the matrix components corresponds
+to a dense matrix using column-major storage but storing only the lower
+triangle and skipping the final elment. The vector field must be defined on a
+nodel finite element space formed from the product of a scalar space for which
+the gradient operator is defined. The vector and matrix fields need to have
+compatible dimensions.
+*/
+class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
+    : public mfem::BilinearFormIntegrator {};
+
+/*
 DiscreteInterpolator that acts on a vector field, u, to return the matrix
 field, v_{ij} = u_{i,j}. The matrix field components are stored using the
 column-major format.
 
-The vector field must be defined on a nodal finite element space formed from the
-product of a scalar space on which the gradient operator is defined. The matrix
-field must be defined on a nodal finite element space formed from the product of
-a scalar space.
+The vector field must be defined on a nodal finite element space formed
+from the product of a scalar space on which the gradient operator is
+defined. The matrix field must be defined on a nodal finite element space
+formed from the product of a scalar space.
 */
 class DeformationGradientInterpolator : public mfem::DiscreteInterpolator {
  private:
@@ -472,6 +510,26 @@ class StrainInterpolator : public mfem::DiscreteInterpolator {
 #endif
  public:
   StrainInterpolator() {}
+
+  void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
+                              const mfem::FiniteElement& out_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+};
+
+/*
+DiscreteInterpolator that maps a vector field, u, into trace-free symmetric
+matrix field, v, with components
+
+v_{ij} = (u_{i,j} + u_{j,i})/2 - (1/dim) * u_{k,k} \delta_ij
+
+*/
+class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape;
+#endif
+ public:
+  DeviatoricStrainInterpolator() {}
 
   void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
                               const mfem::FiniteElement& out_fe,

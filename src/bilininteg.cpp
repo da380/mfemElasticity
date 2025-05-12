@@ -464,4 +464,67 @@ void StrainInterpolator::AssembleElementMatrix2(
   }
 }
 
+void DeviatoricStrainInterpolator::AssembleElementMatrix2(
+    const mfem::FiniteElement& in_fe, const mfem::FiniteElement& out_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto dim = in_fe.GetDim();
+  auto in_dof = in_fe.GetDof();
+  auto out_dof = out_fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape();
+#endif
+  dshape.SetSize(in_dof, dim);
+  elmat.SetSize(dim * (dim + 1) * out_dof / 2 - 1, dim * in_dof);
+  elmat = 0.;
+
+  const auto& nodes = out_fe.GetNodes();
+  for (auto i = 0; i < out_dof; i++) {
+    const IntegrationPoint& ip = nodes.IntPoint(i);
+    Trans.SetIntPoint(&ip);
+    in_fe.CalcPhysDShape(Trans, dshape);
+
+    constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
+    constexpr auto third = static_cast<real_t>(1) / static_cast<real_t>(3);
+    constexpr auto twoThirds = static_cast<real_t>(2) / static_cast<real_t>(3);
+    if (dim == 2) {
+      for (auto j = 0; j < in_dof; j++) {
+        // d_{00} =   0.5 *(u_{0,0} - u_{1,1})
+        elmat(i, j) = half * dshape(j, 0);
+        elmat(i, j + in_dof) = -half * dshape(j, 1);
+
+        // d_{10} = 0.5 *(u_{1,0} + u_{0,1})
+        elmat(i + out_dof, j) = half * dshape(j, 1);
+        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
+      }
+    } else {
+      for (auto j = 0; j < in_dof; j++) {
+        // d_{00} =   (2/3) * u_{0,0} - (1/3) * (u_{1,1} + u_{2,2})
+        elmat(i, j) = twoThirds * dshape(j, 0);
+        elmat(i, j + in_dof) = -third * dshape(j, 1);
+        elmat(i, j + 2 * in_dof) = -third * dshape(j, 2);
+
+        // d_{10} = 0.5 *(u_{1,0} + u_{0,1})
+        elmat(i + out_dof, j) = half * dshape(j, 1);
+        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
+
+        // d_{20} = 0.5 *(u_{2,0} + u_{0,2})
+        elmat(i + 2 * out_dof, j) = half * dshape(j, 2);
+        elmat(i + 2 * out_dof, j + 2 * in_dof) = half * dshape(j, 0);
+
+        // d_{11} = (2/3) * u_{1,1} - (1/3) * (u_{0,0} + u_{2,2})
+        elmat(i + 3 * out_dof, j) = -third * dshape(j, 0);
+        elmat(i + 3 * out_dof, j + in_dof) = twoThirds * dshape(j, 1);
+        elmat(i + 3 * out_dof, j + 2 * in_dof) = -third * dshape(j, 2);
+
+        // d_{21} = 0.5 *(u_{2,1} + u_{1,2})
+        elmat(i + 4 * out_dof, j + in_dof) = half * dshape(j, 2);
+        elmat(i + 4 * out_dof, j + 2 * in_dof) = half * dshape(j, 1);
+      }
+    }
+  }
+}
+
 }  // namespace mfemElasticity
