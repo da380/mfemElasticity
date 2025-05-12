@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 
+#include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
 using namespace std;
