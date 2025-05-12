@@ -369,4 +369,99 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
   }
 }
 
+void DeformationGradientInterpolator::AssembleElementMatrix2(
+    const mfem::FiniteElement& in_fe, const mfem::FiniteElement& out_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto space_dim = in_fe.GetDim();
+  auto in_dof = in_fe.GetDof();
+  auto out_dof = out_fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape();
+#endif
+  dshape.SetSize(in_dof, space_dim);
+  elmat.SetSize(space_dim * space_dim * out_dof, space_dim * in_dof);
+  elmat = 0.;
+
+  const auto& nodes = out_fe.GetNodes();
+  for (auto i = 0; i < out_dof; i++) {
+    const auto& ip = nodes.IntPoint(i);
+    Trans.SetIntPoint(&ip);
+    in_fe.CalcPhysDShape(Trans, dshape);
+    for (auto q = 0; q < space_dim; q++) {
+      for (auto j = 0; j < in_dof; j++) {
+        for (auto p = 0; p < space_dim; p++) {
+          elmat(i + out_dof * (p + q * space_dim), j + in_dof * p) =
+              dshape(j, q);
+        }
+      }
+    }
+  }
+}
+
+void StrainInterpolator::AssembleElementMatrix2(
+    const mfem::FiniteElement& in_fe, const mfem::FiniteElement& out_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto space_dim = in_fe.GetDim();
+  auto in_dof = in_fe.GetDof();
+  auto out_dof = out_fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape();
+#endif
+  dshape.SetSize(in_dof, space_dim);
+  elmat.SetSize(space_dim * (space_dim + 1) * out_dof / 2, space_dim * in_dof);
+  elmat = 0.;
+
+  const auto& nodes = out_fe.GetNodes();
+  for (auto i = 0; i < out_dof; i++) {
+    const IntegrationPoint& ip = nodes.IntPoint(i);
+    Trans.SetIntPoint(&ip);
+    in_fe.CalcPhysDShape(Trans, dshape);
+
+    constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
+
+    if (space_dim == 2) {
+      for (auto j = 0; j < in_dof; j++) {
+        // e_{00} = u_{0,0}
+        elmat(i, j) = dshape(j, 0);
+
+        // e_{10} = 0.5 * (u_{0,1} + u_{1,0})
+        elmat(i + out_dof, j) = half * dshape(j, 1);
+        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
+
+        // e_{11} = u_{1,1}
+        elmat(i + 2 * out_dof, j + in_dof) = dshape(j, 1);
+      }
+    } else {
+      for (auto j = 0; j < in_dof; j++) {
+        // e_{00} = u_{0,0}
+        elmat(i, j) = dshape(j, 0);
+
+        // e_{10} = 0.5 * (u_{0,1} + u_{1,0})
+        elmat(i + out_dof, j) = half * dshape(j, 1);
+        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
+
+        // e_{20} = 0.5 * (u_{0,2} + u_{2,0})
+        elmat(i + 2 * out_dof, j) = 0.5 * dshape(j, 2);
+        elmat(i + 2 * out_dof, j + 2 * in_dof) = 0.5 * dshape(j, 0);
+
+        // e_{11} = u_{1,1}
+        elmat(i + 3 * out_dof, j + in_dof) = dshape(j, 1);
+
+        // e_{21} = 0.5 *( (u_{1,2} + u_{2,1})
+        elmat(i + 4 * out_dof, j + in_dof) = 0.5 * dshape(j, 2);
+        elmat(i + 4 * out_dof, j + 2 * in_dof) = 0.5 * dshape(j, 1);
+
+        // e_{22} = u_{2,2}
+        elmat(i + 5 * out_dof, j + 2 * in_dof) = dshape(j, 2);
+      }
+    }
+  }
+}
+
 }  // namespace mfemElasticity

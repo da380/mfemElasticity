@@ -428,4 +428,55 @@ class DomainMatrixDeformationGradientIntegrator
   }
 };
 
+/*
+DiscreteInterpolator that acts on a vector field, u, to return the matrix
+field, v_{ij} = u_{i,j}. The matrix field components are stored using the
+column-major format.
+
+The vector field must be defined on a nodal finite element space formed from the
+product of a scalar space on which the gradient operator is defined. The matrix
+field must be defined on a nodal finite element space formed from the product of
+a scalar space.
+*/
+class DeformationGradientInterpolator : public mfem::DiscreteInterpolator {
+ private:
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape;
+#endif
+
+ public:
+  DeformationGradientInterpolator() {}
+
+  void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
+                              const mfem::FiniteElement& out_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+};
+
+/*
+DiscreteInterpolator that acts on a vector field, u, to return the symmetric
+matrix field, v_{ij} = (u_{i,j} + u_{j,i})/2. The matrix field components are
+stored in the column-major format but only keeping elements in the lower
+triangle. In 3D spaces this means: the ordering:
+
+v_{00}, v_{10}, v_{20}, v_{11}, v_{21}, v_{22}
+
+while in 2D we have
+
+v_{00}, v_{10}, v_{11}
+*/
+class StrainInterpolator : public mfem::DiscreteInterpolator {
+ private:
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape;
+#endif
+ public:
+  StrainInterpolator() {}
+
+  void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
+                              const mfem::FiniteElement& out_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+};
+
 }  // namespace mfemElasticity
