@@ -359,12 +359,12 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
       w *= Q->Eval(Trans, ip);
     }
 
-    for (auto j = 0; j < space_dim; j++) {
-      auto trial_dshape_column = Vector(trial_dshape.GetColumn(j), trial_dof);
+    auto index = MatrixIndex(space_dim);
+    for (auto k = 0; k < space_dim; k++) {
+      auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
       MultVWt(test_shape, trial_dshape_column, partElmat);
-      for (auto k = 0; k < space_dim; k++) {
-        elmat.AddMatrix(w, partElmat, test_dof * (k + space_dim * j),
-                        trial_dof * k);
+      for (auto j = 0; j < space_dim; j++) {
+        elmat.AddMatrix(w, partElmat, index(j, k) * test_dof, j * trial_dof);
       }
     }
   }
@@ -413,15 +413,62 @@ void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
     trial_fe.CalcPhysDShape(Trans, trial_dshape);
     test_fe.CalcShape(ip, test_shape);
 
-    auto it = space_dim == 2 ? index2.begin() : index3.begin();
+    auto index = SymmetricMatrixIndex(space_dim);
     for (auto k = 0; k < space_dim; k++) {
       auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
       MultVWt(test_shape, trial_dshape_column, partElmat);
-
       for (auto j = 0; j < space_dim; j++) {
-        elmat.AddMatrix(w, partElmat, *it++ * test_dof, trial_dof * k);
+        elmat.AddMatrix(w, partElmat, index(j, k) * test_dof, j * trial_dof);
       }
     }
+  }
+}
+
+const mfem::IntegrationRule&
+DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order =
+      trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW() - 1;
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
+    AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                           const mfem::FiniteElement& test_fe,
+                           mfem::ElementTransformation& Trans,
+                           mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto space_dim = Trans.GetSpaceDim();
+  auto trial_dof = trial_fe.GetDof();
+  auto test_dof = test_fe.GetDof();
+
+  auto strain_dim = space_dim * (space_dim + 1) / 2;
+  elmat.SetSize(strain_dim * trial_dof, space_dim * test_dof);
+  elmat = 0.;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector test_shape();
+  DenseMatrix trial_dshape(), partElmat();
+#endif
+  test_shape.SetSize(test_dof);
+  trial_dshape.SetSize(trial_dof, space_dim);
+  partElmat.SetSize(test_dof, trial_dof);
+
+  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  for (auto i = 0; i < ir->GetNPoints(); i++) {
+    const auto& ip = ir->IntPoint(i);
+    Trans.SetIntPoint(&ip);
+    auto w = Trans.Weight() * ip.weight;
+
+    if (Q) {
+      w *= Q->Eval(Trans, ip);
+    }
+
+    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    test_fe.CalcShape(ip, test_shape);
   }
 }
 
@@ -442,15 +489,15 @@ void DeformationGradientInterpolator::AssembleElementMatrix2(
   elmat = 0.;
 
   const auto& nodes = out_fe.GetNodes();
+  auto index = MatrixIndex(space_dim);
   for (auto i = 0; i < out_dof; i++) {
     const auto& ip = nodes.IntPoint(i);
     Trans.SetIntPoint(&ip);
     in_fe.CalcPhysDShape(Trans, dshape);
-    for (auto q = 0; q < space_dim; q++) {
+    for (auto l = 0; l < space_dim; l++) {
       for (auto j = 0; j < in_dof; j++) {
-        for (auto p = 0; p < space_dim; p++) {
-          elmat(i + out_dof * (p + q * space_dim), j + in_dof * p) =
-              dshape(j, q);
+        for (auto k = 0; k < space_dim; k++) {
+          elmat(i + index(k, l) * out_dof, j + k * in_dof) = dshape(j, l);
         }
       }
     }
@@ -473,48 +520,22 @@ void StrainInterpolator::AssembleElementMatrix2(
   elmat.SetSize(space_dim * (space_dim + 1) * out_dof / 2, space_dim * in_dof);
   elmat = 0.;
 
+  constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
   const auto& nodes = out_fe.GetNodes();
+  auto index = SymmetricMatrixIndex(space_dim);
   for (auto i = 0; i < out_dof; i++) {
     const IntegrationPoint& ip = nodes.IntPoint(i);
     Trans.SetIntPoint(&ip);
     in_fe.CalcPhysDShape(Trans, dshape);
 
-    constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
-
-    if (space_dim == 2) {
+    for (auto l = 0; l < space_dim; l++) {
       for (auto j = 0; j < in_dof; j++) {
-        // e_{00} = u_{0,0}
-        elmat(i, j) = dshape(j, 0);
-
-        // e_{10} = 0.5 * (u_{0,1} + u_{1,0})
-        elmat(i + out_dof, j) = half * dshape(j, 1);
-        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
-
-        // e_{11} = u_{1,1}
-        elmat(i + 2 * out_dof, j + in_dof) = dshape(j, 1);
-      }
-    } else {
-      for (auto j = 0; j < in_dof; j++) {
-        // e_{00} = u_{0,0}
-        elmat(i, j) = dshape(j, 0);
-
-        // e_{10} = 0.5 * (u_{0,1} + u_{1,0})
-        elmat(i + out_dof, j) = half * dshape(j, 1);
-        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
-
-        // e_{20} = 0.5 * (u_{0,2} + u_{2,0})
-        elmat(i + 2 * out_dof, j) = 0.5 * dshape(j, 2);
-        elmat(i + 2 * out_dof, j + 2 * in_dof) = 0.5 * dshape(j, 0);
-
-        // e_{11} = u_{1,1}
-        elmat(i + 3 * out_dof, j + in_dof) = dshape(j, 1);
-
-        // e_{21} = 0.5 *( (u_{1,2} + u_{2,1})
-        elmat(i + 4 * out_dof, j + in_dof) = 0.5 * dshape(j, 2);
-        elmat(i + 4 * out_dof, j + 2 * in_dof) = 0.5 * dshape(j, 1);
-
-        // e_{22} = u_{2,2}
-        elmat(i + 5 * out_dof, j + 2 * in_dof) = dshape(j, 2);
+        for (auto k = l; k < space_dim; k++) {
+          elmat(i + index(k, l) * out_dof, j + k * in_dof) =
+              half * dshape(j, l);
+          elmat(i + index(k, l) * out_dof, j + l * in_dof) =
+              half * dshape(j, k);
+        }
       }
     }
   }
@@ -525,59 +546,37 @@ void DeviatoricStrainInterpolator::AssembleElementMatrix2(
     mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
   using namespace mfem;
 
-  auto dim = in_fe.GetDim();
+  auto space_dim = in_fe.GetDim();
   auto in_dof = in_fe.GetDof();
   auto out_dof = out_fe.GetDof();
 
 #ifdef MFEM_THREAD_SAFE
   DenseMatrix dshape();
 #endif
-  dshape.SetSize(in_dof, dim);
-  elmat.SetSize(dim * (dim + 1) * out_dof / 2 - 1, dim * in_dof);
+  dshape.SetSize(in_dof, space_dim);
+  elmat.SetSize((space_dim * (space_dim + 1) / 2 - 1) * out_dof,
+                space_dim * in_dof);
   elmat = 0.;
 
+  constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
+  constexpr auto third = static_cast<real_t>(1) / static_cast<real_t>(3);
+  constexpr auto twoThirds = static_cast<real_t>(2) / static_cast<real_t>(3);
+
   const auto& nodes = out_fe.GetNodes();
+  auto index = SymmetricMatrixIndex(space_dim);
   for (auto i = 0; i < out_dof; i++) {
     const IntegrationPoint& ip = nodes.IntPoint(i);
     Trans.SetIntPoint(&ip);
     in_fe.CalcPhysDShape(Trans, dshape);
 
-    constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
-    constexpr auto third = static_cast<real_t>(1) / static_cast<real_t>(3);
-    constexpr auto twoThirds = static_cast<real_t>(2) / static_cast<real_t>(3);
-    if (dim == 2) {
+    for (auto l = 0; l < space_dim - 1; l++) {
       for (auto j = 0; j < in_dof; j++) {
-        // d_{00} =   0.5 *(u_{0,0} - u_{1,1})
-        elmat(i, j) = half * dshape(j, 0);
-        elmat(i, j + in_dof) = -half * dshape(j, 1);
-
-        // d_{10} = 0.5 *(u_{1,0} + u_{0,1})
-        elmat(i + out_dof, j) = half * dshape(j, 1);
-        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
-      }
-    } else {
-      for (auto j = 0; j < in_dof; j++) {
-        // d_{00} =   (2/3) * u_{0,0} - (1/3) * (u_{1,1} + u_{2,2})
-        elmat(i, j) = twoThirds * dshape(j, 0);
-        elmat(i, j + in_dof) = -third * dshape(j, 1);
-        elmat(i, j + 2 * in_dof) = -third * dshape(j, 2);
-
-        // d_{10} = 0.5 *(u_{1,0} + u_{0,1})
-        elmat(i + out_dof, j) = half * dshape(j, 1);
-        elmat(i + out_dof, j + in_dof) = half * dshape(j, 0);
-
-        // d_{20} = 0.5 *(u_{2,0} + u_{0,2})
-        elmat(i + 2 * out_dof, j) = half * dshape(j, 2);
-        elmat(i + 2 * out_dof, j + 2 * in_dof) = half * dshape(j, 0);
-
-        // d_{11} = (2/3) * u_{1,1} - (1/3) * (u_{0,0} + u_{2,2})
-        elmat(i + 3 * out_dof, j) = -third * dshape(j, 0);
-        elmat(i + 3 * out_dof, j + in_dof) = twoThirds * dshape(j, 1);
-        elmat(i + 3 * out_dof, j + 2 * in_dof) = -third * dshape(j, 2);
-
-        // d_{21} = 0.5 *(u_{2,1} + u_{1,2})
-        elmat(i + 4 * out_dof, j + in_dof) = half * dshape(j, 2);
-        elmat(i + 4 * out_dof, j + 2 * in_dof) = half * dshape(j, 1);
+        for (auto k = l; k < space_dim; k++) {
+          elmat(i + index(k, l) * out_dof, j + k * in_dof) =
+              half * dshape(j, l);
+          elmat(i + index(k, l) * out_dof, j + l * in_dof) =
+              half * dshape(j, k);
+        }
       }
     }
   }

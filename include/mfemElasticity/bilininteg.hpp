@@ -362,6 +362,39 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
   }
 };
 
+// Class for indexing matrix fields
+class MatrixIndex {
+ private:
+  int _dim;
+
+ public:
+  MatrixIndex(int dim) : _dim{dim} {}
+
+  // Returns the index of the (j,k)th element based on the
+  // column-major format.
+  int operator()(int j, int k) { return j + _dim * k; }
+};
+
+// Class for indexing symmetric matrix fields.
+class SymmetricMatrixIndex {
+ private:
+  int _dim;
+
+ public:
+  SymmetricMatrixIndex(int dim) : _dim{dim} {}
+
+  // Returns the index of the (j,k)th element based on
+  // the column-major format and storing only values in
+  // the lower triangle.
+  int operator()(int j, int k) {
+    if (j < k) {
+      return operator()(k, j);
+    } else {
+      return j + k * _dim - k * (k + 1) / 2;
+    }
+  }
+};
+
 /*
 BilinearFormIntegrator acting on a test matrix field, v, and a trial
 vector field, u, according to:
@@ -371,11 +404,12 @@ vector field, u, according to:
 where \Omega is the domain and q a scalar coefficient.
 
 The matrix field must be defined on a nodal finite element space formed from
-the product of a scalar space. The ordering of the matrix components corresponds
-to a dense matrix using column-major storage (i.e., v_{00}, v_{10}, v_{20},
-v_{01}, ...). The vector field must be defined on a nodel finite element space
-formed from the product of a scalar space for which the gradient operator is
-defined. The vector and matrix fields need to have compatible dimensions.
+the product of a scalar space. The ordering of the matrix components
+corresponds to a dense matrix using column-major storage (i.e., v_{00},
+v_{10}, v_{20}, v_{01}, ...). The vector field must be defined on a nodel
+finite element space formed from the product of a scalar space for which the
+gradient operator is defined. The vector and matrix fields need to have
+compatible dimensions.
 */
 class DomainMatrixDeformationGradientIntegrator
     : public mfem::BilinearFormIntegrator {
@@ -511,7 +545,52 @@ the gradient operator is defined. The vector and matrix fields need to have
 compatible dimensions.
 */
 class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
-    : public mfem::BilinearFormIntegrator {};
+    : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* Q;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector test_shape;
+  mfem::DenseMatrix partElmat, trial_dshape;
+#endif
+
+  static constexpr std::array<int, 3> index2 = {0, 1, 1};
+  static constexpr std::array<int, 8> index3 = {0, 1, 2, 1, 3, 4, 3, 4};
+
+ public:
+  DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator(
+      const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir) {}
+
+  DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator(
+      mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /*
+  Set the default integration rule. The orders of the trial space, test space,
+  and element transformation are taken into account, with one order removed to
+  account for the spatial derivative. Variations in the coefficients are
+  not considered.
+  */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  /*
+  Implementation of element-level calculations.
+  */
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+
+ protected:
+  const mfem::IntegrationRule* GetDefaultIntegrationRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& trans) const override {
+    return &GetRule(trial_fe, test_fe, trans);
+  }
+};
 
 /*
 DiscreteInterpolator that acts on a vector field, u, to return the matrix

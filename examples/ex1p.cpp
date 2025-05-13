@@ -76,7 +76,7 @@ int main(int argc, char* argv[]) {
   auto f = FunctionCoefficient([dim](const Vector& x) {
     auto x0 = Vector(dim);
     if (dim == 2) {
-      x0[0] = 1;
+      x0[0] = 2;
       x0[1] = 0;
     } else {
       x0[0] = 0;
