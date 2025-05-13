@@ -1,3 +1,4 @@
+
 #include "mfemElasticity/bilininteg.hpp"
 
 namespace mfemElasticity {
@@ -364,6 +365,61 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
       for (auto k = 0; k < space_dim; k++) {
         elmat.AddMatrix(w, partElmat, test_dof * (k + space_dim * j),
                         trial_dof * k);
+      }
+    }
+  }
+}
+
+const mfem::IntegrationRule& DomainSymmetricMatrixStrainIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order =
+      trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW() - 1;
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto space_dim = Trans.GetSpaceDim();
+  auto trial_dof = trial_fe.GetDof();
+  auto test_dof = test_fe.GetDof();
+
+  auto strain_dim = space_dim * (space_dim + 1) / 2;
+  elmat.SetSize(strain_dim * trial_dof, space_dim * test_dof);
+  elmat = 0.;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector test_shape();
+  DenseMatrix trial_dshape(), partElmat();
+#endif
+  test_shape.SetSize(test_dof);
+  trial_dshape.SetSize(trial_dof, space_dim);
+  partElmat.SetSize(test_dof, trial_dof);
+
+  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  for (auto i = 0; i < ir->GetNPoints(); i++) {
+    const auto& ip = ir->IntPoint(i);
+    Trans.SetIntPoint(&ip);
+    auto w = Trans.Weight() * ip.weight;
+
+    if (Q) {
+      w *= Q->Eval(Trans, ip);
+    }
+
+    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    test_fe.CalcShape(ip, test_shape);
+
+    auto it = space_dim == 2 ? index2.begin() : index3.begin();
+    for (auto k = 0; k < space_dim; k++) {
+      auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
+      MultVWt(test_shape, trial_dshape_column, partElmat);
+
+      for (auto j = 0; j < space_dim; j++) {
+        elmat.AddMatrix(w, partElmat, *it++ * test_dof, trial_dof * k);
       }
     }
   }

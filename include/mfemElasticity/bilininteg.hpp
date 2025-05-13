@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "mfem.hpp"
 
 namespace mfemElasticity {
@@ -444,7 +446,52 @@ formed from the product of a scalar space for which the gradient operator is
 defined. The vector and matrix fields need to have compatible dimensions.
 */
 class DomainSymmetricMatrixStrainIntegrator
-    : public mfem::BilinearFormIntegrator {};
+    : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* Q;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector test_shape;
+  mfem::DenseMatrix partElmat, trial_dshape;
+#endif
+
+  static constexpr std::array<int, 4> index2 = {0, 1, 1, 2};
+  static constexpr std::array<int, 9> index3 = {0, 1, 2, 1, 3, 4, 3, 4, 5};
+
+ public:
+  DomainSymmetricMatrixStrainIntegrator(
+      const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir) {}
+
+  DomainSymmetricMatrixStrainIntegrator(
+      mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /*
+  Set the default integration rule. The orders of the trial space, test space,
+  and element transformation are taken into account, with one order removed to
+  account for the spatial derivative. Variations in the coefficients are
+  not considered.
+  */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  /*
+  Implementation of element-level calculations.
+  */
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+
+ protected:
+  const mfem::IntegrationRule* GetDefaultIntegrationRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& trans) const override {
+    return &GetRule(trial_fe, test_fe, trans);
+  }
+};
 
 /*
 BilinearFormIntegrator acting on a test trace-free symmetrix matrix field, v,
