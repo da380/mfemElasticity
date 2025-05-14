@@ -1,0 +1,5 @@
+if(EXISTS "/home/david/dev/mfemElasticity/parallel_build/tests/Test1[1]_tests.cmake")
+  include("/home/david/dev/mfemElasticity/parallel_build/tests/Test1[1]_tests.cmake")
+else()
+  add_test(Test1_NOT_BUILT Test1_NOT_BUILT)
+endif()
