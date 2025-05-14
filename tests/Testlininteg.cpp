@@ -60,6 +60,7 @@ TEST_P(linintegTest, TestTupleElements) {
   auto value1 = b(x);
 
   // Define scalar finite element space.
+
   auto L2 = L2_FECollection(order, dim);
   auto scalarFES = FiniteElementSpace(&mesh, &L2);
 
