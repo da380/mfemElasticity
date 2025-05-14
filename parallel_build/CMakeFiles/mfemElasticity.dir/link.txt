@@ -1,2 +1,0 @@
-/usr/bin/ar qc libmfemElasticity.a CMakeFiles/mfemElasticity.dir/src/solvers.cpp.o CMakeFiles/mfemElasticity.dir/src/bilininteg.cpp.o CMakeFiles/mfemElasticity.dir/src/lininteg.cpp.o
-/usr/bin/ranlib libmfemElasticity.a

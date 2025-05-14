@@ -1,1 +1,0 @@
-/usr/bin/c++ CMakeFiles/ex2.dir/ex2.cpp.o -o ex2  ../libmfemElasticity.a /home/david/dev/mfem_serial_build/libmfem.a

@@ -1,5 +1,0 @@
-if(EXISTS "/home/david/dev/mfemElasticity/serial_build/tests/Testlininteg[1]_tests.cmake")
-  include("/home/david/dev/mfemElasticity/serial_build/tests/Testlininteg[1]_tests.cmake")
-else()
-  add_test(Testlininteg_NOT_BUILT Testlininteg_NOT_BUILT)
-endif()
