@@ -6,6 +6,92 @@
 
 namespace mfemElasticity {
 
+// Base class for indexing vector, matrix and tensor fields.
+class Index {
+ private:
+  int _dim;
+  int _dof;
+
+ public:
+  Index(int dim, int dof) : _dim{dim}, _dof{dof} {}
+
+  // Return dimension
+  int Dim() const { return _dim; }
+
+  // Return degrees of freedom
+  int Dof() const { return _dof; }
+
+  // Return the number of components
+  virtual int ComponentSize() const = 0;
+
+  // Return the size of the field.
+  int Size() const { return _dof * ComponentSize(); }
+};
+
+// Class for indexing vector fields.
+class VectorIndex : public Index {
+ public:
+  VectorIndex(int dim, int dof) : Index(dim, dof) {}
+
+  // Returns the offset to the jth block.
+  int Offset(int j) const { return j * Dof(); }
+
+  // Returns the index of the jth component and the ith node.
+  int operator()(int i, int j) const { return i + Offset(j); }
+
+  int ComponentSize() const override { return Dim(); }
+};
+
+// Class for indexing matrix fields
+class MatrixIndex : public Index {
+ public:
+  MatrixIndex(int dim, int dof) : Index(dim, dof) {}
+
+  virtual int ComponentOffset(int j, int k) const { return j + Dim() * k; }
+
+  // Offset to (j,k)th block.
+  int Offset(int j, int k) const { return ComponentOffset(j, k) * Dof(); }
+
+  // Index for (j,k)th componet at ith node.
+  int operator()(int i, int j, int k) const { return i + Offset(j, k); }
+
+  // Return the component size.
+  int ComponentSize() const override { return Dim() * Dim(); }
+};
+
+// Class for indexing symmetric matrix fields.
+class SymmetricMatrixIndex : public MatrixIndex {
+ public:
+  SymmetricMatrixIndex(int dim, int dof) : MatrixIndex(dim, dof) {}
+
+  // Returns the offset for the (j,k)th block.
+  int ComponentOffset(int j, int k) const override {
+    if (j < k) {
+      return Offset(k, j);
+    } else {
+      return (j + k * Dim() - k * (k + 1) / 2);
+    }
+  }
+
+  // Return size of the matrix field.
+  int ComponentSize() const override { return Dim() * (Dim() + 1) / 2; }
+};
+
+// Class for indexing trace-free symmetric matrices. Note that the indexing
+// here is identical to that for symmetric matrices except for the final
+// diagonal element being removed. This is not checked for in calls
+// to the indexing or offset functions.
+class TraceFreeSymmetricMatrixIndex : public SymmetricMatrixIndex {
+ public:
+  TraceFreeSymmetricMatrixIndex(int dim, int dof)
+      : SymmetricMatrixIndex(dim, dof) {}
+
+  // Return size of the matrix field.
+  int ComponentSize() const override {
+    return SymmetricMatrixIndex::ComponentSize() - 1;
+  }
+};
+
 /*
 BilinearformIntegrator that acts on a test vector field, v, and a trial
 scalar field, u, according to:
@@ -359,39 +445,6 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
     return &GetRule(trial_fe, test_fe, trans);
-  }
-};
-
-// Class for indexing matrix fields
-class MatrixIndex {
- private:
-  int _dim;
-
- public:
-  MatrixIndex(int dim) : _dim{dim} {}
-
-  // Returns the index of the (j,k)th element based on the
-  // column-major format.
-  int operator()(int j, int k) { return j + _dim * k; }
-};
-
-// Class for indexing symmetric matrix fields.
-class SymmetricMatrixIndex {
- private:
-  int _dim;
-
- public:
-  SymmetricMatrixIndex(int dim) : _dim{dim} {}
-
-  // Returns the index of the (j,k)th element based on
-  // the column-major format and storing only values in
-  // the lower triangle.
-  int operator()(int j, int k) {
-    if (j < k) {
-      return operator()(k, j);
-    } else {
-      return j + k * _dim - k * (k + 1) / 2;
-    }
   }
 };
 
