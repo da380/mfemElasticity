@@ -155,13 +155,13 @@ TEST_P(InterpolatorTest, DeviatoricStrainInterpolator) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , InterpolatorTest,
-    ::testing::Values(std::make_tuple("../data/star.mesh", 0),
-                      std::make_tuple("../data/star.mesh", 1),
-                      std::make_tuple("../data/fichera.mesh", 0),
+    bilininteg, InterpolatorTest,
+    ::testing::Values(std::make_tuple("../data/star.mesh", 1),
+                      std::make_tuple("../data/star.mesh", 2),
                       std::make_tuple("../data/fichera.mesh", 1),
-                      std::make_tuple("../data/beam-tet.mesh", 0),
-                      std::make_tuple("../data/beam-tet.mesh", 1)));
+                      std::make_tuple("../data/fichera.mesh", 2),
+                      std::make_tuple("../data/beam-tet.mesh", 1),
+                      std::make_tuple("../data/beam-tet.mesh", 2)));
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

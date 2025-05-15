@@ -2,7 +2,7 @@
 #include <cmath>
 #include <fstream>
 #include <iostream>
-#include <stack>
+#include <random>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
@@ -13,7 +13,7 @@ using namespace std;
 int main(int argc, char* argv[]) {
   // Parse command-line options.
   auto mesh_file = std::string("../data/star.mesh");
-  int order = 0;
+  int order = 1;
 
   auto args = mfem::OptionsParser(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -28,7 +28,7 @@ int main(int argc, char* argv[]) {
   args.PrintOptions(std::cout);
 
   // Read the mesh from the given mesh file.
-  auto mesh = mfem::Mesh(mesh_file, 1, 1);
+  auto mesh = Mesh(mesh_file, 1, 1);
 
   auto dim = mesh.Dimension();
   {
@@ -41,17 +41,24 @@ int main(int argc, char* argv[]) {
   auto L2 = L2_FECollection(order, dim);
   auto H1 = H1_FECollection(order + 1, dim);
 
-  auto scalar_fes = FiniteElementSpace(&mesh, &L2);
-  auto vector_fes = FiniteElementSpace(&mesh, &H1, dim);
+  auto scalar_fes = FiniteElementSpace(&mesh, &H1);
+  auto vector_fes = FiniteElementSpace(&mesh, &L2, dim);
 
-  auto qv = mfem::VectorFunctionCoefficient(
-      dim, [](const mfem::Vector& x, mfem::Vector& y) {
-        y.SetSize(x.Size());
-        y = x;
-      });
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::normal_distribution<> distrib(0, 1);
+
+  auto A = DenseMatrix(dim);
+  for (auto j = 0; j < dim; j++) {
+    for (auto i = 0; i < dim; i++) {
+      A(i, j) = distrib(gen);
+    }
+  }
+  auto qm = MatrixConstantCoefficient(A);
 
   auto b = mfem::MixedBilinearForm(&scalar_fes, &vector_fes);
-  b.AddDomainIntegrator(new mfemElasticity::DomainVectorScalarIntegrator(qv));
+  b.AddDomainIntegrator(
+      new mfemElasticity::DomainVectorGradScalarIntegrator(qm));
   b.Assemble();
 
   auto u = mfem::GridFunction(&scalar_fes);
@@ -68,23 +75,16 @@ int main(int argc, char* argv[]) {
   v.ProjectCoefficient(vF);
 
   auto w = mfem::GridFunction(&vector_fes);
-
   b.Mult(u, w);
 
   cout << v * w << endl;
 
-  /*
-  auto kappa = mfem::ConstantCoefficient(dim);
+  auto qmt = TransposeMatrixCoefficient(qm);
+  auto zF = MatrixVectorProductCoefficient(qmt, vF);
+
   auto l = mfem::LinearForm(&scalar_fes);
-  l.AddDomainIntegrator(new mfem::DomainLFIntegrator(kappa));
+  l.AddDomainIntegrator(new mfem::DomainLFGradIntegrator(zF));
   l.Assemble();
+
   cout << l * u << endl;
-  */
-
-  auto rv = ScalarVectorProductCoefficient(uF, qv);
-  auto l = LinearForm(&vector_fes);
-  l.AddDomainIntegrator(new VectorDomainLFIntegrator(rv));
-  l.Assemble();
-
-  cout << l * v << endl;
 }

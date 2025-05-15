@@ -79,17 +79,12 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
   elmat = 0.;
 
 #ifdef MFEM_THREAD_SAFE
-  auto test_shape = Vector(test_dof);
-  auto trial_dshape = DenseMatrix(trial_dof, space_dim);
-  auto partElmat = DenseMatrix(test_dof, trial_dof);
-  auto qm = DenseMatrix();
-  auto tm = DenseMatrix();
-  auto qv = Vector();
-#else
+  Vector test_shape, qv;
+  DenseMatrix trial_dshape, partElmat, qm, tm;
+#endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
   partElmat.SetSize(test_dof, trial_dof);
-#endif
 
   if (QM) {
     qm.SetSize(space_dim);
@@ -122,7 +117,7 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
       for (auto j = 0; j < space_dim; j++) {
         auto trial_dshape_column = Vector(trial_dshape.GetColumn(j), trial_dof);
         MultVWt(test_shape, trial_dshape_column, partElmat);
-        elmat.AddMatrix(w, partElmat, j * test_dof, 0);
+        elmat.AddMatrix(w * qv(j), partElmat, j * test_dof, 0);
       }
     } else {
       if (Q) {
