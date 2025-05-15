@@ -11,3 +11,7 @@ include(GoogleTest)
 add_executable(Testlininteg Testlininteg.cpp)
 target_link_libraries(Testlininteg PRIVATE  mfemElasticity gtest_main)
 gtest_discover_tests(Testlininteg)
+
+add_executable(Testbilininteg Testbilininteg.cpp)
+target_link_libraries(Testbilininteg PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(Testbilininteg)

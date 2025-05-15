@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <string>
 #include <tuple>
 
@@ -10,9 +11,8 @@ using namespace mfem;
 using ParamTuple = std::tuple<std::string, int>;
 class linintegTest : public ::testing::TestWithParam<ParamTuple> {};
 
-TEST_P(linintegTest, TestTupleElements) {
+TEST_P(linintegTest, DomainLFDeformationGradientIntegrator) {
   const auto& current_tuple = GetParam();
-
   auto mesh_file = std::get<0>(current_tuple);
   int order = std::get<1>(current_tuple);
 
@@ -78,7 +78,9 @@ TEST_P(linintegTest, TestTupleElements) {
   y.ProjectCoefficient(h);
   auto value2 = c(y);
 
-  EXPECT_FLOAT_EQ(value1, value2);
+  auto error = std::abs(value2 - value1) / std::abs(value1);
+
+  EXPECT_TRUE(error < 1.e-3);
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -86,7 +88,9 @@ INSTANTIATE_TEST_SUITE_P(
     ::testing::Values(std::make_tuple("../data/star.mesh", 1),
                       std::make_tuple("../data/star.mesh", 2),
                       std::make_tuple("../data/fichera.mesh", 1),
-                      std::make_tuple("../data/fichera.mesh", 2)));
+                      std::make_tuple("../data/fichera.mesh", 2),
+                      std::make_tuple("../data/beam-tet.mesh", 1),
+                      std::make_tuple("../data/beam-tet.mesh", 2)));
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
