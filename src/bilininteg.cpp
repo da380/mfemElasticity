@@ -1,6 +1,7 @@
 
 #include "mfemElasticity/bilininteg.hpp"
 
+#include <algorithm>
 #include <cstddef>
 
 namespace mfemElasticity {
@@ -26,29 +27,23 @@ void DomainVectorScalarIntegrator::AssembleElementMatrix2(
   elmat = 0.;
 
 #ifdef MFEM_THREAD_SAFE
-  auto trial_shape = Vector(test_dof);
-  auto test_shape = Vector();
-  auto qv = Vector(space_dim);
-  auto partElmat = DenseMatrix(test_dof, trial_dof);
-#else
+  Vector trial_shape, test_shape, qv;
+  DenseMatrix partElmat;
+#endif
   trial_shape.SetSize(trial_dof);
-
   qv.SetSize(space_dim);
   partElmat.SetSize(test_dof, trial_dof);
-#endif
-
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
 
   if (same_shape) {
     test_shape.NewDataAndSize(trial_shape.GetData(), test_dof);
   } else {
     test_shape.SetSize(test_dof);
   }
+  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
     Trans.SetIntPoint(&ip);
-
     auto w = Trans.Weight() * ip.weight;
 
     trial_fe.CalcShape(ip, trial_shape);
@@ -59,7 +54,7 @@ void DomainVectorScalarIntegrator::AssembleElementMatrix2(
     QV->Eval(qv, Trans, ip);
     MultVWt(test_shape, trial_shape, partElmat);
     for (auto j = 0; j < space_dim; j++) {
-      elmat.AddMatrix(w * qv(j), partElmat, trial_dof * j, 0);
+      elmat.AddMatrix(w * qv(j), partElmat, test_dof * j, 0);
     }
   }
 }
@@ -607,12 +602,10 @@ void DeviatoricStrainInterpolator::AssembleElementMatrix2(
 
     for (auto l = 0; l < space_dim - 1; l++) {
       for (auto j = 0; j < in_dof; j++) {
-        // Set the stain values/
         for (auto k = l; k < space_dim; k++) {
           elmat(matrixIndex(i, k, l), vectorIndex(j, k)) += half * dshape(j, l);
           elmat(matrixIndex(i, k, l), vectorIndex(j, l)) += half * dshape(j, k);
         }
-        // Remove trace from diagonal elements.
         for (auto k = 0; k < space_dim; k++) {
           elmat(matrixIndex(i, l, l), vectorIndex(j, k)) -=
               space_dim_inverse * dshape(j, k);

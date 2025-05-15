@@ -9,9 +9,9 @@
 using namespace mfem;
 
 using ParamTuple = std::tuple<std::string, int>;
-class linintegTest : public ::testing::TestWithParam<ParamTuple> {};
+class LinearFormTest : public ::testing::TestWithParam<ParamTuple> {};
 
-TEST_P(linintegTest, DomainLFDeformationGradientIntegrator) {
+TEST_P(LinearFormTest, DomainLFDeformationGradientIntegrator) {
   const auto& current_tuple = GetParam();
   auto mesh_file = std::get<0>(current_tuple);
   int order = std::get<1>(current_tuple);
@@ -84,7 +84,7 @@ TEST_P(linintegTest, DomainLFDeformationGradientIntegrator) {
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , linintegTest,
+    , LinearFormTest,
     ::testing::Values(std::make_tuple("../data/star.mesh", 1),
                       std::make_tuple("../data/star.mesh", 2),
                       std::make_tuple("../data/fichera.mesh", 1),

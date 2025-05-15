@@ -10,7 +10,7 @@
 using namespace mfem;
 
 using ParamTuple = std::tuple<std::string, int>;
-class bilinintegTest : public ::testing::TestWithParam<ParamTuple> {
+class InterpolatorTest : public testing::TestWithParam<ParamTuple> {
  protected:
   void SetUp() {
     const auto& current_tuple = GetParam();
@@ -30,6 +30,7 @@ class bilinintegTest : public ::testing::TestWithParam<ParamTuple> {
     L2 = std::make_unique<L2_FECollection>(order, dim);
     H1 = std::make_unique<H1_FECollection>(order + 1, dim);
 
+    scalar_fes = std::make_unique<FiniteElementSpace>(&mesh, H1.get());
     vector_fes = std::make_unique<FiniteElementSpace>(&mesh, H1.get(), dim);
     matrix_fes =
         std::make_unique<FiniteElementSpace>(&mesh, L2.get(), dim * dim);
@@ -101,12 +102,12 @@ class bilinintegTest : public ::testing::TestWithParam<ParamTuple> {
   DenseMatrix A;
   Mesh mesh;
   std::unique_ptr<FiniteElementCollection> L2, H1;
-  std::unique_ptr<FiniteElementSpace> vector_fes, matrix_fes, strain_fes,
-      deviatoric_strain_fes;
+  std::unique_ptr<FiniteElementSpace> scalar_fes, vector_fes, matrix_fes,
+      strain_fes, deviatoric_strain_fes;
   std::unique_ptr<VectorFunctionCoefficient> uF, FF, EF, DF;
 };
 
-TEST_P(bilinintegTest, DeformationGradientInterpolator) {
+TEST_P(InterpolatorTest, DeformationGradientInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
 
@@ -119,11 +120,10 @@ TEST_P(bilinintegTest, DeformationGradientInterpolator) {
   b.Mult(u, F);
 
   auto error = F.ComputeL2Error(*FF);
-
   EXPECT_TRUE(error < 1.e-8);
 }
 
-TEST_P(bilinintegTest, StrainInterpolator) {
+TEST_P(InterpolatorTest, StrainInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
 
@@ -135,11 +135,10 @@ TEST_P(bilinintegTest, StrainInterpolator) {
   b.Mult(u, E);
 
   auto error = E.ComputeL2Error(*EF);
-
   EXPECT_TRUE(error < 1.e-8);
 }
 
-TEST_P(bilinintegTest, DeviatoricStrainInterpolator) {
+TEST_P(InterpolatorTest, DeviatoricStrainInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
 
@@ -152,12 +151,11 @@ TEST_P(bilinintegTest, DeviatoricStrainInterpolator) {
   b.Mult(u, D);
 
   auto error = D.ComputeL2Error(*DF);
-
   EXPECT_TRUE(error < 1.e-8);
 }
 
 INSTANTIATE_TEST_SUITE_P(
-    , bilinintegTest,
+    , InterpolatorTest,
     ::testing::Values(std::make_tuple("../data/star.mesh", 0),
                       std::make_tuple("../data/star.mesh", 1),
                       std::make_tuple("../data/fichera.mesh", 0),

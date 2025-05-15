@@ -13,7 +13,7 @@ using namespace std;
 int main(int argc, char* argv[]) {
   // Parse command-line options.
   auto mesh_file = std::string("../data/star.mesh");
-  int order = 2;
+  int order = 0;
 
   auto args = mfem::OptionsParser(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -29,7 +29,6 @@ int main(int argc, char* argv[]) {
 
   // Read the mesh from the given mesh file.
   auto mesh = mfem::Mesh(mesh_file, 1, 1);
-  // auto mesh = mfem::Mesh::MakeCartesian2D(10, 10, Element::TRIANGLE);
 
   auto dim = mesh.Dimension();
   {
@@ -39,61 +38,53 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // Define the vector finite element space.
+  auto L2 = L2_FECollection(order, dim);
   auto H1 = H1_FECollection(order + 1, dim);
-  auto fes = FiniteElementSpace(&mesh, &H1, dim);
 
-  // Set up a matrix coefficient function.
-  auto m = MatrixFunctionCoefficient(dim, [](const Vector& x, DenseMatrix& m) {
-    auto dim = x.Size();
-    m.SetSize(dim);
-    m = real_t{0};
-    for (auto i = 0; i < dim; i++) {
-      m(i, i) = 1;
-    }
-  });
+  auto scalar_fes = FiniteElementSpace(&mesh, &L2);
+  auto vector_fes = FiniteElementSpace(&mesh, &H1, dim);
 
-  // Set up the linearform.
-  auto b = LinearForm(&fes);
-  b.AddDomainIntegrator(
-      new mfemElasticity::DomainLFDeformationGradientIntegrator(m));
+  auto qv = mfem::VectorFunctionCoefficient(
+      dim, [](const mfem::Vector& x, mfem::Vector& y) {
+        y.SetSize(x.Size());
+        y = x;
+      });
+
+  auto b = mfem::MixedBilinearForm(&scalar_fes, &vector_fes);
+  b.AddDomainIntegrator(new mfemElasticity::DomainVectorScalarIntegrator(qv));
   b.Assemble();
 
-  // Set up a vector field.
-  auto f = VectorFunctionCoefficient(dim, [&](const Vector& x, Vector& y) {
-    auto x0 = x(0);
-    auto x1 = x(1);
-    y.SetSize(x.Size());
-    y(0) = x0;
-    y(1) = x1;
-  });
-  auto x = GridFunction(&fes);
-  x.ProjectCoefficient(f);
+  auto u = mfem::GridFunction(&scalar_fes);
+  auto uF = mfem::FunctionCoefficient(
+      [](const mfem::Vector& x) { return x.Norml2(); });
+  u.ProjectCoefficient(uF);
 
-  cout << b(x) << endl;
+  auto v = mfem::GridFunction(&vector_fes);
+  auto vF = mfem::VectorFunctionCoefficient(
+      dim, [](const mfem::Vector& x, mfem::Vector& y) {
+        y.SetSize(x.Size());
+        y = x;
+      });
+  v.ProjectCoefficient(vF);
 
-  // Define scalar finite element space.
-  auto L2 = L2_FECollection(order, dim);
-  auto scalarFES = FiniteElementSpace(&mesh, &L2);
+  auto w = mfem::GridFunction(&vector_fes);
 
-  // Set up the associated linear form.
-  auto c = LinearForm(&scalarFES);
-  auto one = ConstantCoefficient(1);
-  c.AddDomainIntegrator(new DomainLFIntegrator(one));
-  c.Assemble();
+  b.Mult(u, w);
 
-  // Set up scalar field as the divergence of the first.
-  auto h = FunctionCoefficient([&](const Vector& x) { return 2; });
-  auto y = GridFunction(&scalarFES);
-  y.ProjectCoefficient(h);
+  cout << v * w << endl;
 
-  cout << c(y) << endl;
+  /*
+  auto kappa = mfem::ConstantCoefficient(dim);
+  auto l = mfem::LinearForm(&scalar_fes);
+  l.AddDomainIntegrator(new mfem::DomainLFIntegrator(kappa));
+  l.Assemble();
+  cout << l * u << endl;
+  */
 
-  std::ofstream mesh_ofs("refined.mesh");
-  mesh_ofs.precision(8);
-  mesh.Print(mesh_ofs);
+  auto rv = ScalarVectorProductCoefficient(uF, qv);
+  auto l = LinearForm(&vector_fes);
+  l.AddDomainIntegrator(new VectorDomainLFIntegrator(rv));
+  l.Assemble();
 
-  std::ofstream sol_ofs("div.gf");
-  sol_ofs.precision(8);
-  y.Save(sol_ofs);
+  cout << l * v << endl;
 }

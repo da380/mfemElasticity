@@ -8,10 +8,16 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
-add_executable(Testlininteg Testlininteg.cpp)
-target_link_libraries(Testlininteg PRIVATE  mfemElasticity gtest_main)
-gtest_discover_tests(Testlininteg)
+add_executable(TestLinearForm TestLinearForm.cpp)
+target_link_libraries(TestLinearForm PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(TestLinearForm)
 
-add_executable(Testbilininteg Testbilininteg.cpp)
-target_link_libraries(Testbilininteg PRIVATE  mfemElasticity gtest_main)
-gtest_discover_tests(Testbilininteg)
+add_executable(TestInterpolator TestInterpolator.cpp)
+target_link_libraries(TestInterpolator PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(TestInterpolator)
+
+add_executable(TestBilinearForm TestBilinearForm.cpp)
+target_link_libraries(TestBilinearForm PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(TestBilinearForm)
+
+
