@@ -596,7 +596,7 @@ void DeviatoricStrainInterpolator::AssembleElementMatrix2(
   elmat = 0.;
 
   constexpr auto half = static_cast<real_t>(1) / static_cast<real_t>(2);
-  auto space_dim_inverse = static_cast<real_t>(1) / space_dim;
+  const auto space_dim_inverse = static_cast<real_t>(1) / space_dim;
 
   const auto& nodes = out_fe.GetNodes();
 
