@@ -8,17 +8,23 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 include(GoogleTest)
 
-add_executable(Testlininteg Testlininteg.cpp)
-target_link_libraries(Testlininteg PRIVATE  mfemElasticity gtest_main)
-gtest_discover_tests(Testlininteg)
 
-#add_executable(TestInterpolator TestInterpolator.cpp)
-#target_link_libraries(TestInterpolator PRIVATE  mfemElasticity gtest_main)
-#gtest_discover_tests(TestInterpolator)
+add_executable(TestDomainLFDeformationGradientIntegrator TestDomainLFDeformationGradientIntegrator.cpp)
+target_link_libraries(TestDomainLFDeformationGradientIntegrator PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(TestDomainLFDeformationGradientIntegrator)
+
+add_executable(TestInterpolators TestInterpolators.cpp)
+target_link_libraries(TestInterpolators PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(TestInterpolators)
 
 
-#add_executable(TestDomainVectorScalarIntegrator TestDomainVectorScalarIntegrator.cpp)
-#target_link_libraries(TestDomainVectorScalarIntegrator PRIVATE  mfemElasticity gtest_main)
-#gtest_discover_tests(TestDomainVectorScalarIntegrator)
+add_executable(TestDomainVectorScalarIntegrator TestDomainVectorScalarIntegrator.cpp)
+target_link_libraries(TestDomainVectorScalarIntegrator PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(TestDomainVectorScalarIntegrator)
 
+
+
+add_executable(TestDomainVectorGradScalarIntegrator TestDomainVectorGradScalarIntegrator.cpp)
+target_link_libraries(TestDomainVectorGradScalarIntegrator PRIVATE  mfemElasticity gtest_main)
+gtest_discover_tests(TestDomainVectorGradScalarIntegrator)
 

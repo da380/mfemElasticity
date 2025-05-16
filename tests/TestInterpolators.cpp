@@ -1,31 +1,15 @@
-#include <gtest/gtest.h>
+#include "TestCommon.hpp"
 
-#include <memory>
-#include <random>
-#include <string>
-#include <tuple>
-
-#include "mfemElasticity.hpp"
-
-using namespace mfem;
-
-using ParamTuple = std::tuple<std::string, int>;
-class InterpolatorTest : public testing::TestWithParam<ParamTuple> {
+class InterpolatorTests : public testing::TestWithParam<DimOrderTypeTuple> {
  protected:
   void SetUp() {
     const auto& current_tuple = GetParam();
 
-    auto mesh_file = std::get<0>(current_tuple);
+    dim = std::get<0>(current_tuple);
     order = std::get<1>(current_tuple);
+    auto elementType = std::get<2>(current_tuple);
 
-    mesh = Mesh(mesh_file, 1, 1);
-    dim = mesh.Dimension();
-    {
-      int ref_levels = (int)floor(log(1000. / mesh.GetNE()) / log(2.) / dim);
-      for (int l = 0; l < ref_levels; l++) {
-        mesh.UniformRefinement();
-      }
-    }
+    mesh = MakeMesh(dim, elementType);
 
     L2 = std::make_unique<L2_FECollection>(order, dim);
     H1 = std::make_unique<H1_FECollection>(order + 1, dim);
@@ -39,16 +23,7 @@ class InterpolatorTest : public testing::TestWithParam<ParamTuple> {
     deviatoric_strain_fes = std::make_unique<FiniteElementSpace>(
         &mesh, L2.get(), dim * (dim + 1) / 2 - 1);
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::normal_distribution<> distrib(0, 1);
-
-    A.SetSize(dim);
-    for (auto j = 0; j < dim; j++) {
-      for (auto i = 0; i < dim; i++) {
-        A(i, j) = distrib(gen);
-      }
-    }
+    A = RandomMatrix(dim);
 
     uF = std::make_unique<VectorFunctionCoefficient>(
         dim, [this](const Vector& x, Vector& u) {
@@ -107,7 +82,7 @@ class InterpolatorTest : public testing::TestWithParam<ParamTuple> {
   std::unique_ptr<VectorFunctionCoefficient> uF, FF, EF, DF;
 };
 
-TEST_P(InterpolatorTest, DeformationGradientInterpolator) {
+TEST_P(InterpolatorTests, DeformationGradientInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
 
@@ -123,7 +98,7 @@ TEST_P(InterpolatorTest, DeformationGradientInterpolator) {
   EXPECT_TRUE(error < 1.e-8);
 }
 
-TEST_P(InterpolatorTest, StrainInterpolator) {
+TEST_P(InterpolatorTests, StrainInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
 
@@ -138,7 +113,7 @@ TEST_P(InterpolatorTest, StrainInterpolator) {
   EXPECT_TRUE(error < 1.e-8);
 }
 
-TEST_P(InterpolatorTest, DeviatoricStrainInterpolator) {
+TEST_P(InterpolatorTests, DeviatoricStrainInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
 
@@ -151,17 +126,15 @@ TEST_P(InterpolatorTest, DeviatoricStrainInterpolator) {
   b.Mult(u, D);
 
   auto error = D.ComputeL2Error(*DF);
-  EXPECT_TRUE(error < 1.e-8);
+  EXPECT_LT(error, 1.e-8);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    bilininteg, InterpolatorTest,
-    ::testing::Values(std::make_tuple("../data/star.mesh", 1),
-                      std::make_tuple("../data/star.mesh", 2),
-                      std::make_tuple("../data/fichera.mesh", 1),
-                      std::make_tuple("../data/fichera.mesh", 2),
-                      std::make_tuple("../data/beam-tet.mesh", 1),
-                      std::make_tuple("../data/beam-tet.mesh", 2)));
+INSTANTIATE_TEST_SUITE_P(DimensionOrderElementType, InterpolatorTests,
+                         ::testing::Values(std::make_tuple(1, 1, 0),
+                                           std::make_tuple(2, 1, 0),
+                                           std::make_tuple(2, 1, 1),
+                                           std::make_tuple(3, 1, 0),
+                                           std::make_tuple(3, 1, 1)));
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

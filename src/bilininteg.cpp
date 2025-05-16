@@ -117,7 +117,7 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
       for (auto j = 0; j < space_dim; j++) {
         auto trial_dshape_column = Vector(trial_dshape.GetColumn(j), trial_dof);
         MultVWt(test_shape, trial_dshape_column, partElmat);
-        elmat.AddMatrix(w * qv(j), partElmat, j * test_dof, 0);
+        elmat.AddMatrix(qv(j), partElmat, j * test_dof, 0);
       }
     } else {
       if (Q) {

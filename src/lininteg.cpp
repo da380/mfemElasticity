@@ -26,7 +26,7 @@ void DomainLFDeformationGradientIntegrator::AssembleRHSElementVect(
 
   const auto* ir = GetIntegrationRule(el, Trans);
   if (ir == nullptr) {
-    int intorder = 2 * el.GetOrder();
+    int intorder = 2 * el.GetOrder() + Trans.OrderW();
     ir = &IntRules.Get(el.GetGeomType(), intorder);
   }
 
