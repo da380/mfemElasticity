@@ -67,7 +67,7 @@ class SymmetricMatrixIndex : public MatrixIndex {
   // Returns the offset for the (j,k)th block.
   int ComponentOffset(int j, int k) const override {
     if (j < k) {
-      return Offset(k, j);
+      return ComponentOffset(k, j);
     } else {
       return (j + k * Dim() - k * (k + 1) / 2);
     }
@@ -542,9 +542,6 @@ class DomainSymmetricMatrixStrainIntegrator
   mfem::DenseMatrix partElmat, trial_dshape;
 #endif
 
-  static constexpr std::array<int, 4> index2 = {0, 1, 1, 2};
-  static constexpr std::array<int, 9> index3 = {0, 1, 2, 1, 3, 4, 3, 4, 5};
-
  public:
   DomainSymmetricMatrixStrainIntegrator(
       const mfem::IntegrationRule* ir = nullptr)
@@ -606,9 +603,6 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
   mfem::Vector test_shape;
   mfem::DenseMatrix partElmat, trial_dshape;
 #endif
-
-  static constexpr std::array<int, 3> index2 = {0, 1, 1};
-  static constexpr std::array<int, 8> index3 = {0, 1, 2, 1, 3, 4, 3, 4};
 
  public:
   DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator(
