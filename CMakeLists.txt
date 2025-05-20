@@ -13,6 +13,7 @@ if ("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
   message(FATAL_ERROR "In-source builds are prohibited.")
 endif ("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
 
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Import MFEM. The following variables can be used to help CMake find MFEM:
 #  * MFEM_DIR - absolute path to the MFEM build or install prefix.
@@ -23,9 +24,12 @@ if (MFEM_DIR)
     find_package(mfem REQUIRED NAMES MFEM HINTS "${MFEM_DIR}"
                 "${mfem_DIR}/lib/cmake/mfem" NO_DEFAULT_PATH)
 else()
-    find_package(mfem REQUIRED NAMES MFEM)
+    find_package(mfem CONFIG REQUIRED NAMES MFEM)
 endif()
 message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
+
+
+
 
 
 # Add MPI is needed. 
@@ -81,19 +85,49 @@ target_include_directories(
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
-set_target_properties(${PROJECT_NAME} PROPERTIES DEBUG_POSTFIX "d")
+# Install your library (headers and library file)
+install(TARGETS mfemElasticity
+        EXPORT mfemElasticityTargets
+        DESTINATION lib)
+install(DIRECTORY include/
+        DESTINATION include)
 
-install(
-    TARGETS ${PROJECT_NAME}
-    EXPORT ${PROJECT_NAME}Config
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 
-install(
-    EXPORT ${PROJECT_NAME}Config
-    NAMESPACE ${PROJECT_NAME}::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
+# Create the CMake package configuration file
+install(EXPORT mfemElasticityTargets
+        NAMESPACE mfemElasticity::
+        FILE mfemElasticityTargets.cmake
+        DESTINATION lib/cmake/mfemElasticity)
 
-install(DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/include/${PROJECT_NAME}/
-        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME})
+include(CMakePackageConfigHelpers)        
+
+
+set(INCLUDE_INSTALL_DIRS ${PROJECT_BINARY_DIR})
+
+set(LIB_INSTALL_DIR ${PROJECT_BINARY_DIR})
+configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in
+  "${CMAKE_CURRENT_BINARY_DIR}/mfemElasticityConfig.cmake"
+  INSTALL_DESTINATION "lib/cmake/mfemElasticity"
+  NO_SET_AND_CHECK_MACRO
+  NO_CHECK_REQUIRED_COMPONENTS_MACRO
+  PATH_VARS INCLUDE_INSTALL_DIRS LIB_INSTALL_DIR
+  )
+
+write_basic_package_version_file(
+  "${CMAKE_CURRENT_BINARY_DIR}/mfemElasticityConfigVersion.cmake"
+  VERSION "${mfemElasticity_VERSION_MAJOR}.${mfemElasticity_VERSION_MINOR}"
+  COMPATIBILITY AnyNewerVersion
+)
+
+install(FILES
+  ${CMAKE_CURRENT_BINARY_DIR}/mfemElasticityConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/mfemElasticityConfigVersion.cmake
+  DESTINATION lib/cmake/mfemElasticity
+  )
+
+export(EXPORT mfemElasticityTargets
+  FILE "${CMAKE_CURRENT_BINARY_DIR}/mfemElasticityTargets.cmake"
+)
+
 
 
