@@ -94,8 +94,7 @@ install(DIRECTORY include/
 
 
 # Create the CMake package configuration file
-install(EXPORT mfemElasticityTargets
-        NAMESPACE mfemElasticity::
+install(EXPORT mfemElasticityTargets        
         FILE mfemElasticityTargets.cmake
         DESTINATION lib/cmake/mfemElasticity)
 

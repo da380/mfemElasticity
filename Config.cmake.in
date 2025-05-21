@@ -4,6 +4,7 @@ include(CMakeFindDependencyMacro)
 
 set(MFEM_DIR @MFEM_INCLUDE_DIR@)
 find_dependency(mfem NAMES mfem MFEM HINTS ${MFEM_DIR})
+message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 
 include ( "${CMAKE_CURRENT_LIST_DIR}/mfemElasticityTargets.cmake" )
 

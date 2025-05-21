@@ -1,18 +1,20 @@
 cmake_minimum_required(VERSION 3.15)
 
 project(
-    mfemElasticity-apss
+    mfemElasticity-apps
     VERSION 0.0.1
     LANGUAGES CXX)
 
 
 find_package(mfemElasticity REQUIRED CONFIG)
-
+message(STATUS "Found mfemElasticity config in: ${mfemElasticity_DIR} (version ${mfemElasticity_VERSION})")
 
 
 add_executable(app1)
 target_sources(app1 PRIVATE app1.cpp)
 
 target_link_libraries(app1
-                      PUBLIC  mfemElasticity)
+                      PUBLIC mfem mfemElasticity)
 
+
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
