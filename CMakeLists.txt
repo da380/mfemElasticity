@@ -35,7 +35,7 @@ message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 # Add MPI is needed. 
 option(USE_MPI "Use MPI library" OFF)
 if(USE_MPI)
-    find_package(MPI REQUIRED)
+    find_package(MPI REQUIRED)        
     if (NOT CMAKE_CXX_COMPILER AND MFEM_CXX_COMPILER)  
         set(CMAKE_CXX_COMPILER "${MFEM_CXX_COMPILER}")      
     endif()
@@ -108,8 +108,7 @@ configure_package_config_file(${CMAKE_CURRENT_SOURCE_DIR}/Config.cmake.in
   "${CMAKE_CURRENT_BINARY_DIR}/mfemElasticityConfig.cmake"
   INSTALL_DESTINATION "lib/cmake/mfemElasticity"
   NO_SET_AND_CHECK_MACRO
-  NO_CHECK_REQUIRED_COMPONENTS_MACRO
-  PATH_VARS INCLUDE_INSTALL_DIRS LIB_INSTALL_DIR
+  NO_CHECK_REQUIRED_COMPONENTS_MACRO  
   )
 
 write_basic_package_version_file(

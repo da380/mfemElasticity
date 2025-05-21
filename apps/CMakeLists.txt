@@ -13,8 +13,15 @@ message(STATUS "Found mfemElasticity config in: ${mfemElasticity_DIR} (version $
 add_executable(app1)
 target_sources(app1 PRIVATE app1.cpp)
 
+
 target_link_libraries(app1
-                      PUBLIC mfem mfemElasticity)
+                      PUBLIC mfemElasticity)
+
+if(USE_MPI)                    
+    add_executable(app1p)
+    target_sources(app1p PRIVATE app1p.cpp)
+    target_link_libraries(app1p
+                      PUBLIC  mfemElasticity)
+endif()
 
 
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
