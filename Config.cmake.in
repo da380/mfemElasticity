@@ -9,6 +9,7 @@ find_dependency(mfem NAMES mfem MFEM HINTS ${MFEM_DIR})
 message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 
 if(USE_MPI)
+    enable_language(C)
     set(MPIEXEC_EXECUTABLE @MPIEXEC_EXECUTABLE@)    
     find_package(MPI REQUIRED)
     if (NOT CMAKE_CXX_COMPILER AND @MFEM_CXX_COMPILER@)  
