@@ -35,6 +35,7 @@ message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 # Add MPI is needed. 
 option(USE_MPI "Use MPI library" OFF)
 if(USE_MPI)
+    enable_language(C)
     find_package(MPI REQUIRED)        
     if (NOT CMAKE_CXX_COMPILER AND MFEM_CXX_COMPILER)  
         set(CMAKE_CXX_COMPILER "${MFEM_CXX_COMPILER}")      
