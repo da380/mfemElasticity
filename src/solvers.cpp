@@ -1,7 +1,5 @@
 #include "mfemElasticity/solvers.hpp"
 
-#include <memory>
-
 namespace mfemElasticity {
 
 RigidTranslation::RigidTranslation(int dimension, int component)

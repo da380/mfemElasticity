@@ -30,8 +30,6 @@ message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 
 
 
-
-
 # Add MPI is needed. 
 option(USE_MPI "Use MPI library" OFF)
 if(USE_MPI)
