@@ -303,7 +303,7 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
 BilinearFormIntegrator that acts on a test vector field, v, and a trial vector
 field, u, according to:
 
-(v,u) \mapsto \int_{\Omega} q v_{i,i} u_{i,i} dx
+(v,u) \mapsto \int_{\Omega} q v_{i,i} u_{j,j} dx
 
 where \Omega is the domain and q a scalar coefficient.
 

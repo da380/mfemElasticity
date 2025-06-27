@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include "mfem.hpp"
 
 namespace mfemElasticity {
@@ -72,7 +74,7 @@ This solver is suitable only for 2 and 3 dimensional problems.
 class RigidBodySolver : public mfem::Solver {
  private:
   mfem::FiniteElementSpace *_fes;
-  std::vector<mfem::Vector *> _u;
+  std::vector<std::unique_ptr<mfem::Vector>> _u;
   mfem::Solver *_solver = nullptr;
   mutable mfem::Vector _b;
   const bool _parallel;
@@ -92,6 +94,11 @@ class RigidBodySolver : public mfem::Solver {
     Returns the Euclidean norm of a vector.
   */
   mfem::real_t Norm(const mfem::Vector &x) const;
+
+  /*
+  Sets up the rigid body fields.
+  */
+  void SetRigidBodyFields();
 
   /*
     Performs modified Gram-Schmidt orthogonalisation
@@ -131,11 +138,6 @@ class RigidBodySolver : public mfem::Solver {
   */
   RigidBodySolver(MPI_Comm comm, mfem::ParFiniteElementSpace *fes);
 #endif
-
-  /*
-    Destructor deletes the data for the rigid body modes.
-  */
-  ~RigidBodySolver();
 
   /*
     Set the underlying solver.
