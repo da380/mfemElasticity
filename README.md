@@ -49,26 +49,32 @@ A number of classes derived from ```mfem::LinearFormIntegrator``` and ```mfem::B
 ### DomainLFDeformationGradientIntegrator
 
 The ```mfem::LinearFormIntegrator``` associated with
+
 $$
 u \mapsto \int_{\Omega} m_{ij} u_{i,j} \,\mathrm{d} x, 
 $$
+
 for a vector-field $u$ and a matrix-field $m_{ij}$. 
 
 
 ###  DomainVectorScalarIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with 
+
 $$
 (v,u) \mapsto \int_{\Omega} q_{i} v_{i} u \,\mathrm{d} x, 
 $$
+
 where $\Omega$ is a domain, $q$ a vector-coefficient, $v$ a vector test function, and $u$ a scalar trial function.
 
 ### DomainVectorGradScalarIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with
+
 $$
 (v, u) \mapsto \int_{\Omega} v_{i} q_{ij} u_{,j} \,\mathrm{d} x, 
 $$
+
 where $\Omega$ is a domain, $q$ a matrix-coefficient, $v$ a vector test function, and $u$ a scalar trial function. The matrix coefficient can be input as:
 
 - A ```Coefficient```, in which case $q$ is proportional to the identity matrix;
@@ -78,35 +84,43 @@ where $\Omega$ is a domain, $q$ a matrix-coefficient, $v$ a vector test function
 ### DomainDivVectorScalarIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with 
+
 $$
 (v,u) \mapsto \int_{\Omega} q \,v_{i,i} u \,\mathrm{d} x, 
 $$
+
 where $\Omega$ is a domain, $v$ a vector test function, and $u$ a 
 scalar trial function. 
 
 ### DomainDivVectorDivVectorIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with 
+
 $$
 (v,u) \mapsto \int_{\Omega} q \,v_{i,i} u_{j,j} \,\mathrm{d} x, 
 $$
+
 where $\Omega$ is a domain, $v$ a vector test function, and $u$ a vector trial function. 
 
 ### DomainVectorGradVectorIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with 
+
 $$
 (v, u) \mapsto \int_{\Omega} q v_{i} (w_{j} u_{j})_{,i} \mathrm{d} x, 
 $$
+
 where $q$ is a scalar coefficient, $v$ a vector test function, 
 $w$ a vector coefficient, and $u$ a vector trial function. 
 
 ### DomainVectorDivVectorIntegrator
 
 The ```mfem::BinlinearFormIntegrator``` associated with 
+
 $$
 (v,u) \mapsto \int_{\Omega} q_{i} v_{i} u_{j,j}\,\mathrm{d }x,
 $$
+
 where $\Omega$ is a domain, $q$ a vector coefficient, $v$ a vector 
 test function, and $u$ a vector trial function. 
 
@@ -114,11 +128,14 @@ test function, and $u$ a vector trial function.
 ### DomainMatrixDeformationGradientIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with 
+
 $$
 (v,u) \mapsto \int_{\Omega} q\, v_{ij} u_{i,j} \,\mathrm{d} x, 
 $$
+
 where $q$ is a scalar coefficient, $v$ a matrix test function, and $u$
 a vector trial function. The matrix field is implemented as a $n^{2}$-dimensional vector ```mfem::GridFunction``` with the matrix's components stored in column-major order. In 2D, for example, this ordering corresponds to:
+
 $$
 \left(\begin{array}{cc}
 v_{00} & v_{01} \\ v_{10} & v_{11}
@@ -132,12 +149,15 @@ $$
 ### DomainSymmetricMatrixStrainIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with 
+
 $$
 (v,u) \mapsto \int_{\Omega} q\, v_{ij} u_{i,j} \,\mathrm{d} x, 
 $$
+
 where $q$ is a scalar coefficient, $v$ a symmetric matrix test function, and $u$
 a vector trial function. The matrix field is implemented as a $\frac{1}{2}n(n+1)$-dimensional vector ```mfem::GridFunction``` with the matrix's components from the lower-triangle stored in column-major order.
 In 2D, for example, this ordering corresponds to:
+
 $$
 \left(\begin{array}{cc}
 v_{00} & v_{01} \\ v_{01} & v_{11}
@@ -151,11 +171,14 @@ $$
 ### DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
 
 The ```mfem::BilinearFormIntegrator``` associated with 
+
 $$
 (v,u) \mapsto \int_{\Omega} q\, v_{ij} u_{i,j} \,\mathrm{d} x, 
 $$
+
 where $q$ is a scalar coefficient, $v$ a symmetric matrix test function, and $u$
 a vector trial function. The trace-freee and symmetric matrix field is implemented as a $\frac{1}{2}n(n+1)-1$-dimensional vector ```mfem::GridFunction``` with the matrix's components from the lower-triangle stored in column-major order but with the final element removed.  In 2D, for example, this ordering corresponds to:
+
 $$
 \left(\begin{array}{cc}
 v_{00} & v_{01} \\ v_{01} & -v_{00}
@@ -173,6 +196,7 @@ instances of ```mfem::Gridfunction``` with the appropriate dimension and using t
 
 ### DeformationGradientInterpolator
 The ```mfem::DiscreteInterpolator``` associated with 
+
 $$
 u_{i} \mapsto u_{i,j}, 
 $$
@@ -180,6 +204,7 @@ for a vector field. The result is a matrix field.
 
 ### StrainInterpolator
 The ```mfem::DiscreteInterpolator``` associated with 
+
 $$
 u_{i} \mapsto \frac{1}{2}(u_{i,j} + u_{j,i}), 
 $$
@@ -188,6 +213,7 @@ for a vector field. The result is a symmetric matrix field.
 ### DeviatoricStrainInterpolator 
 
 The ```mfem::DiscreteInterpolator``` associated with 
+
 $$
 u_{i} \mapsto \frac{1}{2}(u_{i,j} + u_{j,i}) - \frac{1}{n}u_{k,k}\delta_{ij}
 $$
