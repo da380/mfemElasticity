@@ -28,11 +28,11 @@ void DomainVectorScalarIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector trial_shape, test_shape, qv;
-  DenseMatrix partElmat;
+  DenseMatrix part_elmat;
 #endif
   trial_shape.SetSize(trial_dof);
   qv.SetSize(space_dim);
-  partElmat.SetSize(test_dof, trial_dof);
+  part_elmat.SetSize(test_dof, trial_dof);
 
   if (same_shape) {
     test_shape.NewDataAndSize(trial_shape.GetData(), test_dof);
@@ -52,9 +52,9 @@ void DomainVectorScalarIntegrator::AssembleElementMatrix2(
     }
 
     QV->Eval(qv, Trans, ip);
-    MultVWt(test_shape, trial_shape, partElmat);
+    MultVWt(test_shape, trial_shape, part_elmat);
     for (auto j = 0; j < space_dim; j++) {
-      elmat.AddMatrix(w * qv(j), partElmat, test_dof * j, 0);
+      elmat.AddMatrix(w * qv(j), part_elmat, test_dof * j, 0);
     }
   }
 }
@@ -80,11 +80,11 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector test_shape, qv;
-  DenseMatrix trial_dshape, partElmat, qm, tm;
+  DenseMatrix trial_dshape, part_elmat, qm, tm;
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
-  partElmat.SetSize(test_dof, trial_dof);
+  part_elmat.SetSize(test_dof, trial_dof);
 
   if (QM) {
     qm.SetSize(space_dim);
@@ -108,16 +108,16 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
       MultABt(trial_dshape, qm, tm);
       for (auto j = 0; j < space_dim; j++) {
         auto tm_column = Vector(tm.GetColumn(j), trial_dof);
-        MultVWt(test_shape, tm_column, partElmat);
-        elmat.AddMatrix(w, partElmat, j * test_dof, 0);
+        MultVWt(test_shape, tm_column, part_elmat);
+        elmat.AddMatrix(w, part_elmat, j * test_dof, 0);
       }
     } else if (QV) {
       QV->Eval(qv, Trans, ip);
       qv *= w;
       for (auto j = 0; j < space_dim; j++) {
         auto trial_dshape_column = Vector(trial_dshape.GetColumn(j), trial_dof);
-        MultVWt(test_shape, trial_dshape_column, partElmat);
-        elmat.AddMatrix(qv(j), partElmat, j * test_dof, 0);
+        MultVWt(test_shape, trial_dshape_column, part_elmat);
+        elmat.AddMatrix(qv(j), part_elmat, j * test_dof, 0);
       }
     } else {
       if (Q) {
@@ -125,8 +125,8 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
       }
       for (auto j = 0; j < space_dim; j++) {
         auto trial_dshape_column = Vector(trial_dshape.GetColumn(j), trial_dof);
-        MultVWt(test_shape, trial_dshape_column, partElmat);
-        elmat.AddMatrix(w, partElmat, j * test_dof, 0);
+        MultVWt(test_shape, trial_dshape_column, part_elmat);
+        elmat.AddMatrix(w, part_elmat, j * test_dof, 0);
       }
     }
   }
@@ -153,11 +153,11 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
 #ifdef MFEM_THREAD_SAFE
   auto test_dshape = mfem::DenseMatrix();
   auto trial_shape = mfem::Vector();
-  auto partElmat = mfem::DenseMatrix();
+  auto part_elmat = mfem::DenseMatrix();
 #endif
   test_dshape.SetSize(test_dof, space_dim);
   trial_shape.SetSize(trial_dof);
-  partElmat.SetSize(test_dof, trial_dof);
+  part_elmat.SetSize(test_dof, trial_dof);
 
   const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
 
@@ -176,8 +176,8 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
     for (auto j = 0; j < space_dim; j++) {
       auto test_dshape_column =
           mfem::Vector(test_dshape.GetColumn(j), test_dof);
-      mfem::MultVWt(test_dshape_column, trial_shape, partElmat);
-      elmat.AddMatrix(w, partElmat, j * test_dof, 0);
+      mfem::MultVWt(test_dshape_column, trial_shape, part_elmat);
+      elmat.AddMatrix(w, part_elmat, j * test_dof, 0);
     }
   }
 }
@@ -262,12 +262,12 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector qv(), test_shape();
-  DenseMatrix leftElmat(), rightElmatTrans(), partElmat();
+  DenseMatrix left_elmat(), rigth_elmat_trans(), part_elmat();
 #endif
 
   qv.SetSize(space_dim);
-  rightElmatTrans.SetSize(space_dim * trial_dof, trial_dof);
-  rightElmatTrans = 0.;
+  rigth_elmat_trans.SetSize(space_dim * trial_dof, trial_dof);
+  rigth_elmat_trans = 0.;
 
   const auto& trial_nodes = trial_fe.GetNodes();
   for (auto i = 0; i < trial_dof; i++) {
@@ -275,13 +275,13 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
     Trans.SetIntPoint(&ip);
     QV->Eval(qv, Trans, ip);
     for (auto j = 0; j < space_dim; j++) {
-      rightElmatTrans(i + trial_dof * j, i) = qv(j);
+      rigth_elmat_trans(i + trial_dof * j, i) = qv(j);
     }
   }
 
-  partElmat.SetSize(test_dof, trial_dof);
-  leftElmat.SetSize(space_dim * test_dof, trial_dof);
-  leftElmat = 0.;
+  part_elmat.SetSize(test_dof, trial_dof);
+  left_elmat.SetSize(space_dim * test_dof, trial_dof);
+  left_elmat = 0.;
 
   trial_dshape.SetSize(trial_dof, space_dim);
   test_shape.SetSize(test_dof);
@@ -302,11 +302,65 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
 
     for (auto j = 0; j < space_dim; j++) {
       auto trial_dshape_column = Vector(trial_dshape.GetColumn(j), trial_dof);
-      MultVWt(test_shape, trial_dshape_column, partElmat);
-      leftElmat.AddMatrix(w, partElmat, test_dof * j, 0);
+      MultVWt(test_shape, trial_dshape_column, part_elmat);
+      left_elmat.AddMatrix(w, part_elmat, test_dof * j, 0);
     }
   }
-  MultABt(leftElmat, rightElmatTrans, elmat);
+  MultABt(left_elmat, rigth_elmat_trans, elmat);
+}
+
+const mfem::IntegrationRule& DomainVectorDivVectorIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order =
+      trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW() - 1;
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void DomainVectorDivVectorIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto space_dim = Trans.GetSpaceDim();
+  auto trial_dof = trial_fe.GetDof();
+  auto test_dof = test_fe.GetDof();
+
+  elmat.SetSize(space_dim * test_dof, space_dim * trial_dof);
+  elmat = 0.;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector qv(), test_shape();
+  DenseMatrix part_elmat();
+#endif
+
+  qv.SetSize(space_dim);
+  part_elmat.SetSize(test_dof, trial_dof);
+
+  trial_dshape.SetSize(trial_dof, space_dim);
+  test_shape.SetSize(test_dof);
+
+  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  for (auto i = 0; i < ir->GetNPoints(); i++) {
+    const auto& ip = ir->IntPoint(i);
+    Trans.SetIntPoint(&ip);
+    auto w = Trans.Weight() * ip.weight;
+
+    QV->Eval(qv, Trans, ip);
+    qv *= w;
+
+    test_fe.CalcShape(ip, test_shape);
+    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+
+    for (auto k = 0; k < space_dim; k++) {
+      auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
+      MultVWt(test_shape, trial_dshape_column, part_elmat);
+      for (auto j = 0; j < space_dim; j++) {
+        elmat.AddMatrix(qv(j), part_elmat, j * test_dof, k * trial_dof);
+      }
+    }
+  }
 }
 
 const mfem::IntegrationRule& DomainMatrixDeformationGradientIntegrator::GetRule(
@@ -336,11 +390,11 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector test_shape();
-  DenseMatrix trial_dshape(), partElmat();
+  DenseMatrix trial_dshape(), part_elmat();
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
-  partElmat.SetSize(test_dof, trial_dof);
+  part_elmat.SetSize(test_dof, trial_dof);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -356,9 +410,9 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
 
     for (auto k = 0; k < space_dim; k++) {
       auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
-      MultVWt(test_shape, trial_dshape_column, partElmat);
+      MultVWt(test_shape, trial_dshape_column, part_elmat);
       for (auto j = 0; j < space_dim; j++) {
-        elmat.AddMatrix(w, partElmat, matrixIndex.Offset(j, k),
+        elmat.AddMatrix(w, part_elmat, matrixIndex.Offset(j, k),
                         vectorIndex.Offset(j));
       }
     }
@@ -390,11 +444,11 @@ void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector test_shape();
-  DenseMatrix trial_dshape(), partElmat();
+  DenseMatrix trial_dshape(), part_elmat();
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
-  partElmat.SetSize(test_dof, trial_dof);
+  part_elmat.SetSize(test_dof, trial_dof);
 
   const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
 
@@ -412,9 +466,9 @@ void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
 
     for (auto k = 0; k < space_dim; k++) {
       auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
-      MultVWt(test_shape, trial_dshape_column, partElmat);
+      MultVWt(test_shape, trial_dshape_column, part_elmat);
       for (auto j = 0; j < space_dim; j++) {
-        elmat.AddMatrix(w, partElmat, matrixIndex.Offset(j, k),
+        elmat.AddMatrix(w, part_elmat, matrixIndex.Offset(j, k),
                         vectorIndex.Offset(j));
       }
     }
@@ -449,11 +503,11 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
 
 #ifdef MFEM_THREAD_SAFE
   Vector test_shape();
-  DenseMatrix trial_dshape(), partElmat();
+  DenseMatrix trial_dshape(), part_elmat();
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
-  partElmat.SetSize(test_dof, trial_dof);
+  part_elmat.SetSize(test_dof, trial_dof);
 
   const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
 
@@ -471,22 +525,22 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
 
     for (auto k = 0; k < space_dim - 1; k++) {
       auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
-      MultVWt(test_shape, trial_dshape_column, partElmat);
+      MultVWt(test_shape, trial_dshape_column, part_elmat);
 
       for (auto j = 0; j < space_dim; j++) {
-        elmat.AddMatrix(w, partElmat, matrixIndex.Offset(j, k),
+        elmat.AddMatrix(w, part_elmat, matrixIndex.Offset(j, k),
                         vectorIndex.Offset(j));
       }
     }
 
     auto k = space_dim - 1;
     auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
-    MultVWt(test_shape, trial_dshape_column, partElmat);
+    MultVWt(test_shape, trial_dshape_column, part_elmat);
 
     for (auto j = 0; j < space_dim - 1; j++) {
-      elmat.AddMatrix(w, partElmat, matrixIndex.Offset(j, k),
+      elmat.AddMatrix(w, part_elmat, matrixIndex.Offset(j, k),
                       vectorIndex.Offset(j));
-      elmat.AddMatrix(-w, partElmat, matrixIndex.Offset(j, j),
+      elmat.AddMatrix(-w, part_elmat, matrixIndex.Offset(j, j),
                       vectorIndex.Offset(k));
     }
   }

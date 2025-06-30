@@ -110,7 +110,7 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector trial_shape, test_shape, qv;
-  mfem::DenseMatrix partElmat;
+  mfem::DenseMatrix part_elmat;
 #endif
 
  public:
@@ -172,7 +172,7 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape, qv;
-  mfem::DenseMatrix trial_dshape, partElmat, qm, tm;
+  mfem::DenseMatrix trial_dshape, part_elmat, qm, tm;
 #endif
 
  public:
@@ -253,7 +253,7 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
   mfem::Coefficient* Q;
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix test_dshape, partElmat;
+  mfem::DenseMatrix test_dshape, part_elmat;
   mfem::Vector trial_shape;
 #endif
 
@@ -391,7 +391,7 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector qv, test_shape;
-  mfem::DenseMatrix trial_dshape, leftElmat, rightElmatTrans, partElmat;
+  mfem::DenseMatrix trial_dshape, left_elmat, rigth_elmat_trans, part_elmat;
 #endif
 
  public:
@@ -412,6 +412,68 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
                                    mfem::Coefficient& q,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
+
+  /*
+  Set the default integration rule. The orders of the trial space, test space,
+  and element transformation are taken into account, with one order removed to
+  account for the spatial derivative. Variations in the coefficients are
+  not considered.
+  */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  /*
+  Implementation of element level calculations.
+  */
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+
+  /*
+  Assembly when the trail and test spaces are equal.
+  */
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override {
+    AssembleElementMatrix2(el, el, Trans, elmat);
+  }
+
+ protected:
+  const mfem::IntegrationRule* GetDefaultIntegrationRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& trans) const override {
+    return &GetRule(trial_fe, test_fe, trans);
+  }
+};
+
+/*
+BilinearFormIntegrator acting on a test vector field, v, and a
+trial vector field, u, according to:
+
+(v,u) \mapstp \int_{\Omega} q_{i} v_{i} i_{j,j} dx,
+
+where \Omega is the domain and q a vector coefficient.
+*/
+class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::VectorCoefficient* QV = nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector qv, test_shape;
+  mfem::DenseMatrix trial_dshape, part_elmat;
+#endif
+
+ public:
+  /*
+  Construct bilinearform integrator from vector coefficient and, optionally, an
+  integration rule. In this case, the scalar coefficient is taken equal to the
+  constant, 1.
+  */
+  DomainVectorDivVectorIntegrator(mfem::VectorCoefficient& qv,
+                                  const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
 
   /*
   Set the default integration rule. The orders of the trial space, test space,
@@ -471,7 +533,7 @@ class DomainMatrixDeformationGradientIntegrator
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape;
-  mfem::DenseMatrix trial_dshape, partElmat;
+  mfem::DenseMatrix trial_dshape, part_elmat;
 #endif
 
  public:
@@ -539,7 +601,7 @@ class DomainSymmetricMatrixStrainIntegrator
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape;
-  mfem::DenseMatrix partElmat, trial_dshape;
+  mfem::DenseMatrix part_elmat, trial_dshape;
 #endif
 
  public:
@@ -601,7 +663,7 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape;
-  mfem::DenseMatrix partElmat, trial_dshape;
+  mfem::DenseMatrix part_elmat, trial_dshape;
 #endif
 
  public:
