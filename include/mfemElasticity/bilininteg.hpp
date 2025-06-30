@@ -640,6 +640,56 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
 };
 
 /*
+For ∫Q(∇ ⋅u)(Qv ⋅v), where u and v are trial and test vector funtions, Q a given scalar field and Qv a given vector field.
+*/
+class DivergenceVectorIntegrator : public mfem::BilinearFormIntegrator {
+private:
+    mfem::Coefficient *Q = nullptr;
+    mfem::VectorCoefficient *QV =nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+    mfem::Vector shape, g;
+    mfem::DenseMatrix dshape, pelmat;
+#endif
+
+public:
+    DivergenceVectorIntegrator(const mfem::IntegrationRule* ir = nullptr)
+        : mfem::BilinearFormIntegrator(ir) {}
+
+    DivergenceVectorIntegrator(mfem::Coefficient &q, mfem::VectorCoefficient &qv, const mfem::IntegrationRule* ir = nullptr)
+        : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
+
+    void AssembleElementMatrix(const mfem::FiniteElement& el, mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) override;
+};
+
+/*
+For ∫Q(∇ ⋅v)(Qv ⋅u), where u and v are trial and test vector funtions, Q a given scalar field and Qv a given vector field
+(may not be needed due to using transpose).
+*/
+class ProjectionDivergenceIntegrator : public mfem::BilinearFormIntegrator {
+private:
+    mfem::Coefficient *Q = nullptr;
+    mfem::VectorCoefficient *QV =nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+    mfem::Vector shape, g;
+    mfem::DenseMatrix dshape, pelmat;
+#endif
+
+public:
+    ProjectionDivergenceIntegrator(const mfem::IntegrationRule* ir = nullptr)
+        : mfem::BilinearFormIntegrator(ir) {}
+
+    ProjectionDivergenceIntegrator(mfem::Coefficient &q, mfem::VectorCoefficient &qv, const mfem::IntegrationRule* ir = nullptr)
+        : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
+
+    void AssembleElementMatrix(const mfem::FiniteElement &el, mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) override;
+};
+
+
+
+
+/*
 DiscreteInterpolator that acts on a vector field, u, to return the matrix
 field, v_{ij} = u_{i,j}. The matrix field components are stored using the
 column-major format.

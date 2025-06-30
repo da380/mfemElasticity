@@ -151,9 +151,9 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
   elmat = 0.;
 
 #ifdef MFEM_THREAD_SAFE
-  auto test_dshape = mfem::DenseMatrix();
-  auto trial_shape = mfem::Vector();
-  auto partElmat = mfem::DenseMatrix();
+  mfem::DenseMatrix test_dshape;
+  mfem::Vector trial_shape;
+  mfem::DenseMatrix partElmat;
 #endif
   test_dshape.SetSize(test_dof, space_dim);
   trial_shape.SetSize(trial_dof);
@@ -205,8 +205,8 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
   elmat = 0.;
 
 #ifdef MFEM_THREAD_SAFE
-  auto trial_dshape = DenseMatrix();
-  auto test_dshape = DenseMatrix();
+  DenseMatrix trial_dshape;
+  DenseMatrix test_dshape;
 #endif
   trial_dshape.SetSize(trial_dof, space_dim);
 
@@ -261,8 +261,8 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
   elmat = 0.;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector qv(), test_shape();
-  DenseMatrix leftElmat(), rightElmatTrans(), partElmat();
+  Vector qv, test_shape;
+  DenseMatrix leftElmat, rightElmatTrans, partElmat, trial_dshape;
 #endif
 
   qv.SetSize(space_dim);
@@ -335,8 +335,8 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
   const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
 
 #ifdef MFEM_THREAD_SAFE
-  Vector test_shape();
-  DenseMatrix trial_dshape(), partElmat();
+  Vector test_shape;
+  DenseMatrix trial_dshape, partElmat;
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
@@ -389,8 +389,8 @@ void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
   elmat = 0.;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector test_shape();
-  DenseMatrix trial_dshape(), partElmat();
+  Vector test_shape;
+  DenseMatrix trial_dshape, partElmat;
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
@@ -448,8 +448,8 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
   elmat = 0.;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector test_shape();
-  DenseMatrix trial_dshape(), partElmat();
+  Vector test_shape;
+  DenseMatrix trial_dshape, partElmat;
 #endif
   test_shape.SetSize(test_dof);
   trial_dshape.SetSize(trial_dof, space_dim);
@@ -492,6 +492,100 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
   }
 }
 
+void DivergenceVectorIntegrator::AssembleElementMatrix(const mfem::FiniteElement &el, 
+                                                       mfem::ElementTransformation &Trans, 
+                                                       mfem::DenseMatrix &elmat) 
+{
+    auto dim = Trans.GetSpaceDim();
+    auto N = el.GetDof();
+
+    elmat.SetSize(dim * N);
+    elmat = 0.0;
+
+#ifdef MFEM_THREAD_SAFE
+    mfem::Vector shape, g;
+    mfem::DenseMatrix dshape, pelmat;
+#endif
+    dshape.SetSize(N, dim);
+    shape.SetSize(N);
+    pelmat.SetSize(N);
+    g.SetSize(dim);
+
+    const auto* ir = GetIntegrationRule(el, Trans);
+    if (ir == NULL)
+    {
+        int order = order = 2 * el.GetOrder() + Trans.OrderW() - 1; //
+        ir = &mfem::IntRules.Get(el.GetGeomType(), order);
+    }
+
+    for (auto i = 0; i < ir->GetNPoints(); i++) {
+        const auto& ip = ir->IntPoint(i);
+        Trans.SetIntPoint(&ip);
+        auto w = Trans.Weight() * ip.weight;
+
+        el.CalcShape(ip, shape);
+        el.CalcPhysDShape(Trans, dshape);
+
+        QV->Eval(g, Trans, ip);
+        w *= Q->Eval(Trans, ip); 
+        for (auto k = 0; k < dim; k++) {
+            for (auto l = 0; l < dim; l++) {
+                auto dshape_column = mfem::Vector(dshape.GetColumn(l), N);
+                mfem::MultVWt(shape, dshape_column, pelmat);
+                real_t _w = w * g(k);
+                elmat.AddMatrix(_w, pelmat, k * N, l * N);
+            }
+        }
+    }
+}
+
+void ProjectionDivergenceIntegrator::AssembleElementMatrix(const mfem::FiniteElement &el, 
+                                                           mfem::ElementTransformation &Trans, 
+                                                           mfem::DenseMatrix &elmat) 
+{
+    auto dim = Trans.GetSpaceDim();
+    auto N = el.GetDof();
+
+    elmat.SetSize(dim * N);
+    elmat = 0.0;
+
+#ifdef MFEM_THREAD_SAFE
+    mfem::Vector shape, g;
+    mfem::DenseMatrix dshape, pelmat;
+#endif
+    dshape.SetSize(N, dim);
+    shape.SetSize(N);
+    pelmat.SetSize(N);
+    g.SetSize(dim);
+
+    const auto* ir = GetIntegrationRule(el, Trans);
+    if (ir == NULL)
+    {
+        int order = order = 2 * el.GetOrder() + Trans.OrderW() - 1; //
+        ir = &mfem::IntRules.Get(el.GetGeomType(), order);
+    }
+
+    for (auto i = 0; i < ir->GetNPoints(); i++) {
+        const auto& ip = ir->IntPoint(i);
+        Trans.SetIntPoint(&ip);
+        auto w = Trans.Weight() * ip.weight;
+
+        el.CalcShape(ip, shape);
+        el.CalcPhysDShape(Trans, dshape);
+
+        QV->Eval(g, Trans, ip);
+        w *= Q->Eval(Trans, ip); 
+        for (auto k = 0; k < dim; k++) {
+            auto dshape_column = mfem::Vector(dshape.GetColumn(k), N);
+            mfem::MultVWt(dshape_column, shape, pelmat);
+            for (auto l = 0; l < dim; l++) {
+                real_t _w = w * g(l);
+                elmat.AddMatrix(_w, pelmat, k * N, l * N);
+            }
+        }
+    }
+}
+
 void DeformationGradientInterpolator::AssembleElementMatrix2(
     const mfem::FiniteElement& in_fe, const mfem::FiniteElement& out_fe,
     mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
@@ -505,7 +599,7 @@ void DeformationGradientInterpolator::AssembleElementMatrix2(
   auto matrixIndex = MatrixIndex(space_dim, out_dof);
 
 #ifdef MFEM_THREAD_SAFE
-  DenseMatrix dshape();
+  DenseMatrix dshape;
 #endif
   dshape.SetSize(in_dof, space_dim);
   elmat.SetSize(matrixIndex.Size(), vectorIndex.Size());
@@ -542,7 +636,7 @@ void StrainInterpolator::AssembleElementMatrix2(
   auto matrixIndex = SymmetricMatrixIndex(space_dim, out_dof);
 
 #ifdef MFEM_THREAD_SAFE
-  DenseMatrix dshape();
+  DenseMatrix dshape;
 #endif
   dshape.SetSize(in_dof, space_dim);
   elmat.SetSize(matrixIndex.Size(), vectorIndex.Size());
@@ -579,7 +673,7 @@ void DeviatoricStrainInterpolator::AssembleElementMatrix2(
   auto matrixIndex = TraceFreeSymmetricMatrixIndex(space_dim, out_dof);
 
 #ifdef MFEM_THREAD_SAFE
-  auto dshape = DenseMatrix();
+  DenseMatrix dshape;
 #endif
   dshape.SetSize(in_dof, space_dim);
   elmat.SetSize(matrixIndex.Size(), vectorIndex.Size());

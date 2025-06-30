@@ -13,8 +13,8 @@ void DomainLFDeformationGradientIntegrator::AssembleRHSElementVect(
               "Width of matrix coefficient must equal spatial dimension");
 
 #ifdef MFEM_THREAD_SAFE
-  DenseMatrix dshape(), m();
-  Vector v();
+  DenseMatrix dshape, m;
+  Vector v;
 #endif
   dshape.SetSize(dof, space_dim);
   m.SetSize(space_dim, space_dim);

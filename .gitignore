@@ -1,5 +1,8 @@
 **/*build*
 **/install
 **/*~
+CMakeLists.txt
+installed/
+*.json
 
 
