@@ -134,17 +134,7 @@ $$
 $$
 
 where $q$ is a scalar coefficient, $v$ a matrix test function, and $u$
-a vector trial function. The matrix field is implemented as a $n^{2}$-dimensional vector ```mfem::GridFunction``` with the matrix's components stored in column-major order. In 2D, for example, this ordering corresponds to:
-
-$$
-\left(\begin{array}{cc}
-v_{00} & v_{01} \\ v_{10} & v_{11}
-\end{array}\right) \mapsto \left(
-\begin{array}{c}
-v_{00} \\ v_{10} \\ v_{01} \\ v_{11}
-\end{array}
-\right).
-$$
+a vector trial function. The matrix field is implemented as a $n^{2}$-dimensional vector ```mfem::GridFunction``` with the matrix's components stored in column-major order. 
 
 ### DomainSymmetricMatrixStrainIntegrator
 
@@ -156,17 +146,7 @@ $$
 
 where $q$ is a scalar coefficient, $v$ a symmetric matrix test function, and $u$
 a vector trial function. The matrix field is implemented as a $\frac{1}{2}n(n+1)$-dimensional vector ```mfem::GridFunction``` with the matrix's components from the lower-triangle stored in column-major order.
-In 2D, for example, this ordering corresponds to:
 
-$$
-\left(\begin{array}{cc}
-v_{00} & v_{01} \\ v_{01} & v_{11}
-\end{array}\right) \mapsto \left(
-\begin{array}{c}
-v_{00} \\ v_{01}  \\ v_{11}
-\end{array}
-\right).
-$$ 
 
 ### DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
 
@@ -177,17 +157,7 @@ $$
 $$
 
 where $q$ is a scalar coefficient, $v$ a symmetric matrix test function, and $u$
-a vector trial function. The trace-freee and symmetric matrix field is implemented as a $\frac{1}{2}n(n+1)-1$-dimensional vector ```mfem::GridFunction``` with the matrix's components from the lower-triangle stored in column-major order but with the final element removed.  In 2D, for example, this ordering corresponds to:
-
-$$
-\left(\begin{array}{cc}
-v_{00} & v_{01} \\ v_{01} & -v_{00}
-\end{array}\right) \mapsto \left(
-\begin{array}{c}
-v_{00} \\ v_{01}
-\end{array}
-\right).
-$$ 
+a vector trial function. The trace-freee and symmetric matrix field is implemented as a $\frac{1}{2}n(n+1)-1$-dimensional vector ```mfem::GridFunction``` with the matrix's components from the lower-triangle stored in column-major order but with the final element removed.  
 
 ## ```mfem::DiscreteInterpolator```
 
