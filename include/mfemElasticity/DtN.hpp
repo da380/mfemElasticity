@@ -20,6 +20,14 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   mfem::real_t _radius;
   const mfem::real_t pi = 3.1415926535897932385;
 
+  mfem::SparseMatrix _mat;
+
+#ifndef MFEM_THREAD_SAFE
+  mutable mfem::Vector _c;
+  mfem::Vector shape;
+  mfem::DenseMatrix elmat;
+#endif
+
   // Check the mesh has the correct properties.
   void CheckMesh() {
     auto* mesh = _fes->GetMesh();
@@ -67,13 +75,89 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     assert(_radius > 0);
   }
 
+  void AssembleElementMatrix(const mfem::FiniteElement& fe,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) {
+    auto dof = fe.GetDof();
+    auto n = NumberOfCoefficients();
+
+#ifdef MFEM_THREAD_SAFE
+    mfem::Vector _c, shape;
+#endif
+    _c.SetSize(n);
+    shape.SetSize(dof);
+    elmat.SetSize(n, dof);
+    elmat = 0.0;
+
+    auto x = mfem::Vector(2);
+
+    auto fac = 1 / (pi * _radius);
+
+    const auto* ir = GetIntegrationRule(fe, Trans);
+    if (ir == nullptr) {
+      int intorder = 2 * fe.GetOrder() + Trans.OrderW();
+      ir = &mfem::IntRules.Get(fe.GetGeomType(), intorder);
+    }
+
+    for (auto j = 0; j < ir->GetNPoints(); j++) {
+      const auto& ip = ir->IntPoint(j);
+      Trans.SetIntPoint(&ip);
+      Trans.Transform(ip, x);
+      auto th = std::atan2(x[1], x[0]);
+      auto w = fac * Trans.Weight() * ip.weight;
+
+      fe.CalcShape(ip, shape);
+
+      for (auto k = -_kmax; k < 0; k++) {
+        _c(k + _kmax) = w * std::cos(k * th);
+      }
+
+      _c(_kmax) = 0.5 * w;
+
+      for (auto k = 1; k <= _kmax; k++) {
+        _c(k + _kmax) = w * std::sin(k * th);
+      }
+
+      mfem::AddMult_a_VWt(1, _c, shape, elmat);
+    }
+  }
+
+  void Assemble() {
+    auto* mesh = _fes->GetMesh();
+
+    auto elmat = mfem::DenseMatrix();
+    auto vdofs = mfem::Array<int>();
+    auto rows = mfem::Array<int>(NumberOfCoefficients());
+    for (auto i = 0; i < rows.Size(); i++) {
+      rows[i] = i;
+    }
+
+    for (auto i = 0; i < _fes->GetNBE(); i++) {
+      const auto bdr_attr = mesh->GetBdrAttribute(i);
+      if (bdr_attr == _dtn_bdr_attr) {
+        const auto* fe = _fes->GetBE(i);
+        auto* Trans = _fes->GetBdrElementTransformation(i);
+
+        _fes->GetBdrElementVDofs(i, vdofs);
+        AssembleElementMatrix(*fe, *Trans, elmat);
+
+        _mat.AddSubMatrix(rows, vdofs, elmat);
+      }
+    }
+
+    _mat.Finalize();
+  }
+
  public:
-  Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr = 0)
-      : mfem::Operator(fes->GetTrueVSize()),
+  Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr,
+            const mfem::IntegrationRule* ir = nullptr)
+      : mfem::Integrator(ir),
+        mfem::Operator(fes->GetTrueVSize()),
         _fes{fes},
         _kmax{kmax},
         _dtn_bdr_attr{dtn_bdr_attr},
-        _radius{0} {
+        _radius{0},
+        _mat(NumberOfCoefficients(), fes->GetTrueVSize()) {
     // Check the maximum wavenumber.
     assert(_kmax > -1);
 
@@ -87,70 +171,27 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
 
     // Get the boundary radius and check for consistency.
     GetRadius();
+
+    // Assemble the sparse matrix.
+    Assemble();
   }
 
-  // Maps a GridFunction onto its Fourier coefficients on the boundary.
-  void FourierTransformation(const mfem::Vector& x,
-                             mfem::Vector& coeffs) const {
-    auto* mesh = _fes->GetMesh();
-    mfem::Array<int> vdofs;
-    mfem::Vector elvec, point, shape;
+  int NumberOfCoefficients() const { return 2 * _kmax + 1; }
 
-    coeffs.SetSize(2 * _kmax + 1);
-    coeffs = 0.;
-
-    auto fac = 1 / (pi * _radius);
-
-    for (auto i = 0; i < _fes->GetNBE(); i++) {
-      const auto bdr_attr = mesh->GetBdrAttribute(i);
-      if (bdr_attr == _dtn_bdr_attr) {
-        const auto* el = _fes->GetBE(i);
-        auto* Trans = _fes->GetBdrElementTransformation(i);
-
-        const auto* ir = GetIntegrationRule(*el, *Trans);
-        if (ir == nullptr) {
-          int intorder = 2 * el->GetOrder() + Trans->OrderW();
-          ir = &mfem::IntRules.Get(el->GetGeomType(), intorder);
-        }
-
-        _fes->GetBdrElementVDofs(i, vdofs);
-        x.GetSubVector(vdofs, elvec);
-
-        auto dof = el->GetDof();
-        shape.SetSize(dof);
-
-        for (auto j = 0; j < ir->GetNPoints(); j++) {
-          const auto& ip = ir->IntPoint(j);
-          Trans->SetIntPoint(&ip);
-          Trans->Transform(ip, point);
-          auto th = std::atan2(point[1], point[0]);
-          auto w = fac * Trans->Weight() * ip.weight;
-
-          el->CalcShape(ip, shape);
-          auto value = (shape * elvec) * w;
-
-          auto l = 0;
-          for (auto k = -_kmax; k < 0; k++) {
-            coeffs(k + _kmax) += value * std::cos(k * th);
-          }
-
-          coeffs(_kmax) += 0.5 * value;
-
-          for (auto k = 1; k <= _kmax; k++) {
-            coeffs(k + _kmax) += value * std::sin(k * th);
-          }
-        }
-      }
-    }
+  void FourierCoefficients(const mfem::Vector& x, mfem::Vector& c) const {
+    _mat.Mult(x, c);
   }
-
-  // Maps Fourier coefficients to a GridFunction on the boundary.
-  void InverseFourierTransformation(const mfem::Vector& coeffs,
-                                    mfem::Vector& x) const {}
 
   void Mult(const mfem::Vector& x, mfem::Vector& y) const override {
+#ifdef MFEM_THREAD_SAFE
+    mfem::Vector _c;
+#endif
     y.SetSize(x.Size());
-    y = 0.;
+    _mat.Mult(x, _c);
+    for (auto k = -_kmax; k <= _kmax; k++) {
+      _c[k + _kmax] *= pi * std::abs(k);
+    }
+    _mat.MultTranspose(_c, y);
   }
 
   void MultTranspose(const mfem::Vector& x, mfem::Vector& y) const override {

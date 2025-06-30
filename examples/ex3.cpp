@@ -1,4 +1,5 @@
 #include <cmath>
+#include <vector>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
@@ -30,7 +31,7 @@ int main(int argc, char* argv[]) {
   int dim = mesh.Dimension();
 
   {
-    int ref_levels = (int)floor(log((dim == 2 ? 1000 : 10000) / mesh.GetNE()) /
+    int ref_levels = (int)floor(log((dim == 2 ? 5000 : 10000) / mesh.GetNE()) /
                                 log(2.) / dim);
     for (int l = 0; l < ref_levels; l++) {
       mesh.UniformRefinement();
@@ -44,21 +45,27 @@ int main(int argc, char* argv[]) {
   auto f = FunctionCoefficient([](const Vector& x) {
     auto r = x.Norml2();
     auto th = atan2(x(1), x(0));
-    return sin(th);
+    return cos(2 * th);
   });
 
-  auto u = GridFunction(&fes);
-  u.ProjectCoefficient(f);
+  auto u1 = GridFunction(&fes);
+  u1.ProjectCoefficient(f);
 
-  auto kmax = 4;
-  auto A = DtN::Poisson2D(&fes, kmax);
+  auto u2 = GridFunction(&fes);
 
-  auto coeffs = Vector();
-  A.FourierTransformation(u, coeffs);
+  auto kmax = 6;
+  auto A = DtN::Poisson2D(&fes, kmax, 2);
+
+  auto c = Vector(2 * kmax + 1);
+
+  A.FourierCoefficients(u1, c);
 
   for (auto k = -kmax; k <= kmax; k++) {
-    cout << k << " " << coeffs(k + kmax) << endl;
+    cout << k << " " << c[k + kmax] << endl;
   }
+
+  /*
+  A.Mult(u1, u2);
 
   ofstream mesh_ofs("refined.mesh");
   mesh_ofs.precision(8);
@@ -66,5 +73,6 @@ int main(int argc, char* argv[]) {
 
   ofstream sol_ofs("sol.gf");
   sol_ofs.precision(8);
-  u.Save(sol_ofs);
+  u2.Save(sol_ofs);
+  */
 }
