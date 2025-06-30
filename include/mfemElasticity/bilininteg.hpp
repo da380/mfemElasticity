@@ -452,7 +452,7 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
 BilinearFormIntegrator acting on a test vector field, v, and a
 trial vector field, u, according to:
 
-(v,u) \mapstp \int_{\Omega} q_{i} v_{i} i_{j,j} dx,
+(v,u) \mapstp \int_{\Omega} q_{i} v_{i} u_{j,j} dx,
 
 where \Omega is the domain and q a vector coefficient.
 */

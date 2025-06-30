@@ -1,6 +1,6 @@
 # mfemElasticity
 
-This library contains extensions to the mfem library associated with the solution of elastic and viscoelastic problems. The particular focus is on geophysical applications. 
+This library contains extensions to the mfem library associated with the solution of elastic and viscoelastic problems. 
 
 # Installation
 
@@ -36,32 +36,159 @@ cmake -S mfemElasticity -B mfemElasticityBuild \
 
 # Contents of the library
 
-## Solvers
+## ```mfem::Solvers```
 
 ### RigidBodySolver
 
-A custom ```mfem::Solver``` is defined for the solution of static linearised elastic boundary value problems subject to pure traction conditions. In such cases, a solution only exists if the forces and tractions apply no net torque or net force to the body. And the solution is only defined up to the addition of a linearised rigid body motion. 
+An instance of the ```mfem::Solver``` class that wraps another solver, and orthogonally projects out rigid body motions. Used in the solution of static or quasi-static problems with traction boundary conditions. See ```ex1.cpp``` and ```ex1p.cpp``` for an example of its usage. 
 
-The solver ```mfemElasticity::RigidBodySolver``` is formed by wrapping another solver for the problem. Its action on a right hand side vector proceeds by:
+## ```mfem::LinearFormIntegrator``` and   ```mfem::BilinearFormIntegrator```
 
-- Projecting orthogonally to the space of linearised rigidbody motions,
-- Calling the underlying solver,
-- Projecting the result orthogonally   to the space of linearised rigidbody motions. 
+A number of classes derived from ```mfem::LinearFormIntegrator``` and ```mfem::BilinearFormIntegrator``` are defined. In each case, vector or matrix fields are defined on finite-element spaces formed by appropriate tensor-products of a scalar-finite element space. 
 
-The first projection insures that the effective right hand side lies in the range of the linear equations and hence that a solution exists. The final projection removes any component in the kernel of the linear operator that might have been generated during the solution process. Doing so selects on particular solution to the problem. 
+### DomainLFDeformationGradientIntegrator
 
-If the right hand side satisfies the existence conditions, then the first projection does nothing. If the existence condition is not met, then an exact solution to the equations is not produced. Instead, a minimum residual solution is found. 
-
-## LinearFormsIntegrations
-
-### DomainLFMatrixDeformationGradientIntegrator
-
-An ```mfem::LinearFormIntegrator``` is defined the form:
-
+The ```mfem::LinearFormIntegrator``` associated with
 $$
-\mathbf{u} \mapsto \int_{\Omega} m_{ij} u_{i,j} \,\mathrm{d} x, 
+u \mapsto \int_{\Omega} m_{ij} u_{i,j} \,\mathrm{d} x, 
+$$
+for a vector-field $u$ and a matrix-field $m_{ij}$. 
+
+
+###  DomainVectorScalarIntegrator
+
+The ```mfem::BilinearFormIntegrator``` associated with 
+$$
+(v,u) \mapsto \int_{\Omega} q_{i} v_{i} u \,\mathrm{d} x, 
+$$
+where $\Omega$ is a domain, $q$ a vector-coefficient, $v$ a vector test function, and $u$ a scalar trial function.
+
+### DomainVectorGradScalarIntegrator
+
+The ```mfem::BilinearFormIntegrator``` associated with
+$$
+(v, u) \mapsto \int_{\Omega} v_{i} q_{ij} u_{,j} \,\mathrm{d} x, 
+$$
+where $\Omega$ is a domain, $q$ a matrix-coefficient, $v$ a vector test function, and $u$ a scalar trial function. The matrix coefficient can be input as:
+
+- A ```Coefficient```, in which case $q$ is proportional to the identity matrix;
+- A ```VectorCoefficient```, in which case $q$ is a diagonal matrix;
+- A ```MatrixCoefficient``` which is the general case. 
+
+### DomainDivVectorScalarIntegrator
+
+The ```mfem::BilinearFormIntegrator``` associated with 
+$$
+(v,u) \mapsto \int_{\Omega} q \,v_{i,i} u \,\mathrm{d} x, 
+$$
+where $\Omega$ is a domain, $v$ a vector test function, and $u$ a 
+scalar trial function. 
+
+### DomainDivVectorDivVectorIntegrator
+
+The ```mfem::BilinearFormIntegrator``` associated with 
+$$
+(v,u) \mapsto \int_{\Omega} q \,v_{i,i} u_{j,j} \,\mathrm{d} x, 
+$$
+where $\Omega$ is a domain, $v$ a vector test function, and $u$ a vector trial function. 
+
+### DomainVectorGradVectorIntegrator
+
+The ```mfem::BilinearFormIntegrator``` associated with 
+$$
+(v, u) \mapsto \int_{\Omega} q v_{i} (w_{j} u_{j})_{,i} \mathrm{d} x, 
+$$
+where $q$ is a scalar coefficient, $v$ a vector test function, 
+$w$ a vector coefficient, and $u$ a vector trial function. 
+
+### DomainVectorDivVectorIntegrator
+
+The ```mfem::BinlinearFormIntegrator``` associated with 
+$$
+(v,u) \mapsto \int_{\Omega} q_{i} v_{i} u_{j,j}\,\mathrm{d }x,
+$$
+where $\Omega$ is a domain, $q$ a vector coefficient, $v$ a vector 
+test function, and $u$ a vector trial function. 
+
+
+### DomainMatrixDeformationGradientIntegrator
+
+The ```mfem::BilinearFormIntegrator``` associated with 
+$$
+(v,u) \mapsto \int_{\Omega} q\, v_{ij} u_{i,j} \,\mathrm{d} x, 
+$$
+where $q$ is a scalar coefficient, $v$ a matrix test function, and $u$
+a vector trial function. The matrix field is implemented as a $n^{2}$-dimensional vector ```mfem::GridFunction``` with the matrix's components stored in column-major order. In 2D, for example, this ordering corresponds to:
+$$
+\left(\begin{array}{cc}
+v_{00} & v_{01} \\ v_{10} & v_{11}
+\end{array}\right) \mapsto \left(
+\begin{array}{c}
+v_{00} \\ v_{10} \\ v_{01} \\ v_{11}
+\end{array}
+\right).
 $$
 
-where $\mathbf{m}$ is a matrix-valued function and $\Omega$ is the domain. The matrix is specified as an ```mfem::MatrixCoefficient``` while the form acts on elements of a nodal finite element space that is formed from the product of scalar spaces. 
+### DomainSymmetricMatrixStrainIntegrator
 
-## BilinearFormIntegrators
+The ```mfem::BilinearFormIntegrator``` associated with 
+$$
+(v,u) \mapsto \int_{\Omega} q\, v_{ij} u_{i,j} \,\mathrm{d} x, 
+$$
+where $q$ is a scalar coefficient, $v$ a symmetric matrix test function, and $u$
+a vector trial function. The matrix field is implemented as a $\frac{1}{2}n(n+1)$-dimensional vector ```mfem::GridFunction``` with the matrix's components from the lower-triangle stored in column-major order.
+In 2D, for example, this ordering corresponds to:
+$$
+\left(\begin{array}{cc}
+v_{00} & v_{01} \\ v_{01} & v_{11}
+\end{array}\right) \mapsto \left(
+\begin{array}{c}
+v_{00} \\ v_{01}  \\ v_{11}
+\end{array}
+\right).
+$$ 
+
+### DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
+
+The ```mfem::BilinearFormIntegrator``` associated with 
+$$
+(v,u) \mapsto \int_{\Omega} q\, v_{ij} u_{i,j} \,\mathrm{d} x, 
+$$
+where $q$ is a scalar coefficient, $v$ a symmetric matrix test function, and $u$
+a vector trial function. The trace-freee and symmetric matrix field is implemented as a $\frac{1}{2}n(n+1)-1$-dimensional vector ```mfem::GridFunction``` with the matrix's components from the lower-triangle stored in column-major order but with the final element removed.  In 2D, for example, this ordering corresponds to:
+$$
+\left(\begin{array}{cc}
+v_{00} & v_{01} \\ v_{01} & -v_{00}
+\end{array}\right) \mapsto \left(
+\begin{array}{c}
+v_{00} \\ v_{01}
+\end{array}
+\right).
+$$ 
+
+## ```mfem::DiscreteInterpolator```
+
+A number of classes derived from ```mfem::DiscreteInterpolator``` are defined. Matrix fields are implemented using vector 
+instances of ```mfem::Gridfunction``` with the appropriate dimension and using the ordering conventions discussed above. 
+
+### DeformationGradientInterpolator
+The ```mfem::DiscreteInterpolator``` associated with 
+$$
+u_{i} \mapsto u_{i,j}, 
+$$
+for a vector field. The result is a matrix field. 
+
+### StrainInterpolator
+The ```mfem::DiscreteInterpolator``` associated with 
+$$
+u_{i} \mapsto \frac{1}{2}(u_{i,j} + u_{j,i}), 
+$$
+for a vector field. The result is a symmetric matrix field. 
+
+### DeviatoricStrainInterpolator 
+
+The ```mfem::DiscreteInterpolator``` associated with 
+$$
+u_{i} \mapsto \frac{1}{2}(u_{i,j} + u_{j,i}) - \frac{1}{n}u_{k,k}\delta_{ij}
+$$
+for a vector field. The result is a trace-free symmetric matrix field. 
