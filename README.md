@@ -200,6 +200,7 @@ The ```mfem::DiscreteInterpolator``` associated with
 $$
 u_{i} \mapsto u_{i,j}, 
 $$
+
 for a vector field. The result is a matrix field. 
 
 ### StrainInterpolator
@@ -208,6 +209,7 @@ The ```mfem::DiscreteInterpolator``` associated with
 $$
 u_{i} \mapsto \frac{1}{2}(u_{i,j} + u_{j,i}), 
 $$
+
 for a vector field. The result is a symmetric matrix field. 
 
 ### DeviatoricStrainInterpolator 
@@ -217,4 +219,5 @@ The ```mfem::DiscreteInterpolator``` associated with
 $$
 u_{i} \mapsto \frac{1}{2}(u_{i,j} + u_{j,i}) - \frac{1}{n}u_{k,k}\delta_{ij}
 $$
+
 for a vector field. The result is a trace-free symmetric matrix field. 
