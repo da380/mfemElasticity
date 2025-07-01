@@ -13,7 +13,6 @@ Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr,
       _fes{fes},
       _kmax{kmax},
       _dtn_bdr_attr{dtn_bdr_attr},
-      _radius{0},
       _mat(NumberOfCoefficients(), fes->GetTrueVSize()) {
   assert(_kmax > -1);
 
@@ -22,9 +21,7 @@ Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr,
   if (dtn_bdr_attr < 1) {
     GetDtNBoundaryAttribute();
   }
-
   GetRadius();
-
   Assemble();
 }
 
@@ -39,8 +36,9 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 #endif
   y.SetSize(x.Size());
   _mat.Mult(x, _c);
+  auto fac = pi * _radius;
   for (auto k = -_kmax; k <= _kmax; k++) {
-    _c[k + _kmax] *= pi * std::abs(k);
+    _c[k + _kmax] *= fac * std::abs(k);
   }
   _mat.MultTranspose(_c, y);
 }
@@ -65,7 +63,7 @@ void Poisson2D::GetDtNBoundaryAttribute() {
 void Poisson2D::GetRadius() {
   auto* mesh = _fes->GetMesh();
   auto x = mfem::Vector();
-
+  _radius = 0.0;
   for (auto i = 0; i < _fes->GetNBE(); i++) {
     const auto bdr_attr = mesh->GetBdrAttribute(i);
     if (bdr_attr == _dtn_bdr_attr) {
