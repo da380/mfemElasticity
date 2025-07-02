@@ -12,6 +12,7 @@ const real_t pi = 3.14159265358979323846264338327950288;
 const real_t G = 1;
 const real_t rho = 1;
 const real_t radius = 1;
+const real_t outer_radius = 10.0;
 const real_t x00 = 0.5;
 const real_t x01 = 0.0;
 
@@ -54,48 +55,46 @@ int main(int argc, char *argv[]) {
   cout << "Number of finite element unknowns: " << fespace.GetTrueVSize()
        << endl;
 
+  Array<int> ess_tdof_list;
+  if (mesh.bdr_attributes.Size()) {
+    Array<int> ess_bdr(mesh.bdr_attributes.Max());
+    ess_bdr = 0;
+    fespace.GetEssentialTrueDofs(ess_bdr, ess_tdof_list);
+  }
+
+  // Add in the first part of the RHS
+  auto rho_coefficient = ConstantCoefficient(rho);
+  auto domain_marker = Array<int>{1, 0};
+  LinearForm b(&fespace);
+  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient), domain_marker);
+
+  // Add in the correction term.
+  auto mass = pi * radius * radius * rho;
+  auto boundary_coefficient =
+      ConstantCoefficient(-mass / (2 * pi * outer_radius));
+  auto boundary_marker = Array<int>{0, 1};
+  b.AddBoundaryIntegrator(new BoundaryLFIntegrator(boundary_coefficient),
+                          boundary_marker);
+
+  // Assemble the RHS.
+  b.Assemble();
+  b *= -4 * pi * G;
+
   BilinearForm a(&fespace);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
-
-  auto C = DtN::Poisson2D(&fespace, kmax, 0);
-
-  // Set the density.
-  auto rho_coefficient =
-      FunctionCoefficient([=](const Vector &x) { return rho; });
-
-  // Set up the form on the domain.
-  auto domain_marker = Array<int>{1, 0};
-  LinearForm b1(&fespace);
-  b1.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient),
-                         domain_marker);
-  b1.Assemble();
-  auto mass = b1.Sum();
-
-  // And now the form on the boundary.
-  auto b2 = LinearForm(&fespace);
-  auto one = ConstantCoefficient(1);
-  auto boundary_marker = Array<int>{0, 1};
-  b2.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
-  b2.Assemble();
-  auto length = b2.Sum();
-
-  // Form the total form.
-  b1.Add(-mass / length, b2);
-  b1 *= -4 * pi * G;
 
   OperatorPtr A;
   Vector B, X;
   auto x = GridFunction(&fespace);
   x = 0.0;
-
-  Array<int> ess_tdof_list{};
-  a.FormLinearSystem(ess_tdof_list, x, b1, A, X, B);
+  a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
   cout << "Size of linear system: " << A->Height() << endl;
 
-  GSSmoother M((SparseMatrix &)(*A));
-
+  auto C = DtN::Poisson2D(&fespace, kmax, 0);
   auto D = SumOperator(A.Ptr(), 1, &C, 1, false, false);
+
+  GSSmoother M((SparseMatrix &)(*A));
 
   auto solver = CGSolver();
   solver.SetOperator(D);
@@ -109,7 +108,7 @@ int main(int argc, char *argv[]) {
   orthoSolver.SetSolver(solver);
   orthoSolver.Mult(B, X);
 
-  a.RecoverFEMSolution(X, b1, x);
+  a.RecoverFEMSolution(X, b, x);
 
   auto phi = FunctionCoefficient([=](const Vector &x) {
     auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
@@ -117,7 +116,7 @@ int main(int argc, char *argv[]) {
     if (r < radius) {
       return pi * G * rho * r * r;
     } else {
-      return 2 * pi * G * rho * radius * log(r / radius) +
+      return 2 * pi * G * radius * radius * log(r / radius) +
              pi * G * rho * radius * radius;
     }
   });

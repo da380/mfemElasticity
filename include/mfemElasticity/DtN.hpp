@@ -49,6 +49,8 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
 
   int NumberOfCoefficients() const { return 2 * _kmax + 1; }
 
+  mfem::real_t Radius() const { return _radius; }
+
   void FourierCoefficients(const mfem::Vector& x, mfem::Vector& c) const;
 
   void Mult(const mfem::Vector& x, mfem::Vector& y) const override;

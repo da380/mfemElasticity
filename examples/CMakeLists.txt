@@ -18,5 +18,8 @@ target_link_libraries(ex3 mfemElasticity)
 add_executable(ex4 ex4.cpp)
 target_link_libraries(ex4 mfemElasticity)
 
+add_executable(ex5 ex5.cpp)
+target_link_libraries(ex5 mfemElasticity)
+
 
 

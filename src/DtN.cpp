@@ -34,12 +34,13 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 #ifdef MFEM_THREAD_SAFE
   mfem::Vector _c;
 #endif
-  y.SetSize(x.Size());
+  _c.SetSize(NumberOfCoefficients());
   _mat.Mult(x, _c);
   auto fac = pi * _radius;
   for (auto k = -_kmax; k <= _kmax; k++) {
     _c[k + _kmax] *= fac * std::abs(k);
   }
+  y.SetSize(x.Size());
   _mat.MultTranspose(_c, y);
 }
 
@@ -115,22 +116,28 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
     const auto& ip = ir->IntPoint(j);
     Trans.SetIntPoint(&ip);
     Trans.Transform(ip, x);
-    auto th = std::atan2(x[1], x[0]);
     auto w = fac * Trans.Weight() * ip.weight;
 
     fe.CalcShape(ip, shape);
 
-    for (auto k = -_kmax; k < 0; k++) {
-      _c(k + _kmax) = w * std::cos(k * th);
-    }
+    auto norm = x.Norml2();
+    auto sin = x[1] / norm;
+    auto cos = x[0] / norm;
 
-    _c(_kmax) = 0.5 * w;
+    auto sin_k_m = 0.0;
+    auto cos_k_m = 1.0;
 
+    _c(_kmax) = 0.5;
     for (auto k = 1; k <= _kmax; k++) {
-      _c(k + _kmax) = w * std::sin(k * th);
+      auto sin_k = sin_k_m * cos + cos_k_m * sin;
+      auto cos_k = cos_k_m * cos - sin_k_m * sin;
+      _c(-k + _kmax) = cos_k;
+      _c(k + _kmax) = sin_k;
+      sin_k_m = sin_k;
+      cos_k_m = cos_k;
     }
 
-    mfem::AddMult_a_VWt(1, _c, shape, elmat);
+    mfem::AddMult_a_VWt(w, _c, shape, elmat);
   }
 }
 
@@ -147,10 +154,10 @@ void Poisson2D::Assemble() {
   for (auto i = 0; i < _fes->GetNBE(); i++) {
     const auto bdr_attr = mesh->GetBdrAttribute(i);
     if (bdr_attr == _dtn_bdr_attr) {
+      _fes->GetBdrElementVDofs(i, vdofs);
       const auto* fe = _fes->GetBE(i);
       auto* Trans = _fes->GetBdrElementTransformation(i);
 
-      _fes->GetBdrElementVDofs(i, vdofs);
       AssembleElementMatrix(*fe, *Trans, elmat);
 
       _mat.AddSubMatrix(rows, vdofs, elmat);
