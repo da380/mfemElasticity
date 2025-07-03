@@ -6,14 +6,12 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr,
-                     const mfem::IntegrationRule* ir)
-    : mfem::Integrator(ir),
-      mfem::Operator(fes->GetTrueVSize()),
+Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr)
+    : mfem::Operator(fes->GetTrueVSize()),
       _fes{fes},
       _kmax{kmax},
       _dtn_bdr_attr{dtn_bdr_attr},
-      _mat(NumberOfCoefficients(), fes->GetTrueVSize()) {
+      _mat(2 * _kmax, fes->GetTrueVSize()) {
   assert(_kmax > -1);
 
   CheckMesh();
@@ -22,7 +20,6 @@ Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr,
     GetDtNBoundaryAttribute();
   }
   GetRadius();
-  Assemble();
 }
 
 void Poisson2D::FourierCoefficients(const mfem::Vector& x,
@@ -34,11 +31,15 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 #ifdef MFEM_THREAD_SAFE
   mfem::Vector _c;
 #endif
-  _c.SetSize(NumberOfCoefficients());
+  _c.SetSize(2 * _kmax);
   _mat.Mult(x, _c);
-  auto fac = pi * _radius;
-  for (auto k = -_kmax; k <= _kmax; k++) {
-    _c[k + _kmax] *= fac * std::abs(k);
+
+  auto j = 0;
+  for (auto i = 0; i < _kmax; i++) {
+    auto fac = std::abs(i + 1) * pi;
+    _c[j] *= fac;
+    _c[j + 1] *= fac;
+    j += 2;
   }
   y.SetSize(x.Size());
   _mat.MultTranspose(_c, y);
@@ -92,7 +93,7 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
                                       mfem::ElementTransformation& Trans,
                                       mfem::DenseMatrix& elmat) {
   auto dof = fe.GetDof();
-  auto n = NumberOfCoefficients();
+  auto n = 2 * _kmax;
 
 #ifdef MFEM_THREAD_SAFE
   mfem::Vector _c, shape;
@@ -127,14 +128,15 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
     auto sin_k_m = 0.0;
     auto cos_k_m = 1.0;
 
-    _c(_kmax) = 0.5;
+    auto i = 0;
     for (auto k = 1; k <= _kmax; k++) {
       auto sin_k = sin_k_m * cos + cos_k_m * sin;
       auto cos_k = cos_k_m * cos - sin_k_m * sin;
-      _c(-k + _kmax) = cos_k;
-      _c(k + _kmax) = sin_k;
+      _c(i) = cos_k;
+      _c(i + 1) = sin_k;
       sin_k_m = sin_k;
       cos_k_m = cos_k;
+      i += 2;
     }
 
     mfem::AddMult_a_VWt(w, _c, shape, elmat);
@@ -146,7 +148,7 @@ void Poisson2D::Assemble() {
 
   auto elmat = mfem::DenseMatrix();
   auto vdofs = mfem::Array<int>();
-  auto rows = mfem::Array<int>(NumberOfCoefficients());
+  auto rows = mfem::Array<int>(2 * _kmax);
   for (auto i = 0; i < rows.Size(); i++) {
     rows[i] = i;
   }

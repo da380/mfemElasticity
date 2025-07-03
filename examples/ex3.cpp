@@ -54,11 +54,38 @@ int main(int argc, char *argv[]) {
   cout << "Number of finite element unknowns: " << fespace.GetTrueVSize()
        << endl;
 
+  /*
+  auto A = DtN::Poisson2D(&fespace, kmax);
+  A.Assemble();
+
+  auto u = GridFunction(&fespace);
+  auto v = GridFunction(&fespace);
+  auto w = GridFunction(&fespace);
+
+  auto f = FunctionCoefficient([](const Vector &x) {
+    auto th = atan2(x[1], x[0]);
+    return sin(th);
+  });
+  auto g = FunctionCoefficient([](const Vector &x) {
+    auto th = atan2(x[1], x[0]);
+    return sin(th);
+  });
+
+  u.ProjectCoefficient(f);
+  v.ProjectCoefficient(g);
+
+  A.Mult(u, w);
+
+  cout << w * v << endl;
+
+  */
+
   BilinearForm a(&fespace);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::Poisson2D(&fespace, kmax, 0);
+  auto C = DtN::Poisson2D(&fespace, kmax);
+  C.Assemble();
 
   // Set the density.
   auto rho_coefficient =
@@ -122,8 +149,20 @@ int main(int argc, char *argv[]) {
     }
   });
 
+  auto l = LinearForm(&fespace);
+  l.AddDomainIntegrator(new DomainLFIntegrator(one));
+  l.Assemble();
+  auto area = l.Sum();
+  l /= area;
+
   auto y = GridFunction(&fespace);
   y.ProjectCoefficient(phi);
+
+  auto py = l * y;
+  y -= py;
+
+  auto px = l * x;
+  x -= px;
 
   ofstream mesh_ofs("refined.mesh");
   mesh_ofs.precision(8);

@@ -41,13 +41,10 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat);
 
-  void Assemble();
-
  public:
-  Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr,
-            const mfem::IntegrationRule* ir = nullptr);
+  Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr = 0);
 
-  int NumberOfCoefficients() const { return 2 * _kmax + 1; }
+  void Assemble();
 
   mfem::real_t Radius() const { return _radius; }
 
