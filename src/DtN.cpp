@@ -6,33 +6,45 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr)
+Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax)
     : mfem::Operator(fes->GetTrueVSize()),
       _fes{fes},
       _kmax{kmax},
-      _dtn_bdr_attr{dtn_bdr_attr},
       _mat(2 * _kmax, fes->GetTrueVSize()) {
-  assert(_kmax > -1);
-
+  assert(_kmax > 0);
   CheckMesh();
-
-  if (dtn_bdr_attr < 1) {
-    GetDtNBoundaryAttribute();
-  }
-  GetRadius();
+  GetDtNBoundaryAttribute();
 }
 
-void Poisson2D::FourierCoefficients(const mfem::Vector& x,
-                                    mfem::Vector& c) const {
-  _mat.Mult(x, c);
+#ifdef MFEM_USE_MPI
+Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax)
+    : mfem::Operator(fes->GetTrueVSize()),
+      _comm{comm},
+      _pfes{fes},
+      _fes{fes},
+      _kmax{kmax},
+      _mat(2 * _kmax, fes->GetTrueVSize()),
+      _parallel{true} {
+  assert(_kmax > 0);
+  CheckMesh();
+  GetDtNBoundaryAttribute();
 }
+#endif
 
 void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 #ifdef MFEM_THREAD_SAFE
   mfem::Vector _c;
 #endif
+
   _c.SetSize(2 * _kmax);
   _mat.Mult(x, _c);
+
+#ifdef MFEM_USE_MPI
+  if (_parallel) {
+    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), 2 * _kmax, MFEM_MPI_REAL_T,
+                  MPI_SUM, _comm);
+  }
+#endif
 
   auto j = 0;
   for (auto i = 0; i < _kmax; i++) {
@@ -62,33 +74,6 @@ void Poisson2D::GetDtNBoundaryAttribute() {
   }
 }
 
-void Poisson2D::GetRadius() {
-  auto* mesh = _fes->GetMesh();
-  auto x = mfem::Vector();
-  _radius = 0.0;
-  for (auto i = 0; i < _fes->GetNBE(); i++) {
-    const auto bdr_attr = mesh->GetBdrAttribute(i);
-    if (bdr_attr == _dtn_bdr_attr) {
-      const auto* el = _fes->GetBE(i);
-      auto* Trans = _fes->GetBdrElementTransformation(i);
-      const auto ir = el->GetNodes();
-      for (auto j = 0; j < ir.GetNPoints(); j++) {
-        const mfem::IntegrationPoint& ip = ir.IntPoint(j);
-        Trans->SetIntPoint(&ip);
-        Trans->Transform(ip, x);
-        auto r = x.Norml2();
-        if (_radius == 0.0) {
-          _radius = r;
-        } else {
-          auto err = std::abs(r - _radius);
-          assert(err < 1e-3 * _radius);
-        }
-      }
-    }
-  }
-  assert(_radius > 0);
-}
-
 void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
                                       mfem::ElementTransformation& Trans,
                                       mfem::DenseMatrix& elmat) {
@@ -105,11 +90,9 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
   auto x = mfem::Vector(2);
 
-  auto fac = 1 / (pi * _radius);
-
   const auto* ir = GetIntegrationRule(fe, Trans);
   if (ir == nullptr) {
-    int intorder = 2 * fe.GetOrder() + Trans.OrderW();
+    int intorder = fe.GetOrder() + Trans.OrderW();
     ir = &mfem::IntRules.Get(fe.GetGeomType(), intorder);
   }
 
@@ -117,13 +100,13 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
     const auto& ip = ir->IntPoint(j);
     Trans.SetIntPoint(&ip);
     Trans.Transform(ip, x);
-    auto w = fac * Trans.Weight() * ip.weight;
 
     fe.CalcShape(ip, shape);
 
-    auto norm = x.Norml2();
-    auto sin = x[1] / norm;
-    auto cos = x[0] / norm;
+    auto ri = 1 / x.Norml2();
+
+    auto sin = x[1] * ri;
+    auto cos = x[0] * ri;
 
     auto sin_k_m = 0.0;
     auto cos_k_m = 1.0;
@@ -139,6 +122,8 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
       i += 2;
     }
 
+    auto w = ri * Trans.Weight() * ip.weight / pi;
+
     mfem::AddMult_a_VWt(w, _c, shape, elmat);
   }
 }
@@ -149,7 +134,7 @@ void Poisson2D::Assemble() {
   auto elmat = mfem::DenseMatrix();
   auto vdofs = mfem::Array<int>();
   auto rows = mfem::Array<int>(2 * _kmax);
-  for (auto i = 0; i < rows.Size(); i++) {
+  for (auto i = 0; i < 2 * _kmax; i++) {
     rows[i] = i;
   }
 

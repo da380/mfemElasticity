@@ -14,13 +14,17 @@ namespace DtN {
 
 class Poisson2D : public mfem::Integrator, public mfem::Operator {
  private:
+  const mfem::real_t pi = 3.141592653589793238462643383279;
   mfem::FiniteElementSpace* _fes;
   int _kmax;
   int _dtn_bdr_attr;
-  mfem::real_t _radius;
-  const mfem::real_t pi = 3.1415926535897932385;
-
   mfem::SparseMatrix _mat;
+
+#ifdef MFEM_USE_MPI
+  bool _parallel = false;
+  mfem::ParFiniteElementSpace* _pfes;
+  MPI_Comm _comm;
+#endif
 
 #ifndef MFEM_THREAD_SAFE
   mutable mfem::Vector _c;
@@ -42,19 +46,30 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
                              mfem::DenseMatrix& elmat);
 
  public:
-  Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr = 0);
+  Poisson2D(mfem::FiniteElementSpace* fes, int kmax);
+
+#ifdef MFEM_USE_MPI
+  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax);
+#endif
 
   void Assemble();
-
-  mfem::real_t Radius() const { return _radius; }
-
-  void FourierCoefficients(const mfem::Vector& x, mfem::Vector& c) const;
 
   void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
 
   void MultTranspose(const mfem::Vector& x, mfem::Vector& y) const override {
     Mult(x, y);
   }
+
+  /*
+#ifdef MFEM_USE_MPI
+  auto RAP() const {
+    auto* R = _pfes->GetRestrictionMatrix();
+    auto* P = _pfes->GetProlongationMatrix();
+    auto RP = mfem::ProductOperator(R, P, true, true);
+    return RP;
+  }
+#endif
+*/
 };
 
 }  // namespace DtN

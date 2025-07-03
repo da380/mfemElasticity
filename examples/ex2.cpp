@@ -1,109 +1,159 @@
-
-#include <cmath>
 #include <fstream>
 #include <iostream>
-#include <random>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
+using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
-using namespace std;
 
-DenseMatrix RandomMatrix(int dim) {
-  std::random_device rd;
-  std::mt19937 gen(rd());
-  std::normal_distribution<> distrib(0, 1);
+const real_t pi = 3.14159265358979323846264338327950288;
+const real_t G = 1;
+const real_t rho = 1;
+const real_t radius = 1;
+const real_t x00 = 0.5;
+const real_t x01 = 0.0;
 
-  auto A = DenseMatrix(dim);
-  for (auto j = 0; j < dim; j++) {
-    for (auto i = 0; i < dim; i++) {
-      A(i, j) = distrib(gen);
-    }
-  }
-  return A;
-}
-
-int main(int argc, char* argv[]) {
-  // Parse command-line options.
-  auto mesh_file = std::string("../data/star.mesh");
+int main(int argc, char *argv[]) {
+  // 1. Parse command-line options.
+  const char *mesh_file =
+      "/home/david/dev/meshing/examples/circular_offset.msh";
+  // const char *mesh_file =
+  // "/home/david/dev/meshing/examples/circular_shell.msh";
   int order = 1;
+  int ref_levels = 0;
+  int kmax = 8;
 
-  auto args = mfem::OptionsParser(argc, argv);
+  OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
   args.AddOption(&order, "-o", "--order",
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
+  args.AddOption(&ref_levels, "-r", "--refine", "Number of mesh refinements");
+  args.AddOption(&kmax, "-kmax", "--kmax", "Order for Fourier exapansion");
+
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(std::cout);
+    args.PrintUsage(cout);
     return 1;
   }
-  args.PrintOptions(std::cout);
+  args.PrintOptions(cout);
 
-  // Read the mesh from the given mesh file.
-  auto mesh = Mesh(mesh_file, 1, 1);
+  Mesh mesh(mesh_file, 1, 1);
+  int dim = mesh.Dimension();
 
-  auto dim = mesh.Dimension();
   {
-    int ref_levels = (int)floor(log(500. / mesh.GetNE()) / log(2.) / dim);
     for (int l = 0; l < ref_levels; l++) {
       mesh.UniformRefinement();
     }
   }
 
-  auto L2 = L2_FECollection(order, dim);
-  auto H1 = H1_FECollection(order + 1, dim);
+  auto fec = H1_FECollection(order, dim);
+  auto fespace = FiniteElementSpace(&mesh, &fec);
+  cout << "Number of finite element unknowns: " << fespace.GetTrueVSize()
+       << endl;
 
-  auto vector_fes = FiniteElementSpace(&mesh, &H1, dim);
-  auto deviatoric_strain_fes =
-      FiniteElementSpace(&mesh, &L2, dim * (dim + 1) / 2 - 1);
+  BilinearForm a(&fespace);
+  a.AddDomainIntegrator(new DiffusionIntegrator());
+  a.Assemble();
 
-  auto q = FunctionCoefficient([](const Vector& x) { return x.Norml2(); });
+  auto C = DtN::Poisson2D(&fespace, kmax);
+  C.Assemble();
 
-  auto b = MixedBilinearForm(&vector_fes, &deviatoric_strain_fes);
-  b.AddDomainIntegrator(
-      new DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator(q));
-  b.Assemble();
+  // Set the density.
+  auto rho_coefficient =
+      FunctionCoefficient([=](const Vector &x) { return rho; });
 
-  auto B = RandomMatrix(dim);
-  auto uF = VectorFunctionCoefficient(
-      dim, [B](const Vector& x, Vector& y) { B.Mult(x, y); });
-  auto u = GridFunction(&vector_fes);
-  u.ProjectCoefficient(uF);
+  // Set up the form on the domain.
+  auto domain_marker = Array<int>{1, 0};
+  LinearForm b1(&fespace);
+  b1.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient),
+                         domain_marker);
+  b1.Assemble();
+  auto mass = b1.Sum();
 
-  auto A = RandomMatrix(dim);
-  A.Symmetrize();
-  auto trace = A.Trace();
-  for (auto i = 0; i < dim; i++) {
-    A(i, i) -= trace / dim;
-  }
+  // And now the form on the boundary.
+  auto b2 = LinearForm(&fespace);
+  auto one = ConstantCoefficient(1);
+  auto boundary_marker = Array<int>{0, 1};
+  b2.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
+  b2.Assemble();
+  auto length = b2.Sum();
 
-  auto a = Vector(dim * (dim + 1) / 2 - 1);
-  auto k = 0;
-  for (auto j = 0; j < dim - 1; j++) {
-    for (auto i = j; i < dim; i++) {
-      a(k++) = A(i, j);
+  // Form the total form.
+  b1.Add(-mass / length, b2);
+  b1 *= -4 * pi * G;
+
+  OperatorPtr A;
+  Vector B, X;
+  auto x = GridFunction(&fespace);
+  x = 0.0;
+
+  Array<int> ess_tdof_list{};
+  a.FormLinearSystem(ess_tdof_list, x, b1, A, X, B);
+  cout << "Size of linear system: " << A->Height() << endl;
+
+  GSSmoother M((SparseMatrix &)(*A));
+
+  auto D = SumOperator(A.Ptr(), 1, &C, 1, false, false);
+
+  auto solver = CGSolver();
+  solver.SetOperator(D);
+  solver.SetPreconditioner(M);
+
+  solver.SetRelTol(1e-12);
+  solver.SetMaxIter(2000);
+  solver.SetPrintLevel(1);
+
+  auto orthoSolver = OrthoSolver();
+  orthoSolver.SetSolver(solver);
+  orthoSolver.Mult(B, X);
+
+  a.RecoverFEMSolution(X, b1, x);
+
+  auto phi = FunctionCoefficient([=](const Vector &x) {
+    auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
+    r = sqrt(r);
+    if (r < radius) {
+      return pi * G * rho * r * r;
+    } else {
+      return 2 * pi * G * rho * radius * log(r / radius) +
+             pi * G * rho * radius * radius;
     }
-  }
-  auto vF = VectorConstantCoefficient(a);
+  });
 
-  auto v = GridFunction(&deviatoric_strain_fes);
-  v.ProjectCoefficient(vF);
-
-  auto w = GridFunction(&deviatoric_strain_fes);
-  b.Mult(u, w);
-
-  auto value1 = v * w;
-
-  auto AF = MatrixConstantCoefficient(A);
-  auto MF = ScalarMatrixProductCoefficient(q, AF);
-  auto l = LinearForm(&vector_fes);
-  l.AddDomainIntegrator(new DomainLFDeformationGradientIntegrator(MF));
+  auto l = LinearForm(&fespace);
+  l.AddDomainIntegrator(new DomainLFIntegrator(one));
   l.Assemble();
+  auto area = l.Sum();
+  l /= area;
 
-  auto value2 = l * u;
+  auto y = GridFunction(&fespace);
+  y.ProjectCoefficient(phi);
 
-  cout << value1 << " " << value2 << endl;
+  auto py = l * y;
+  y -= py;
+
+  auto px = l * x;
+  x -= px;
+
+  ofstream mesh_ofs("refined.mesh");
+  mesh_ofs.precision(8);
+  mesh.Print(mesh_ofs);
+
+  ofstream sol_ofs("sol.gf");
+  sol_ofs.precision(8);
+  x.Save(sol_ofs);
+
+  ofstream exact_ofs("exact.gf");
+  exact_ofs.precision(8);
+  y.Save(exact_ofs);
+
+  x -= y;
+  ofstream diff_ofs("diff.gf");
+  diff_ofs.precision(8);
+  x.Save(diff_ofs);
+
+  return 0;
 }

@@ -72,6 +72,7 @@ mfem::real_t RigidBodySolver::Dot(const mfem::Vector &x,
                                   const mfem::Vector &y) const {
 #ifdef MFEM_USE_MPI
   return _parallel ? mfem::InnerProduct(_comm, x, y) : mfem::InnerProduct(x, y);
+
 #else
   return mfem::InnerProduct(x, y);
 #endif
