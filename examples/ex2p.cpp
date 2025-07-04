@@ -24,6 +24,7 @@ int main(int argc, char *argv[]) {
 
   const char *mesh_file =
       "/home/david/dev/meshing/examples/circular_offset.msh";
+  // const char *mesh_file = "../data/star.mesh";
 
   int order = 1;
   int serial_refinement = 0;
@@ -82,109 +83,113 @@ int main(int argc, char *argv[]) {
   a.Assemble();
 
   auto C = DtN::Poisson2D(MPI_COMM_WORLD, &fespace, kmax);
-  C.Assemble();
 
-  /*
+  // Set the density.
+  auto rho_coefficient =
+      FunctionCoefficient([=](const Vector &x) { return rho; });
 
-    // Set the density.
-    auto rho_coefficient =
-        FunctionCoefficient([=](const Vector &x) { return rho; });
+  // Set up the form on the domain.
+  auto domain_marker = Array<int>{1, 0};
+  ParLinearForm b(&fespace);
+  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient), domain_marker);
+  b.Assemble();
+  auto mass = b(one_function);
 
-    // Set up the form on the domain.
-    auto domain_marker = Array<int>{1, 0};
-    ParLinearForm b(&fespace);
-    b.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient),
-  domain_marker); b.Assemble(); auto mass = b(one_function);
+  // And now the form on the boundary.
+  auto b2 = ParLinearForm(&fespace);
+  auto one = ConstantCoefficient(1);
+  auto boundary_marker = Array<int>{0, 1};
+  b2.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
+  b2.Assemble();
+  auto length = b2(one_function);
 
-    // And now the form on the boundary.
-    auto b2 = ParLinearForm(&fespace);
-    auto one = ConstantCoefficient(1);
-    auto boundary_marker = Array<int>{0, 1};
-    b2.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
-    b2.Assemble();
-    auto length = b2(one_function);
+  // Form the total form.
+  b.Add(-mass / length, b2);
+  b *= -4 * pi * G;
 
-    // Form the total form.
-    b.Add(-mass / length, b2);
-    b *= -4 * pi * G;
+  // Form the Linear system.
+  auto x = ParGridFunction(&fespace);
+  x = 0.0;
+  Array<int> ess_tdof_list{};
+  HypreParMatrix A;
+  Vector B, X;
+  a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-    // Form the Linear system.
-    auto x = ParGridFunction(&fespace);
-    x = 0.0;
-    Array<int> ess_tdof_list{};
-    HypreParMatrix A;
-    Vector B, X;
-    a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
+  auto RCP = C.RAP();
+  auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &RCP, 1, false, false);
 
-    auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &C, 1, false, false);
+  auto prec = HypreBoomerAMG(A);
+  // auto prec = HypreSmoother(A);
+  // prec.SetType(HypreSmoother::Type::GS);
+  // auto prec = HypreILU();
+  // prec.SetOperator(*dynamic_cast<Operator *>(&A));
 
-    // Set the solver.
-    auto solver = CGSolver(MPI_COMM_WORLD);
-    // auto solver = HyprePCG(MPI_COMM_WORLD);
-    // solver.SetPreconditioner(prec);
-    solver.SetOperator(D);
+  // Set the solver.
+  // auto solver = CGSolver(MPI_COMM_WORLD);
+  auto solver = GMRESSolver(MPI_COMM_WORLD);
 
-    solver.SetRelTol(1e-12);
-    solver.SetMaxIter(10000);
-    solver.SetPrintLevel(1);
+  solver.SetOperator(D);
+  solver.SetPreconditioner(prec);
 
-    // Set the orthosolver.
-    auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
-    orthoSolver.SetSolver(solver);
+  solver.SetRelTol(1e-12);
+  solver.SetMaxIter(10000);
+  solver.SetPrintLevel(1);
 
-    // Solve and recover the solution.
-    orthoSolver.Mult(B, X);
-    a.RecoverFEMSolution(X, b, x);
+  // Set the orthosolver.
+  auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
+  orthoSolver.SetSolver(solver);
 
-    auto phi = FunctionCoefficient([=](const Vector &x) {
-      auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
-      r = sqrt(r);
-      if (r < radius) {
-        return pi * G * rho * r * r;
-      } else {
-        return 2 * pi * G * rho * radius * log(r / radius) +
-               pi * G * rho * radius * radius;
-      }
-    });
+  // Solve and recover the solution.
+  orthoSolver.Mult(B, X);
+  a.RecoverFEMSolution(X, b, x);
 
-    auto l = ParLinearForm(&fespace);
-    l.AddDomainIntegrator(new DomainLFIntegrator(one));
-    l.Assemble();
-    auto area = l(one_function);
-    l /= area;
+  auto phi = FunctionCoefficient([=](const Vector &x) {
+    auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
+    r = sqrt(r);
+    if (r < radius) {
+      return pi * G * rho * r * r;
+    } else {
+      return 2 * pi * G * rho * radius * log(r / radius) +
+             pi * G * rho * radius * radius;
+    }
+  });
 
-    auto y = ParGridFunction(&fespace);
-    y.ProjectCoefficient(phi);
+  auto l = ParLinearForm(&fespace);
+  l.AddDomainIntegrator(new DomainLFIntegrator(one));
+  l.Assemble();
+  auto area = l(one_function);
+  l /= area;
 
-    auto py = l(y);
-    y -= py;
+  auto y = ParGridFunction(&fespace);
+  y.ProjectCoefficient(phi);
 
-    auto px = l(x);
-    x -= px;
+  auto py = l(y);
+  y -= py;
 
-    x -= y;
+  auto px = l(x);
+  x -= px;
 
-    // Write to file.
-    ostringstream mesh_name, sol_name;
-    mesh_name << "mesh." << setfill('0') << setw(6) << myid;
-    sol_name << "sol." << setfill('0') << setw(6) << myid;
+  x -= y;
 
-    ofstream mesh_ofs(mesh_name.str().c_str());
-    mesh_ofs.precision(8);
-    pmesh.Print(mesh_ofs);
+  // Write to file.
+  ostringstream mesh_name, sol_name;
+  mesh_name << "mesh." << setfill('0') << setw(6) << myid;
+  sol_name << "sol." << setfill('0') << setw(6) << myid;
 
-    ofstream sol_ofs(sol_name.str().c_str());
-    sol_ofs.precision(8);
-    x.Save(sol_ofs);
+  ofstream mesh_ofs(mesh_name.str().c_str());
+  mesh_ofs.precision(8);
+  pmesh.Print(mesh_ofs);
 
-    // Visualise if glvis is open.
-    char vishost[] = "localhost";
-    int visport = 19916;
-    socketstream sol_sock(vishost, visport);
-    sol_sock << "parallel " << num_procs << " " << myid << "\n";
-    sol_sock.precision(8);
-    sol_sock << "solution\n" << pmesh << x << flush;
-    sol_sock << "keys Rjlmc\n" << flush;
+  ofstream sol_ofs(sol_name.str().c_str());
+  sol_ofs.precision(8);
+  x.Save(sol_ofs);
 
-  */
+  // Visualise if glvis is open.
+  char vishost[] = "localhost";
+  int visport = 19916;
+  socketstream sol_sock(vishost, visport);
+  sol_sock << "parallel " << num_procs << " " << myid << "\n";
+  sol_sock.precision(8);
+  sol_sock << "solution\n" << pmesh << x << flush;
+  sol_sock << "keys Rjlbc\n" << flush;
 }

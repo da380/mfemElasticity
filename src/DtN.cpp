@@ -7,27 +7,30 @@ namespace mfemElasticity {
 namespace DtN {
 
 Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax)
-    : mfem::Operator(fes->GetTrueVSize()),
+    : mfem::Operator(fes->GetVSize()),
       _fes{fes},
       _kmax{kmax},
-      _mat(2 * _kmax, fes->GetTrueVSize()) {
+      _mat(2 * _kmax, fes->GetVSize()) {
   assert(_kmax > 0);
   CheckMesh();
   GetDtNBoundaryAttribute();
+  Assemble();
 }
 
 #ifdef MFEM_USE_MPI
 Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax)
-    : mfem::Operator(fes->GetTrueVSize()),
+    : mfem::Operator(fes->GetVSize()),
       _comm{comm},
       _pfes{fes},
       _fes{fes},
       _kmax{kmax},
-      _mat(2 * _kmax, fes->GetTrueVSize()),
+      _mat(2 * _kmax, fes->GetVSize()),
       _parallel{true} {
+  MPI_Comm_rank(_comm, &_rank);
   assert(_kmax > 0);
   CheckMesh();
   GetDtNBoundaryAttribute();
+  Assemble();
 }
 #endif
 
@@ -40,6 +43,7 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   _mat.Mult(x, _c);
 
 #ifdef MFEM_USE_MPI
+
   if (_parallel) {
     MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), 2 * _kmax, MFEM_MPI_REAL_T,
                   MPI_SUM, _comm);
@@ -152,6 +156,48 @@ void Poisson2D::Assemble() {
   }
 
   _mat.Finalize();
+}
+
+#ifdef MFEM_USE_MPI
+void Poisson2D::ParallelAssemble() {
+  auto* mesh = _pfes->GetMesh();
+
+  auto elmat = mfem::DenseMatrix();
+  auto vdofs = mfem::Array<int>();
+  auto rows = mfem::Array<int>(2 * _kmax);
+  for (auto i = 0; i < 2 * _kmax; i++) {
+    rows[i] = i;
+  }
+
+  for (auto i = 0; i < _pfes->GetNBE(); i++) {
+    const auto bdr_attr = mesh->GetBdrAttribute(i);
+    if (bdr_attr == _dtn_bdr_attr) {
+      _pfes->GetBdrElementVDofs(i, vdofs);
+      const auto* fe = _pfes->GetBE(i);
+      auto* Trans = _pfes->GetBdrElementTransformation(i);
+
+      AssembleElementMatrix(*fe, *Trans, elmat);
+
+      for (auto val : vdofs) {
+        if (val < 0) {
+          std::cout << val << std::endl;
+        }
+        if (val >= _mat.Width()) {
+          std::cout << _mat.Width() << " " << val << std::endl;
+        }
+      }
+
+      //_mat.AddSubMatrix(rows, vdofs, elmat);
+    }
+  }
+
+  _mat.Finalize();
+}
+#endif
+
+mfem::RAPOperator Poisson2D::RAP() const {
+  auto* P = _fes->GetProlongationMatrix();
+  return mfem::RAPOperator(*P, *this, *P);
 }
 
 }  // namespace DtN

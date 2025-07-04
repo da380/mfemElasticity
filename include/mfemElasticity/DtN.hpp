@@ -24,6 +24,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   bool _parallel = false;
   mfem::ParFiniteElementSpace* _pfes;
   MPI_Comm _comm;
+  int _rank;
 #endif
 
 #ifndef MFEM_THREAD_SAFE
@@ -45,6 +46,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat);
 
+  void Assemble();
+  void ParallelAssemble();
+
  public:
   Poisson2D(mfem::FiniteElementSpace* fes, int kmax);
 
@@ -52,24 +56,13 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax);
 #endif
 
-  void Assemble();
-
   void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
 
   void MultTranspose(const mfem::Vector& x, mfem::Vector& y) const override {
     Mult(x, y);
   }
 
-  /*
-#ifdef MFEM_USE_MPI
-  auto RAP() const {
-    auto* R = _pfes->GetRestrictionMatrix();
-    auto* P = _pfes->GetProlongationMatrix();
-    auto RP = mfem::ProductOperator(R, P, true, true);
-    return RP;
-  }
-#endif
-*/
+  mfem::RAPOperator RAP() const;
 };
 
 }  // namespace DtN

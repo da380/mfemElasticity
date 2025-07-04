@@ -59,7 +59,6 @@ int main(int argc, char *argv[]) {
   a.Assemble();
 
   auto C = DtN::Poisson2D(&fespace, kmax);
-  C.Assemble();
 
   // Set the density.
   auto rho_coefficient =
