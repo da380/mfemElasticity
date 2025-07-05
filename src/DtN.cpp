@@ -11,12 +11,8 @@ Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax)
       _fes{fes},
       _kmax{kmax},
       _mat(2 * _kmax, fes->GetVSize()) {
-  assert(_kmax > 0);
-  CheckMesh();
-  GetDtNBoundaryAttribute();
-  Assemble();
+  SetUp();
 }
-
 #ifdef MFEM_USE_MPI
 Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax)
     : mfem::Operator(fes->GetVSize()),
@@ -26,11 +22,7 @@ Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax)
       _kmax{kmax},
       _mat(2 * _kmax, fes->GetVSize()),
       _parallel{true} {
-  MPI_Comm_rank(_comm, &_rank);
-  assert(_kmax > 0);
-  CheckMesh();
-  GetDtNBoundaryAttribute();
-  Assemble();
+  SetUp();
 }
 #endif
 
@@ -43,7 +35,6 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   _mat.Mult(x, _c);
 
 #ifdef MFEM_USE_MPI
-
   if (_parallel) {
     MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), 2 * _kmax, MFEM_MPI_REAL_T,
                   MPI_SUM, _comm);
@@ -51,14 +42,21 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 #endif
 
   auto j = 0;
-  for (auto i = 0; i < _kmax; i++) {
-    auto fac = std::abs(i + 1) * pi;
-    _c[j] *= fac;
-    _c[j + 1] *= fac;
+  for (auto k = 1; k <= _kmax; k++) {
+    auto fac = k * pi;
+    _c(j) *= fac;
+    _c(j + 1) *= fac;
     j += 2;
   }
   y.SetSize(x.Size());
   _mat.MultTranspose(_c, y);
+}
+
+void Poisson2D::SetUp() {
+  assert(_kmax > 0);
+  CheckMesh();
+  GetDtNBoundaryAttribute();
+  Assemble();
 }
 
 void Poisson2D::CheckMesh() const {
@@ -108,7 +106,6 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
     fe.CalcShape(ip, shape);
 
     auto ri = 1 / x.Norml2();
-
     auto sin = x[1] * ri;
     auto cos = x[0] * ri;
 
@@ -157,43 +154,6 @@ void Poisson2D::Assemble() {
 
   _mat.Finalize();
 }
-
-#ifdef MFEM_USE_MPI
-void Poisson2D::ParallelAssemble() {
-  auto* mesh = _pfes->GetMesh();
-
-  auto elmat = mfem::DenseMatrix();
-  auto vdofs = mfem::Array<int>();
-  auto rows = mfem::Array<int>(2 * _kmax);
-  for (auto i = 0; i < 2 * _kmax; i++) {
-    rows[i] = i;
-  }
-
-  for (auto i = 0; i < _pfes->GetNBE(); i++) {
-    const auto bdr_attr = mesh->GetBdrAttribute(i);
-    if (bdr_attr == _dtn_bdr_attr) {
-      _pfes->GetBdrElementVDofs(i, vdofs);
-      const auto* fe = _pfes->GetBE(i);
-      auto* Trans = _pfes->GetBdrElementTransformation(i);
-
-      AssembleElementMatrix(*fe, *Trans, elmat);
-
-      for (auto val : vdofs) {
-        if (val < 0) {
-          std::cout << val << std::endl;
-        }
-        if (val >= _mat.Width()) {
-          std::cout << _mat.Width() << " " << val << std::endl;
-        }
-      }
-
-      //_mat.AddSubMatrix(rows, vdofs, elmat);
-    }
-  }
-
-  _mat.Finalize();
-}
-#endif
 
 mfem::RAPOperator Poisson2D::RAP() const {
   auto* P = _fes->GetProlongationMatrix();

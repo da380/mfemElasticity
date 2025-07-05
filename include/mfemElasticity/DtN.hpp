@@ -24,7 +24,6 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   bool _parallel = false;
   mfem::ParFiniteElementSpace* _pfes;
   MPI_Comm _comm;
-  int _rank;
 #endif
 
 #ifndef MFEM_THREAD_SAFE
@@ -33,13 +32,12 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   mfem::DenseMatrix elmat;
 #endif
 
-  // Check the mesh has the correct properties.
+  void SetUp();
+
   void CheckMesh() const;
 
   void GetDtNBoundaryAttribute();
 
-  // Get the radius of the DtN boundary, and verify that
-  // it is a circle.
   void GetRadius();
 
   void AssembleElementMatrix(const mfem::FiniteElement& fe,

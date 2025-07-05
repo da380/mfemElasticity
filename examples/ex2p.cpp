@@ -13,7 +13,7 @@ const real_t G = 1;
 const real_t rho = 1;
 const real_t radius = 1;
 const real_t x00 = 0.5;
-const real_t x01 = 0.0;
+const real_t x01 = 0.5;
 
 int main(int argc, char *argv[]) {
   // 1. Initialize MPI and HYPRE.
@@ -26,10 +26,10 @@ int main(int argc, char *argv[]) {
       "/home/david/dev/meshing/examples/circular_offset.msh";
   // const char *mesh_file = "../data/star.mesh";
 
-  int order = 1;
+  int order = 3;
   int serial_refinement = 0;
   int parallel_refinement = 0;
-  int kmax = 8;
+  int kmax = 16;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
