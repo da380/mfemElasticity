@@ -21,7 +21,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   mfem::FiniteElementSpace* _tr_fes;
   mfem::FiniteElementSpace* _te_fes;
   int _kmax;
-  mfem::real_t _bdr_radius = 1;
+  mfem::real_t _bdr_radius = 2;
   mfem::Array<int> _dom_marker;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _lmat;
@@ -55,7 +55,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     _x.SetSize(2);
     _c.SetSize(n);
     shape.SetSize(dof);
-    elmat.SetSize(n, dof);
+    elmat.SetSize(dof, n);
     elmat = 0.0;
 
     const auto* ir = GetIntegrationRule(fe, Trans);
@@ -100,7 +100,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
       }
 
       auto w = fac * Trans.Weight() * ip.weight;
-      AddMult_a_VWt(w, _c, shape, elmat);
+      AddMult_a_VWt(w, shape, _c, elmat);
     }
   }
 
@@ -135,7 +135,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
 
       fe.CalcShape(ip, shape);
 
-      _bdr_radius = _x.Norml2();
+      //_bdr_radius = _x.Norml2();
       auto inverse_radius = 1 / _bdr_radius;
 
       auto sin = _x[1] * inverse_radius;
@@ -168,13 +168,14 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   */
   Poisson2D(mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
             int kmax, int dom_marker, int bdr_marker)
-      : _tr_fes{tr_fes},
+      : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
+        _tr_fes{tr_fes},
         _te_fes{te_fes},
         _kmax{kmax},
         _dom_marker{dom_marker},
         _bdr_marker{bdr_marker},
         _lmat(te_fes->GetVSize(), 2 * _kmax + 1),
-        _rmat(2 * _kmax + 1, tr_fes->GetVSize()) {
+        _rmat(tr_fes->GetVSize(), 2 * _kmax + 1) {
     assert(_kmax >= 0);
     assert(_tr_fes->GetMesh() == _te_fes->GetMesh());
     auto* mesh = _tr_fes->GetMesh();
@@ -187,11 +188,12 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   */
   Poisson2D(mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
             int kmax)
-      : _tr_fes{tr_fes},
+      : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
+        _tr_fes{tr_fes},
         _te_fes{te_fes},
         _kmax{kmax},
         _lmat(te_fes->GetVSize(), 2 * _kmax + 1),
-        _rmat(2 * _kmax + 1, tr_fes->GetVSize()) {
+        _rmat(tr_fes->GetVSize(), 2 * _kmax + 1) {
     assert(_kmax >= 0);
     assert(_tr_fes->GetMesh() == _te_fes->GetMesh());
     auto* mesh = _tr_fes->GetMesh();
@@ -205,6 +207,55 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     mesh->MarkExternalBoundaries(_bdr_marker);
   }
 
+#ifdef MFEM_USE_MPI
+
+  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+            mfem::ParFiniteElementSpace* te_fes, int kmax, int dom_marker,
+            int bdr_marker)
+      : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
+        _comm{comm},
+        _tr_pfes{tr_fes},
+        _te_pfes{te_fes},
+        _tr_fes{tr_fes},
+        _te_fes{te_fes},
+        _kmax{kmax},
+        _dom_marker{dom_marker},
+        _bdr_marker{bdr_marker},
+        _lmat(te_fes->GetVSize(), 2 * _kmax + 1),
+        _rmat(tr_fes->GetVSize(), 2 * _kmax + 1),
+        _parallel{true} {
+    assert(_kmax >= 0);
+    assert(_tr_fes->GetMesh() == _te_fes->GetMesh());
+    auto* mesh = _tr_fes->GetMesh();
+    assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
+  }
+
+  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+            mfem::ParFiniteElementSpace* te_fes, int kmax)
+      : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
+        _comm{comm},
+        _tr_pfes{tr_fes},
+        _te_pfes{te_fes},
+        _tr_fes{tr_fes},
+        _te_fes{te_fes},
+        _kmax{kmax},
+        _lmat(te_fes->GetVSize(), 2 * _kmax + 1),
+        _rmat(tr_fes->GetVSize(), 2 * _kmax + 1),
+        _parallel{true} {
+    assert(_kmax >= 0);
+    assert(_tr_pfes->GetMesh() == _te_pfes->GetMesh());
+    auto* mesh = _te_pfes->GetMesh();
+    assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
+
+    _dom_marker.SetSize(mesh->attributes.Max());
+    _dom_marker = 1;
+
+    _bdr_marker.SetSize(mesh->bdr_attributes.Max());
+    _bdr_marker = 0;
+    mesh->MarkExternalBoundaries(_bdr_marker);
+  }
+#endif
+
   // Multiplication method for the operator.
   void Mult(const mfem::Vector& x, mfem::Vector& y) const override {
     using namespace mfem;
@@ -213,11 +264,11 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     Vector _c;
 #endif
     _c.SetSize(2 * _kmax + 1);
-    _rmat.Mult(x, _c);
+    _rmat.MultTranspose(x, _c);
 
 #ifdef MFEM_USE_MPI
     if (_parallel) {
-      MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), 2 * _kmax, MFEM_MPI_REAL_T,
+      MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), 2 * _kmax + 1, MFEM_MPI_REAL_T,
                     MPI_SUM, _comm);
     }
 #endif
@@ -243,8 +294,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
                     MPI_SUM, _comm);
     }
 #endif
+
     y.SetSize(_rmat.Width());
-    _rmat.MultTranspose(_c, y);
+    _rmat.Mult(_c, y);
   }
 
   // Assemble the sparse matrices associated with the operator.
@@ -284,7 +336,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
 
         AssembleRightElementMatrix(*fe, *Trans, elmat);
 
-        _rmat.AddSubMatrix(cdofs, vdofs, elmat);
+        _rmat.AddSubMatrix(vdofs, cdofs, elmat);
       }
     }
 
@@ -294,7 +346,11 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   // Return the associated RAP operator that occurs within
   // Linearsystems involving true degrees of freedom. For serial
   // calculations the operator and its RAP operator coincide.
-  mfem::RAPOperator RAP() const;
+  mfem::RAPOperator RAP() const {
+    auto* P_te = _te_pfes->GetProlongationMatrix();
+    auto* P_tr = _tr_pfes->GetProlongationMatrix();
+    return mfem::RAPOperator(*P_te, *this, *P_tr);
+  }
 };
 
 }  // namespace Multipole
