@@ -20,7 +20,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
  private:
   mfem::FiniteElementSpace* _fes;
   int _kmax;
-  int _dtn_bdr_attr;
+  mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
 
 #ifdef MFEM_USE_MPI
@@ -31,20 +31,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
 
 #ifndef MFEM_THREAD_SAFE
   mutable mfem::Vector _c;
-  mfem::Vector shape;
+  mfem::Vector shape, _x;
   mfem::DenseMatrix elmat;
 #endif
-
-  // Set up the operator. Note that this does not
-  // carry out the assembly.
-  void SetUp();
-
-  // Checks that the mesh is suitable.
-  void CheckMesh() const;
-
-  // Set the boundary attriubute to that for
-  // the external boundary.
-  void SetExternalBoundaryAttribute();
 
   // Element level calculation of sparse matrix.
   void AssembleElementMatrix(const mfem::FiniteElement& fe,
@@ -57,9 +46,8 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
 
     fes          -- The finite element space.
     kmax         -- Order for the Fourier exapansion.
-    dtn_bdr_attr -- Attribute for the boundary on which the DtN
-                    mapping is applied. If this is set to 0, then
-                    the meshes external boundary is used.
+    bdr_marker   -- Marker for the boundary on which the
+                    mapping is applied.
 
     Note that the operator is not ready for use following construction.
     Its Assemble() method must be called to assemble the neccesary
@@ -68,7 +56,24 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     It is assumed that the boundary to which the DtN mapping is evaluated
     is circular with centre at the origin.
   */
-  Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr);
+  Poisson2D(mfem::FiniteElementSpace* fes, int kmax,
+            mfem::Array<int>& bdr_marker);
+
+  /*
+  Construct the operator for a serial calculation using the default
+  choice of boundary.
+
+    fes          -- The finite element space.
+    kmax         -- Order for the Fourier exapansion.
+
+    Note that the operator is not ready for use following construction.
+    Its Assemble() method must be called to assemble the neccesary
+    sparse matrix.
+
+    It is assumed that the boundary to which the DtN mapping is evaluated
+    is circular with centre at the origin.
+  */
+  Poisson2D(mfem::FiniteElementSpace* fes, int kmax);
 
 #ifdef MFEM_USE_MPI
   /*
@@ -77,9 +82,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     comm         -- The MPI communicator.
     fes          -- The parallel finite element space.
     kmax         -- Order for the Fourier exapansion.
-    dtn_bdr_attr -- Attribute for the boundary on which the DtN
-                    mapping is applied. If this is set to 0, then
-                    the meshes external boundary is used.
+    bdr_marker   -- Marker for the boundary on which the
+                    mapping is applied.
+
 
     Note that the operator is not ready for use following construction.
     Its Assemble() method must be called to assemble the neccesary
@@ -89,7 +94,24 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     is circular with centre at the origin.
   */
   Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax,
-            int dtn_bdr_attr);
+            mfem::Array<int>& bdr_marker);
+
+  /*
+Construct the operator for a parallel calculation using the default
+choice of boundary.
+
+  comm         -- The MPI communicator.
+  fes          -- The parallel finite element space.
+  kmax         -- Order for the Fourier exapansion.
+
+  Note that the operator is not ready for use following construction.
+  Its Assemble() method must be called to assemble the neccesary
+  sparse matrix.
+
+  It is assumed that the boundary to which the DtN mapping is evaluated
+  is circular with centre at the origin.
+*/
+  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax);
 #endif
 
   // Multiplication method for the operator.

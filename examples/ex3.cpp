@@ -18,8 +18,7 @@ int main(int argc, char *argv[]) {
   // 1. Parse command-line options.
   const char *mesh_file =
       "/home/david/dev/meshing/examples/circular_offset.msh";
-  // const char *mesh_file =
-  // "/home/david/dev/meshing/examples/circular_shell.msh";
+
   int order = 3;
   int ref_levels = 0;
   int kmax = 16;
@@ -48,57 +47,55 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  auto fec = H1_FECollection(order, dim);
-  auto fespace = FiniteElementSpace(&mesh, &fec);
-  cout << "Number of finite element unknowns: " << fespace.GetTrueVSize()
-       << endl;
+  auto L2 = L2_FECollection(order - 1, dim);
+  auto H1 = H1_FECollection(order, dim);
+  auto dfes = FiniteElementSpace(&mesh, &L2);
+  auto fes = FiniteElementSpace(&mesh, &H1);
+  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
 
-  BilinearForm a(&fespace);
+  // Set piecewise coefficient for density.
+  auto rho_coeff1 = ConstantCoefficient(rho);
+  auto rho_coeff2 = ConstantCoefficient(0);
+
+  auto attr = Array<int>{1, 2};
+  auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
+  auto rho_coeff = PWCoefficient(attr, coeffs);
+
+  auto z = GridFunction(&dfes);
+  z.ProjectCoefficient(rho_coeff);
+
+  auto C = Multipole::Poisson2D(&dfes, &fes, kmax);
+  C.Assemble();
+
+  BilinearForm a(&fes);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::Poisson2D(&fespace, kmax);
-  C.Assemble();
-
-  // Set the density.
-  auto rho_coefficient =
-      FunctionCoefficient([=](const Vector &x) { return rho; });
-
   // Set up the form on the domain.
   auto domain_marker = Array<int>{1, 0};
-  LinearForm b1(&fespace);
-  b1.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient),
-                         domain_marker);
-  b1.Assemble();
-  auto mass = b1.Sum();
+  LinearForm b(&fes);
+  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff), domain_marker);
+  b.Assemble();
 
-  // And now the form on the boundary.
-  auto b2 = LinearForm(&fespace);
-  auto one = ConstantCoefficient(1);
-  auto boundary_marker = Array<int>{0, 1};
-  b2.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
-  b2.Assemble();
-  auto length = b2.Sum();
+  auto n = GridFunction(&fes);
+  C.Mult(z, n);
+  b -= n;
 
-  // Form the total form.
-  b1.Add(-mass / length, b2);
-  b1 *= -4 * M_PI * G;
+  b *= -4 * M_PI * G;
 
   OperatorPtr A;
   Vector B, X;
-  auto x = GridFunction(&fespace);
+  auto x = GridFunction(&fes);
   x = 0.0;
 
   Array<int> ess_tdof_list{};
-  a.FormLinearSystem(ess_tdof_list, x, b1, A, X, B);
+  a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
   cout << "Size of linear system: " << A->Height() << endl;
 
   GSSmoother M((SparseMatrix &)(*A));
 
-  auto D = SumOperator(A.Ptr(), 1, &C, 1, false, false);
-
   auto solver = CGSolver();
-  solver.SetOperator(D);
+  solver.SetOperator(*A);
   solver.SetPreconditioner(M);
 
   solver.SetRelTol(1e-12);
@@ -109,7 +106,7 @@ int main(int argc, char *argv[]) {
   orthoSolver.SetSolver(solver);
   orthoSolver.Mult(B, X);
 
-  a.RecoverFEMSolution(X, b1, x);
+  a.RecoverFEMSolution(X, b, x);
 
   auto phi = FunctionCoefficient([=](const Vector &x) {
     auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
@@ -122,13 +119,14 @@ int main(int argc, char *argv[]) {
     }
   });
 
-  auto l = LinearForm(&fespace);
+  auto one = ConstantCoefficient(1);
+  auto l = LinearForm(&fes);
   l.AddDomainIntegrator(new DomainLFIntegrator(one));
   l.Assemble();
   auto area = l.Sum();
   l /= area;
 
-  auto y = GridFunction(&fespace);
+  auto y = GridFunction(&fes);
   y.ProjectCoefficient(phi);
 
   auto py = l * y;

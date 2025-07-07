@@ -8,7 +8,6 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
-const real_t pi = 3.14159265358979323846264338327950288;
 const real_t G = 1;
 const real_t rho = 1;
 const real_t radius = 1;
@@ -82,7 +81,7 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::Poisson2D(MPI_COMM_WORLD, &fespace, kmax, 2);
+  auto C = DtN::Poisson2D(MPI_COMM_WORLD, &fespace, kmax);
   C.Assemble();
 
   // Set the density.
@@ -106,7 +105,7 @@ int main(int argc, char *argv[]) {
 
   // Form the total form.
   b.Add(-mass / length, b2);
-  b *= -4 * pi * G;
+  b *= -4 * M_PI * G;
 
   // Form the Linear system.
   auto x = ParGridFunction(&fespace);
@@ -120,13 +119,8 @@ int main(int argc, char *argv[]) {
   auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &RCP, 1, false, false);
 
   auto prec = HypreBoomerAMG(A);
-  // auto prec = HypreSmoother(A);
-  // prec.SetType(HypreSmoother::Type::GS);
-  // auto prec = HypreILU();
-  // prec.SetOperator(*dynamic_cast<Operator *>(&A));
 
   // Set the solver.
-  // auto solver = CGSolver(MPI_COMM_WORLD);
   auto solver = GMRESSolver(MPI_COMM_WORLD);
 
   solver.SetOperator(D);
@@ -148,10 +142,10 @@ int main(int argc, char *argv[]) {
     auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
     r = sqrt(r);
     if (r < radius) {
-      return pi * G * rho * r * r;
+      return M_PI * G * rho * r * r;
     } else {
-      return 2 * pi * G * rho * radius * log(r / radius) +
-             pi * G * rho * radius * radius;
+      return 2 * M_PI * G * rho * radius * log(r / radius) +
+             M_PI * G * rho * radius * radius;
     }
   });
 
