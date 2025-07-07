@@ -6,20 +6,23 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax)
+Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kmax, int dtn_bdr_attr)
     : mfem::Operator(fes->GetVSize()),
       _fes{fes},
       _kmax{kmax},
+      _dtn_bdr_attr{dtn_bdr_attr},
       _mat(2 * _kmax, fes->GetVSize()) {
   SetUp();
 }
 #ifdef MFEM_USE_MPI
-Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax)
+Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax,
+                     int dtn_bdr_attr)
     : mfem::Operator(fes->GetVSize()),
       _comm{comm},
       _pfes{fes},
       _fes{fes},
       _kmax{kmax},
+      _dtn_bdr_attr{dtn_bdr_attr},
       _mat(2 * _kmax, fes->GetVSize()),
       _parallel{true} {
   SetUp();
@@ -43,7 +46,7 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 
   auto j = 0;
   for (auto k = 1; k <= _kmax; k++) {
-    auto fac = k * pi;
+    auto fac = k * M_PI;
     _c(j) *= fac;
     _c(j + 1) *= fac;
     j += 2;
@@ -55,8 +58,9 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 void Poisson2D::SetUp() {
   assert(_kmax > 0);
   CheckMesh();
-  GetDtNBoundaryAttribute();
-  Assemble();
+  if (_dtn_bdr_attr == 0) {
+    SetExternalBoundaryAttribute();
+  }
 }
 
 void Poisson2D::CheckMesh() const {
@@ -64,7 +68,7 @@ void Poisson2D::CheckMesh() const {
   assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
 }
 
-void Poisson2D::GetDtNBoundaryAttribute() {
+void Poisson2D::SetExternalBoundaryAttribute() {
   auto* mesh = _fes->GetMesh();
   assert(mesh->HasBoundaryElements());
 
@@ -123,7 +127,7 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
       i += 2;
     }
 
-    auto w = ri * Trans.Weight() * ip.weight / pi;
+    auto w = ri * Trans.Weight() * ip.weight / M_PI;
 
     mfem::AddMult_a_VWt(w, _c, shape, elmat);
   }
