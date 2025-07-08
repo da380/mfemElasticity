@@ -21,7 +21,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   mfem::FiniteElementSpace* _tr_fes;
   mfem::FiniteElementSpace* _te_fes;
   int _kmax;
-  mfem::real_t _bdr_radius = 2;
+  mfem::real_t _bdr_radius;
   mfem::Array<int> _dom_marker;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _lmat;
@@ -38,6 +38,74 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   mutable mfem::Vector _c;
   mfem::Vector shape, _x;
   mfem::DenseMatrix elmat;
+#endif
+
+  // Get the radius of the external boundary. Returns 0 if
+  // the boundary is not present.
+  mfem::real_t ExternalBoundaryRadius() const {
+    using namespace mfem;
+    auto* mesh = _tr_fes->GetMesh();
+
+    auto radius = real_t{0};
+    auto x = Vector(2);
+
+    for (auto i = 0; i < _te_fes->GetNBE(); i++) {
+      const auto elm_attr = mesh->GetBdrAttribute(i);
+      if (_bdr_marker[elm_attr - 1] == 1) {
+        const auto* fe = _te_fes->GetBE(i);
+        auto* Trans = _te_fes->GetBdrElementTransformation(i);
+        const auto ir = fe->GetNodes();
+        const IntegrationPoint& ip = ir.IntPoint(0);
+        Trans->SetIntPoint(&ip);
+        Trans->Transform(ip, x);
+        radius = x.Norml2();
+        break;
+      }
+    }
+    return radius;
+  }
+
+#ifdef MFEM_USE_MPI
+
+  // Returns the radius of the external boundary for parallel
+  // calculations.
+  mfem::real_t ParallelExternalBoundaryRadius() const {
+    using namespace mfem;
+    auto local_radius = ExternalBoundaryRadius();
+    auto radius = real_t{0};
+    int rank;
+    int size;
+    MPI_Comm_rank(_comm, &rank);
+    MPI_Comm_size(_comm, &size);
+
+    if (rank == 0) {
+      auto radii = std::vector<real_t>(size);
+
+      MPI_Gather(&local_radius, 1, MFEM_MPI_REAL_T, radii.data(), 1,
+                 MFEM_MPI_REAL_T, 0, _comm);
+
+      for (auto i = 0; i < size; i++) {
+        if (radii[i] != 0) {
+          radius = radii[i];
+          break;
+        }
+      }
+
+      // Check for consistency between non-zero radii.
+      for (auto i = 0; i < size; i++) {
+        assert(radii[i] == 0 || std::abs(radii[i] - radius) < 1e-6 * radius);
+      }
+
+    } else {
+      MPI_Gather(&local_radius, 1, MFEM_MPI_REAL_T, nullptr, 0, MFEM_MPI_REAL_T,
+                 0, _comm);
+    }
+
+    MPI_Bcast(&radius, 1, MFEM_MPI_REAL_T, 0, _comm);
+
+    return radius;
+  }
+
 #endif
 
   // Element level assembly for right matrix.
@@ -180,6 +248,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     assert(_tr_fes->GetMesh() == _te_fes->GetMesh());
     auto* mesh = _tr_fes->GetMesh();
     assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
+
+    _bdr_radius = ExternalBoundaryRadius();
+    assert(_bdr_radius > 0);
   }
 
   /*
@@ -205,6 +276,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     _bdr_marker.SetSize(mesh->bdr_attributes.Max());
     _bdr_marker = 0;
     mesh->MarkExternalBoundaries(_bdr_marker);
+
+    _bdr_radius = ExternalBoundaryRadius();
+    assert(_bdr_radius > 0);
   }
 
 #ifdef MFEM_USE_MPI
@@ -228,6 +302,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     assert(_tr_fes->GetMesh() == _te_fes->GetMesh());
     auto* mesh = _tr_fes->GetMesh();
     assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
+
+    _bdr_radius = ParallelExternalBoundaryRadius();
+    assert(_bdr_radius > 0);
   }
 
   Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
@@ -253,6 +330,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     _bdr_marker.SetSize(mesh->bdr_attributes.Max());
     _bdr_marker = 0;
     mesh->MarkExternalBoundaries(_bdr_marker);
+
+    _bdr_radius = ParallelExternalBoundaryRadius();
+    // assert(_bdr_radius > 0);
   }
 #endif
 

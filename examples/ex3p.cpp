@@ -93,6 +93,7 @@ int main(int argc, char *argv[]) {
   z.ProjectCoefficient(rho_coeff);
 
   auto C = Multipole::Poisson2D(MPI_COMM_WORLD, &dfes, &fes, kmax);
+
   C.Assemble();
 
   auto a = ParBilinearForm(&fes);
