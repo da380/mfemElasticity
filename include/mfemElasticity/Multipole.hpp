@@ -104,11 +104,9 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   void Assemble();
 
   // Return the associated RAP operator that occurs within
-  // Linearsystems involving true degrees of freedom. For serial
-  // calculations the operator and its RAP operator coincide.
+  // linear systems involving true degrees of freedom.
   mfem::RAPOperator RAP() const;
 };
 
 }  // namespace Multipole
-
 }  // namespace mfemElasticity

@@ -124,11 +124,14 @@ int main(int argc, char *argv[]) {
 
   // Set the solver.
   auto solver = GMRESSolver(MPI_COMM_WORLD);
+  // auto solver = CGSolver(MPI_COMM_WORLD);
+  // auto solver = HyprePCG(MPI_COMM_WORLD);
 
   solver.SetPreconditioner(prec);
   solver.SetOperator(A);
 
   solver.SetRelTol(1e-12);
+  // solver.SetTol(1e-12);
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
