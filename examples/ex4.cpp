@@ -1,96 +1,127 @@
-
-#include <cmath>
 #include <fstream>
 #include <iostream>
-#include <random>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
+using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
-using namespace std;
 
-Mesh MakeMesh(int dim, int elementType) {
-  if (dim == 1) {
-    return Mesh::MakeCartesian1D(20);
-  } else if (dim == 2) {
-    return Mesh::MakeCartesian2D(
-        20, 20, elementType == 0 ? Element::TRIANGLE : Element::QUADRILATERAL);
-  } else {
-    return Mesh::MakeCartesian3D(
-        20, 20, 20,
-        elementType == 0 ? Element::TETRAHEDRON : Element::HEXAHEDRON);
-  }
-}
+const real_t G = 1;
+const real_t rho = 1;
+const real_t radius = 1;
+const real_t x00 = 0.25;
+const real_t x01 = 0.0;
+const real_t x02 = 0.0;
 
-int main(int argc, char* argv[]) {
-  // Parse command-line options.
-  // auto mesh_file = std::string("../data/star.mesh");
+int main(int argc, char *argv[]) {
+  // 1. Parse command-line options.
+  const char *mesh_file =
+      "/home/david/dev/meshing/examples/spherical_offset.msh";
   int order = 1;
+  int ref_levels = 0;
+  int lMax = 4;
+  int l = 0;
+  int m = 0;
 
-  auto args = mfem::OptionsParser(argc, argv);
-  // args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+  OptionsParser args(argc, argv);
+  args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
   args.AddOption(&order, "-o", "--order",
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
+  args.AddOption(&ref_levels, "-r", "--refine", "Number of mesh refinements");
+  args.AddOption(&lMax, "-lMax", "--lMax", "Order for Fourier exapansion");
+
+  args.AddOption(&l, "-l", "--l", "degree");
+  args.AddOption(&m, "-m", "--m", "order");
+
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(std::cout);
+    args.PrintUsage(cout);
     return 1;
   }
-  args.PrintOptions(std::cout);
+  args.PrintOptions(cout);
 
-  // Read the mesh from the given mesh file.
-  // auto mesh = Mesh(mesh_file, 1, 1);
+  Mesh mesh(mesh_file, 1, 1);
+  int dim = mesh.Dimension();
 
-  auto mesh = MakeMesh(2, 0);
-
-  auto dim = mesh.Dimension();
   {
-    int ref_levels = (int)floor(log(500. / mesh.GetNE()) / log(2.) / dim);
     for (int l = 0; l < ref_levels; l++) {
       mesh.UniformRefinement();
     }
   }
 
-  auto L2 = L2_FECollection(order, dim);
-  auto H1 = H1_FECollection(order + 1, dim);
+  auto fec = H1_FECollection(order, dim);
+  auto fes = FiniteElementSpace(&mesh, &fec);
+  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
 
-  auto vector_fes0 = FiniteElementSpace(&mesh, &H1, dim);
-  auto vector_fes1 = FiniteElementSpace(&mesh, &L2, dim);
-  auto scalar_fes = FiniteElementSpace(&mesh, &L2);
+  BilinearForm a(&fes);
+  a.AddDomainIntegrator(new DiffusionIntegrator());
+  a.Assemble();
 
-  auto q =
-      VectorFunctionCoefficient(dim, [](const Vector& x, Vector& y) { y = x; });
+  auto C = DtN::Poisson3D(&fes, lMax);
+  C.Assemble();
 
-  auto b = MixedBilinearForm(&vector_fes0, &vector_fes1);
-  b.AddDomainIntegrator(new DomainVectorDivVectorIntegrator(q));
+  /*
+  auto x = GridFunction(&fes);
+
+  auto f = FunctionCoefficient([l, m](const Vector &x) {
+    auto r = x.Norml2();
+    auto R = sqrt(x(0) * x(0) + x(1) * x(1));
+    auto phi = atan2(x(1), x(0));
+    auto theta = atan2(R, x(2));
+    auto p = Legendre(cos(theta), l);
+    return (abs(m) > 0 ? sqrt(2) : 1) * pow(r, l) * p(m) *
+           (m > 0 ? sin(m * phi) : cos(m * phi));
+  });
+
+  x.ProjectCoefficient(f);
+  */
+
+  // Set the density.
+  auto rho_coefficient =
+      FunctionCoefficient([=](const Vector &x) { return rho; });
+
+  // Set up the form on the domain.
+  auto domain_marker = Array<int>{1, 0};
+  LinearForm b(&fes);
+  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient), domain_marker);
   b.Assemble();
+  b *= -4 * M_PI * G;
 
-  auto uF =
-      VectorFunctionCoefficient(dim, [](const Vector& x, Vector& y) { y = x; });
-  auto u = GridFunction(&vector_fes0);
-  u.ProjectCoefficient(uF);
+  OperatorPtr A;
+  Vector B, X;
+  auto x = GridFunction(&fes);
+  x = 0.0;
 
-  auto vF =
-      VectorFunctionCoefficient(dim, [](const Vector& x, Vector& y) { y = x; });
-  auto v = GridFunction(&vector_fes1);
-  v.ProjectCoefficient(vF);
+  Array<int> ess_tdof_list{};
+  a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
+  cout << "Size of linear system: " << A->Height() << endl;
 
-  auto z = GridFunction(&vector_fes1);
-  b.Mult(u, z);
-  cout << z * v << endl;
+  GSSmoother M((SparseMatrix &)(*A));
 
-  auto wF = InnerProductCoefficient(q, vF);
-  auto w = GridFunction(&scalar_fes);
-  w.ProjectCoefficient(wF);
+  auto D = SumOperator(A.Ptr(), 1, &C, 1, false, false);
 
-  auto c = MixedBilinearForm(&scalar_fes, &vector_fes0);
-  c.AddDomainIntegrator(new DomainDivVectorScalarIntegrator());
-  c.Assemble();
+  auto solver = CGSolver();
+  solver.SetOperator(D);
+  solver.SetPreconditioner(M);
 
-  c.Mult(w, z);
+  solver.SetRelTol(1e-12);
+  solver.SetMaxIter(2000);
+  solver.SetPrintLevel(1);
 
-  cout << u * z << endl;
+  solver.Mult(B, X);
+
+  a.RecoverFEMSolution(X, b, x);
+
+  ofstream mesh_ofs("refined.mesh");
+  mesh_ofs.precision(8);
+  mesh.Print(mesh_ofs);
+
+  ofstream sol_ofs("sol.gf");
+  sol_ofs.precision(8);
+  x.Save(sol_ofs);
+
+  return 0;
 }

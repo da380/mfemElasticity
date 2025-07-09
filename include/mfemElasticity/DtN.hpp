@@ -7,6 +7,7 @@
 #include <type_traits>
 
 #include "mfem.hpp"
+#include "mfemElasticity/Legendre.hpp"
 
 namespace mfemElasticity {
 
@@ -19,7 +20,7 @@ in 2D space.
 class Poisson2D : public mfem::Integrator, public mfem::Operator {
  private:
   mfem::FiniteElementSpace* _fes;
-  int _kmax;
+  int _kMax;
   int _coeff_dim;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
@@ -46,7 +47,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   Construct the operator for a serial calculation.
 
     fes          -- The finite element space.
-    kmax         -- Order for the Fourier exapansion.
+    kMax         -- Order for the Fourier exapansion.
     bdr_marker   -- Marker for the boundary on which the
                     mapping is applied.
 
@@ -57,7 +58,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     It is assumed that the boundary to which the DtN mapping is evaluated
     is circular with centre at the origin.
   */
-  Poisson2D(mfem::FiniteElementSpace* fes, int kmax,
+  Poisson2D(mfem::FiniteElementSpace* fes, int kMax,
             mfem::Array<int>& bdr_marker);
 
   /*
@@ -65,7 +66,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   choice of boundary.
 
     fes          -- The finite element space.
-    kmax         -- Order for the Fourier exapansion.
+    kMax         -- Order for the Fourier exapansion.
 
     Note that the operator is not ready for use following construction.
     Its Assemble() method must be called to assemble the neccesary
@@ -74,7 +75,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     It is assumed that the boundary to which the DtN mapping is evaluated
     is circular with centre at the origin.
   */
-  Poisson2D(mfem::FiniteElementSpace* fes, int kmax);
+  Poisson2D(mfem::FiniteElementSpace* fes, int kMax);
 
 #ifdef MFEM_USE_MPI
   /*
@@ -82,7 +83,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
 
     comm         -- The MPI communicator.
     fes          -- The parallel finite element space.
-    kmax         -- Order for the Fourier exapansion.
+    kMax         -- Order for the Fourier exapansion.
     bdr_marker   -- Marker for the boundary on which the
                     mapping is applied.
 
@@ -94,7 +95,7 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
     It is assumed that the boundary to which the DtN mapping is evaluated
     is circular with centre at the origin.
   */
-  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax,
+  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
             mfem::Array<int>& bdr_marker);
 
   /*
@@ -103,7 +104,7 @@ choice of boundary.
 
   comm         -- The MPI communicator.
   fes          -- The parallel finite element space.
-  kmax         -- Order for the Fourier exapansion.
+  kMax         -- Order for the Fourier exapansion.
 
   Note that the operator is not ready for use following construction.
   Its Assemble() method must be called to assemble the neccesary
@@ -112,7 +113,7 @@ choice of boundary.
   It is assumed that the boundary to which the DtN mapping is evaluated
   is circular with centre at the origin.
 */
-  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kmax);
+  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax);
 #endif
 
   // Multiplication method for the operator.
@@ -132,14 +133,14 @@ choice of boundary.
   mfem::RAPOperator RAP() const;
 };
 
-/*
+/*=================================================================
 Class for the Dirichlet-to-Neumann mapping for the Poisson equation
-in 2D space.
-*/
+in 3D space.
+===================================================================*/
 class Poisson3D : public mfem::Integrator, public mfem::Operator {
  private:
   mfem::FiniteElementSpace* _fes;
-  int _lmax;
+  int _lMax;
   int _coeff_dim;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
@@ -152,7 +153,7 @@ class Poisson3D : public mfem::Integrator, public mfem::Operator {
 
 #ifndef MFEM_THREAD_SAFE
   mutable mfem::Vector _c;
-  mfem::Vector shape, _x;
+  mfem::Vector shape, _x, sines, cosines, _p, _p_old;
   mfem::DenseMatrix elmat;
 #endif
 
@@ -166,7 +167,7 @@ class Poisson3D : public mfem::Integrator, public mfem::Operator {
 Construct the operator for a serial calculation.
 
   fes          -- The finite element space.
-  lmax         -- Degree for the spherical harmonic exapansion.
+  lMax         -- Degree for the spherical harmonic exapansion.
   bdr_marker   -- Marker for the boundary on which the
                   mapping is applied.
 
@@ -177,7 +178,7 @@ Construct the operator for a serial calculation.
   It is assumed that the boundary to which the DtN mapping is evaluated
   is spherical with centre at the origin.
 */
-  Poisson3D(mfem::FiniteElementSpace* fes, int lmax,
+  Poisson3D(mfem::FiniteElementSpace* fes, int lMax,
             mfem::Array<int>& bdr_marker);
 
   /*
@@ -185,7 +186,7 @@ Construct the operator for a serial calculation.
   choice of boundary.
 
     fes          -- The finite element space.
-    lmax         -- Degree for the spherical harmonic exapansion.
+    lMax         -- Degree for the spherical harmonic exapansion.
 
     Note that the operator is not ready for use following construction.
     Its Assemble() method must be called to assemble the neccesary
@@ -194,7 +195,7 @@ Construct the operator for a serial calculation.
     It is assumed that the boundary to which the DtN mapping is evaluated
     is spherical with centre at the origin.
   */
-  Poisson3D(mfem::FiniteElementSpace* fes, int lmax);
+  Poisson3D(mfem::FiniteElementSpace* fes, int lMax);
 
 #ifdef MFEM_USE_MPI
   /*
@@ -202,7 +203,7 @@ Construct the operator for a serial calculation.
 
     comm         -- The MPI communicator.
     fes          -- The parallel finite element space.
-    lmax         -- Degree for the spherical harmonic exapansion.
+    lMax         -- Degree for the spherical harmonic exapansion.
     bdr_marker   -- Marker for the boundary on which the
                     mapping is applied.
 
@@ -214,7 +215,7 @@ Construct the operator for a serial calculation.
     It is assumed that the boundary to which the DtN mapping is evaluated
     is spherical with centre at the origin.
   */
-  Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lmax,
+  Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
             mfem::Array<int>& bdr_marker);
 
   /*
@@ -223,7 +224,7 @@ Construct the operator for a serial calculation.
 
   comm         -- The MPI communicator.
   fes          -- The parallel finite element space.
-  lmax         -- Degree for the spherical harmonic exapansion.
+  lMax         -- Degree for the spherical harmonic exapansion.
 
   Note that the operator is not ready for use following construction.
   Its Assemble() method must be called to assemble the neccesary
@@ -232,7 +233,7 @@ Construct the operator for a serial calculation.
   It is assumed that the boundary to which the DtN mapping is evaluated
   is spherical with centre at the origin.
   */
-  Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lmax);
+  Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax);
 
 #endif
 
