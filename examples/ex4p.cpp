@@ -17,11 +17,19 @@ const real_t x02 = 0.0;
 constexpr real_t pi = atan(1) * 4;
 
 int main(int argc, char *argv[]) {
-  // 1. Parse command-line options.
+  Mpi::Init();
+  int num_procs = Mpi::WorldSize();
+  int myid = Mpi::WorldRank();
+  Hypre::Init();
+
   const char *mesh_file =
       "/home/david/dev/meshing/examples/spherical_offset.msh";
+  // const char *mesh_file = "../data/star.mesh";
+
   int order = 1;
-  int ref_levels = 0;
+  int serial_refinement = 0;
+  int parallel_refinement = 0;
+
   int lMax = 4;
 
   OptionsParser args(argc, argv);
@@ -29,7 +37,11 @@ int main(int argc, char *argv[]) {
   args.AddOption(&order, "-o", "--order",
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
-  args.AddOption(&ref_levels, "-r", "--refine", "Number of mesh refinements");
+  args.AddOption(&serial_refinement, "-sr", "--serial_refinement",
+                 "number of serial mesh refinements");
+  args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",
+                 "number of parallel mesh refinements");
+
   args.AddOption(&lMax, "-lMax", "--lMax", "Order for Fourier exapansion");
 
   args.Parse();
@@ -37,26 +49,38 @@ int main(int argc, char *argv[]) {
     args.PrintUsage(cout);
     return 1;
   }
-  args.PrintOptions(cout);
+  if (myid == 0) {
+    args.PrintOptions(cout);
+  }
 
   Mesh mesh(mesh_file, 1, 1);
   int dim = mesh.Dimension();
-
   {
-    for (int l = 0; l < ref_levels; l++) {
+    for (int l = 0; l < serial_refinement; l++) {
       mesh.UniformRefinement();
     }
   }
 
-  auto fec = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &fec);
-  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
+  ParMesh pmesh(MPI_COMM_WORLD, mesh);
+  mesh.Clear();
+  {
+    for (int l = 0; l < parallel_refinement; l++) {
+      pmesh.UniformRefinement();
+    }
+  }
 
-  BilinearForm a(&fes);
+  auto fec = H1_FECollection(order, dim);
+  auto fes = ParFiniteElementSpace(&pmesh, &fec);
+  HYPRE_BigInt size = fes.GlobalTrueVSize();
+  if (myid == 0) {
+    cout << "Number of finite element unknowns: " << size << endl;
+  }
+
+  ParBilinearForm a(&fes);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::Poisson3D(&fes, lMax);
+  auto C = DtN::Poisson3D(MPI_COMM_WORLD, &fes, lMax);
   C.Assemble();
 
   // Set the density.
@@ -65,34 +89,36 @@ int main(int argc, char *argv[]) {
 
   // Set up the form on the domain.
   auto domain_marker = Array<int>{1, 0};
-  LinearForm b(&fes);
+  ParLinearForm b(&fes);
   b.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient), domain_marker);
   b.Assemble();
-  b *= -4 * M_PI * G;
+  b *= -4 * pi * G;
 
-  OperatorPtr A;
-  Vector B, X;
-  auto x = GridFunction(&fes);
+  // Form the Linear system.
+  auto x = ParGridFunction(&fes);
   x = 0.0;
-
   Array<int> ess_tdof_list{};
+  HypreParMatrix A;
+  Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
-  cout << "Size of linear system: " << A->Height() << endl;
 
-  GSSmoother M((SparseMatrix &)(*A));
+  auto RCP = C.RAP();
+  auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &RCP, 1, false, false);
 
-  auto D = SumOperator(A.Ptr(), 1, &C, 1, false, false);
+  auto prec = HypreBoomerAMG(A);
 
-  auto solver = CGSolver();
+  // Set the solver.
+  auto solver = CGSolver(MPI_COMM_WORLD);
+
   solver.SetOperator(D);
-  solver.SetPreconditioner(M);
+  // solver.SetPreconditioner(prec);
 
   solver.SetRelTol(1e-12);
-  solver.SetMaxIter(2000);
+  solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
+  // Solve and recover the solution.
   solver.Mult(B, X);
-
   a.RecoverFEMSolution(X, b, x);
 
   auto phi = FunctionCoefficient([=](const Vector &x) {
@@ -106,16 +132,21 @@ int main(int argc, char *argv[]) {
     }
   });
 
-  auto y = GridFunction(&fes);
+  auto y = ParGridFunction(&fes);
   y.ProjectCoefficient(phi);
 
   x -= y;
 
-  ofstream mesh_ofs("refined.mesh");
-  mesh_ofs.precision(8);
-  mesh.Print(mesh_ofs);
+  // Write to file.
+  ostringstream mesh_name, sol_name;
+  mesh_name << "mesh." << setfill('0') << setw(6) << myid;
+  sol_name << "sol." << setfill('0') << setw(6) << myid;
 
-  ofstream sol_ofs("sol.gf");
+  ofstream mesh_ofs(mesh_name.str().c_str());
+  mesh_ofs.precision(8);
+  pmesh.Print(mesh_ofs);
+
+  ofstream sol_ofs(sol_name.str().c_str());
   sol_ofs.precision(8);
   x.Save(sol_ofs);
 
@@ -123,7 +154,8 @@ int main(int argc, char *argv[]) {
   char vishost[] = "localhost";
   int visport = 19916;
   socketstream sol_sock(vishost, visport);
+  sol_sock << "parallel " << num_procs << " " << myid << "\n";
   sol_sock.precision(8);
-  sol_sock << "solution\n" << mesh << x << flush;
+  sol_sock << "solution\n" << pmesh << x << flush;
   sol_sock << "keys RRRilmc\n" << flush;
 }

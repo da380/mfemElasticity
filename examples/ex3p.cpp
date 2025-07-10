@@ -15,7 +15,6 @@ const real_t x00 = 0.5;
 const real_t x01 = 0.5;
 
 int main(int argc, char *argv[]) {
-  // 1. Initialize MPI and HYPRE.
   Mpi::Init();
   int num_procs = Mpi::WorldSize();
   int myid = Mpi::WorldRank();
@@ -93,7 +92,6 @@ int main(int argc, char *argv[]) {
   z.ProjectCoefficient(rho_coeff);
 
   auto C = Multipole::Poisson2D(MPI_COMM_WORLD, &dfes, &fes, kmax);
-
   C.Assemble();
 
   auto a = ParBilinearForm(&fes);

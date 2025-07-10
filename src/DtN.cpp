@@ -173,6 +173,40 @@ mfem::RAPOperator Poisson2D::RAP() const {
   return mfem::RAPOperator(*P, *this, *P);
 }
 
+mfem::Vector Poisson3D::_sqrt;
+mfem::Vector Poisson3D::_isqrt;
+
+void Poisson3D::SetSquareRoots(int lMax) {
+  _sqrt.SetSize(2 * lMax + 2);
+  _isqrt.SetSize(2 * lMax + 2);
+  for (auto l = 0; l <= 2 * lMax + 1; l++) {
+    _sqrt(l) = std::sqrt(static_cast<mfem::real_t>(l));
+  }
+  for (auto l = 1; l <= 2 * lMax + 1; l++) {
+    _isqrt(l) = 1 / _sqrt(l);
+  }
+}
+
+mfem::real_t Poisson3D::LogFactorial(int m) const {
+  return std::lgamma(static_cast<mfem::real_t>(m + 1));
+}
+
+mfem::real_t Poisson3D::LogDoubleFactorial(int m) const {
+  return -logSqrtPi + m * log2 +
+         std::lgamma(static_cast<mfem::real_t>(m + 0.5));
+}
+
+mfem::real_t Poisson3D::Pll(int l, mfem::real_t x) const {
+  using namespace mfem;
+  if (l == 0) return invSqrtFourPi;
+  auto sin2 = 1 - x * x;
+  if (std::abs(sin2) < std::numeric_limits<real_t>::min()) return 0;
+  auto logValue =
+      0.5 * (std::log(static_cast<real_t>(2 * l + 1)) - LogFactorial(2 * l)) +
+      LogDoubleFactorial(l) + 0.5 * l * std::log(sin2);
+  return MinusOnePower(l) * invSqrtFourPi * std::exp(logValue);
+}
+
 Poisson3D::Poisson3D(mfem::FiniteElementSpace* fes, int lMax,
                      mfem::Array<int>& bdr_marker)
     : mfem::Operator(fes->GetVSize()),
@@ -182,6 +216,7 @@ Poisson3D::Poisson3D(mfem::FiniteElementSpace* fes, int lMax,
       _bdr_marker{bdr_marker},
       _mat((lMax + 1) * (lMax + 1), fes->GetVSize()) {
   assert(_lMax >= 0);
+  SetSquareRoots(_lMax);
   auto* mesh = _fes->GetMesh();
   assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
 }
@@ -193,6 +228,7 @@ Poisson3D::Poisson3D(mfem::FiniteElementSpace* fes, int lMax)
       _coeff_dim{(lMax + 1) * (lMax + 1)},
       _mat((lMax + 1) * (lMax + 1), fes->GetVSize()) {
   assert(_lMax >= 0);
+  SetSquareRoots(_lMax);
   auto* mesh = _fes->GetMesh();
   assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
 
@@ -214,6 +250,7 @@ Poisson3D::Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
       _mat((lMax + 1) * (lMax + 1), fes->GetVSize()),
       _parallel{true} {
   assert(_lMax >= 0);
+  SetSquareRoots(_lMax);
   auto* mesh = _fes->GetMesh();
   assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
 }
@@ -228,6 +265,7 @@ Poisson3D::Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax)
       _mat((lMax + 1) * (lMax + 1), fes->GetVSize()),
       _parallel{true} {
   assert(_lMax >= 0);
+  SetSquareRoots(_lMax);
   auto* mesh = _fes->GetMesh();
   assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
 
@@ -266,15 +304,20 @@ void Poisson3D::AssembleElementMatrix(const mfem::FiniteElement& fe,
   auto dof = fe.GetDof();
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x, sines, cosines, _, _p_old;
+  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
 #endif
+
   _x.SetSize(3);
   _c.SetSize(_coeff_dim);
-  sines.SetSize(_lMax + 1);
-  cosines.SetSize(_lMax + 1);
+
+  _sin.SetSize(_lMax + 1);
+  _cos.SetSize(_lMax + 1);
+
   _p.SetSize(_lMax + 1);
-  _p_old.SetSize(_lMax);
+  _pm1.SetSize(_lMax + 1);
+
   shape.SetSize(dof);
+
   elmat.SetSize(_coeff_dim, dof);
   elmat = 0.0;
 
@@ -284,55 +327,54 @@ void Poisson3D::AssembleElementMatrix(const mfem::FiniteElement& fe,
     ir = &IntRules.Get(fe.GetGeomType(), intorder);
   }
 
-  sines(0) = 0.0;
-  cosines(0) = 1.0;
-
-  _p_old(0) = 0.0;
-  _p(0) = 1.0;
-
-  constexpr auto sqrt2 = std::sqrt(static_cast<real_t>(2));
+  _sin(0) = 0.0;
+  _cos(0) = 1.0;
 
   for (auto j = 0; j < ir->GetNPoints(); j++) {
     const auto& ip = ir->IntPoint(j);
     Trans.SetIntPoint(&ip);
     Trans.Transform(ip, _x);
 
-    fe.CalcShape(ip, shape);
-
     const auto r = _x.Norml2();
-
     const auto ri = 1 / r;
     const auto cos_theta = _x(2) * ri;
-
     const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
-    real_t cos, sin;
-    if (rxy > 0) {
-      cos = _x(0) / rxy;
-      sin = _x(1) / rxy;
-    } else {
-      cos = 1;
-      sin = 0;
-    }
+    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
+    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
+
+    _pm1(0) = 0.0;
+    _p(0) = Pll(0, cos_theta);
 
     auto rfac = std::sqrt(ri) * ri;
     _c(0) = rfac * _p(0);
 
     auto i = 1;
     for (auto l = 1; l <= _lMax; l++) {
-      auto fac = rfac * std::sqrt(static_cast<real_t>(l + 1));
+      auto fac = rfac * _sqrt(l + 1);
 
-      sines(l) = sines(l - 1) * cos + cosines(l - 1) * sin;
-      cosines(l) = cosines(l - 1) * cos - sines(l - 1) * sin;
+      _sin(l) = _sin(l - 1) * cos + _cos(l - 1) * sin;
+      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
+
+      for (auto m = 0; m < l; m++) {
+        const auto alpha =
+            _sqrt(2 * l + 1) * _sqrt(2 * l - 1) * _isqrt[l + m] * _isqrt[l - m];
+        const auto beta = _sqrt(l - 1 + m) * _sqrt(l - 1 - m) *
+                          _isqrt(2 * (l - 1) + 1) * _isqrt(2 * (l - 1) - 1);
+        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
+      }
+      _pm1(l) = Pll(l, cos_theta);
+      std::swap(_p, _pm1);
 
       _c(i++) = fac * _p(0);
 
       fac *= sqrt2;
       for (auto m = 1; m <= l; m++) {
-        _c(i++) = fac * _p(m) * cosines(m);
-        _c(i++) = fac * _p(m) * sines(m);
+        _c(i++) = fac * _p(m) * _cos(m);
+        _c(i++) = fac * _p(m) * _sin(m);
       }
     }
 
+    fe.CalcShape(ip, shape);
     auto w = Trans.Weight() * ip.weight;
 
     AddMult_a_VWt(w, _c, shape, elmat);
@@ -364,6 +406,11 @@ void Poisson3D::Assemble() {
   }
 
   _mat.Finalize();
+}
+
+mfem::RAPOperator Poisson3D::RAP() const {
+  auto* P = _fes->GetProlongationMatrix();
+  return mfem::RAPOperator(*P, *this, *P);
 }
 
 }  // namespace DtN

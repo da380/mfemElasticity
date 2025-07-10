@@ -4,7 +4,7 @@
 #include <cmath>
 #include <functional>
 #include <iostream>
-#include <type_traits>
+#include <limits>
 
 #include "mfem.hpp"
 #include "mfemElasticity/Legendre.hpp"
@@ -145,6 +145,15 @@ class Poisson3D : public mfem::Integrator, public mfem::Operator {
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
 
+  static constexpr mfem::real_t sqrt2 = std::sqrt(2);
+  static constexpr mfem::real_t pi = std::atan(1) * 4;
+  static constexpr mfem::real_t invSqrtFourPi = 1 / std::sqrt(4 * pi);
+  static constexpr mfem::real_t logSqrtPi = std::log(std::sqrt(pi));
+  static constexpr mfem::real_t log2 = std::log(static_cast<mfem::real_t>(2));
+
+  static mfem::Vector _sqrt;
+  static mfem::Vector _isqrt;
+
 #ifdef MFEM_USE_MPI
   bool _parallel = false;
   mfem::ParFiniteElementSpace* _pfes;
@@ -153,7 +162,7 @@ class Poisson3D : public mfem::Integrator, public mfem::Operator {
 
 #ifndef MFEM_THREAD_SAFE
   mutable mfem::Vector _c;
-  mfem::Vector shape, _x, sines, cosines, _p, _p_old;
+  mfem::Vector shape, _x, _sin, _cos, _p, _pm1;
   mfem::DenseMatrix elmat;
 #endif
 
@@ -161,6 +170,20 @@ class Poisson3D : public mfem::Integrator, public mfem::Operator {
   void AssembleElementMatrix(const mfem::FiniteElement& fe,
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat);
+
+  // Precompute integer square roots as static members.
+  static void SetSquareRoots(int lMax);
+
+  int MinusOnePower(int m) const { return m % 2 ? -1 : 1; }
+
+  // Returns log(m!)
+  mfem::real_t LogFactorial(int m) const;
+
+  // Returns log[(2m-1)!!]
+  mfem::real_t LogDoubleFactorial(int m) const;
+
+  // Returns P_{ll}(x)
+  mfem::real_t Pll(int l, mfem::real_t x) const;
 
  public:
   /*
