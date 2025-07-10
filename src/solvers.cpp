@@ -175,4 +175,24 @@ void RigidBodySolver::Mult(const mfem::Vector &b, mfem::Vector &x) const {
   ProjectOrthogonalToRigidBody(x, x);
 }
 
+void ShiftedPreconditioner::SetSolver(mfem::Solver &solver) {
+  _solver = &solver;
+  height = _solver->Height();
+  width = _solver->Width();
+  MFEM_VERIFY(height == width, "Solver must be a square operator");
+}
+
+void ShiftedPreconditioner::SetOperator(const mfem::Operator &op) {
+  MFEM_VERIFY(_solver, "Solver hasn't been set, call SetSolver() first.");
+  _solver->SetOperator(op);
+  height = _solver->Height();
+  width = _solver->Width();
+  MFEM_VERIFY(height == width, "Solver must be a square Operator!");
+}
+
+void ShiftedPreconditioner::Mult(const mfem::Vector &b, mfem::Vector &x) const {
+  _solver->Mult(b, x);
+  x.Add(_eps, b);
+}
+
 }  // namespace mfemElasticity

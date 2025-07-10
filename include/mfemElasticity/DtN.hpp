@@ -14,13 +14,11 @@ namespace mfemElasticity {
 namespace DtN {
 
 /*
-Class for the Dirichlet-to-Neumann mapping for the Poisson equation
-in 2D space.
+Base class for DtN operator for Poisson equation.
 */
-class Poisson2D : public mfem::Integrator, public mfem::Operator {
- private:
+class Poisson : public mfem::Integrator, public mfem::Operator {
+ protected:
   mfem::FiniteElementSpace* _fes;
-  int _kMax;
   int _coeff_dim;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
@@ -37,90 +35,41 @@ class Poisson2D : public mfem::Integrator, public mfem::Operator {
   mfem::DenseMatrix elmat;
 #endif
 
-  // Element level calculation of sparse matrix.
-  void AssembleElementMatrix(const mfem::FiniteElement& fe,
-                             mfem::ElementTransformation& Trans,
-                             mfem::DenseMatrix& elmat);
+  // Element level calculation of sparse matrix. Pure virtual method
+  // that is overridden in derived classes.
+  virtual void AssembleElementMatrix(const mfem::FiniteElement& fe,
+                                     mfem::ElementTransformation& Trans,
+                                     mfem::DenseMatrix& elmat) = 0;
+
+  // Check that the mesh is suitable. Can be overridden.
+  virtual void CheckMesh() const {}
 
  public:
-  /*
-  Construct the operator for a serial calculation.
-
-    fes          -- The finite element space.
-    kMax         -- Order for the Fourier exapansion.
-    bdr_marker   -- Marker for the boundary on which the
-                    mapping is applied.
-
-    Note that the operator is not ready for use following construction.
-    Its Assemble() method must be called to assemble the neccesary
-    sparse matrix.
-
-    It is assumed that the boundary to which the DtN mapping is evaluated
-    is circular with centre at the origin.
-  */
-  Poisson2D(mfem::FiniteElementSpace* fes, int kMax,
-            mfem::Array<int>& bdr_marker);
-
-  /*
-  Construct the operator for a serial calculation using the default
-  choice of boundary.
-
-    fes          -- The finite element space.
-    kMax         -- Order for the Fourier exapansion.
-
-    Note that the operator is not ready for use following construction.
-    Its Assemble() method must be called to assemble the neccesary
-    sparse matrix.
-
-    It is assumed that the boundary to which the DtN mapping is evaluated
-    is circular with centre at the origin.
-  */
-  Poisson2D(mfem::FiniteElementSpace* fes, int kMax);
+  // Serial constructor.
+  Poisson(mfem::FiniteElementSpace* fes, int coeff_dim);
 
 #ifdef MFEM_USE_MPI
-  /*
-  Construct the operator for a parallel calculation.
-
-    comm         -- The MPI communicator.
-    fes          -- The parallel finite element space.
-    kMax         -- Order for the Fourier exapansion.
-    bdr_marker   -- Marker for the boundary on which the
-                    mapping is applied.
-
-
-    Note that the operator is not ready for use following construction.
-    Its Assemble() method must be called to assemble the neccesary
-    sparse matrix.
-
-    It is assumed that the boundary to which the DtN mapping is evaluated
-    is circular with centre at the origin.
-  */
-  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
-            mfem::Array<int>& bdr_marker);
-
-  /*
-Construct the operator for a parallel calculation using the default
-choice of boundary.
-
-  comm         -- The MPI communicator.
-  fes          -- The parallel finite element space.
-  kMax         -- Order for the Fourier exapansion.
-
-  Note that the operator is not ready for use following construction.
-  Its Assemble() method must be called to assemble the neccesary
-  sparse matrix.
-
-  It is assumed that the boundary to which the DtN mapping is evaluated
-  is circular with centre at the origin.
-*/
-  Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax);
+  // Parallel constructor.
+  Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim);
 #endif
 
-  // Multiplication method for the operator.
+  // Set the boundary marker to the default.
+  void SetBoundaryMarkerToExternal() {
+    auto* mesh = _fes->GetMesh();
+    _bdr_marker.SetSize(mesh->bdr_attributes.Max());
+    _bdr_marker = 0;
+    mesh->MarkExternalBoundaries(_bdr_marker);
+  }
+
+  // Set the boundary marker.
+  void SetBoundaryMarker(mfem::Array<int>& bdr_marker) {
+    _bdr_marker = bdr_marker;
+  }
+
+  // Multiplication by the operator.
   void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
 
-  // Transposed multiplication, which is just multiplication because the
-  // operator is self-adjoint.
+  // Transposed multiplication by the operator.
   void MultTranspose(const mfem::Vector& x, mfem::Vector& y) const override {
     Mult(x, y);
   }
@@ -128,22 +77,57 @@ choice of boundary.
   // Assemble the sparse matrix associated with the operator.
   void Assemble();
 
-  // Return the associated RAP operator that occurs within
-  // linear systems involving true degrees of freedom.
+  // Return the associated RAP operator.
   mfem::RAPOperator RAP() const;
 };
 
-/*=================================================================
-Class for the Dirichlet-to-Neumann mapping for the Poisson equation
-in 3D space.
-===================================================================*/
-class Poisson3D : public mfem::Integrator, public mfem::Operator {
+/*===============================================================
+   DtN operator for Poisson's equation on a circular boundary
+=================================================================*/
+class PoissonCircle : public Poisson {
  private:
-  mfem::FiniteElementSpace* _fes;
+  int _kMax;
+
+  void AssembleElementMatrix(const mfem::FiniteElement& fe,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+
+ public:
+  // Serial constructor with default boundary.
+  PoissonCircle(mfem::FiniteElementSpace* fes, int kMax)
+      : Poisson(fes, 2 * kMax), _kMax{kMax} {
+    SetBoundaryMarkerToExternal();
+  }
+
+  // Serial constructor with specified boundary.
+  PoissonCircle(mfem::FiniteElementSpace* fes, int kMax,
+                mfem::Array<int>& bdr_marker)
+      : Poisson(fes, 2 * kMax), _kMax{kMax} {
+    SetBoundaryMarker(bdr_marker);
+  }
+
+#ifdef MFEM_USE_MPI
+  // Parallel constructor with default boundary.
+  PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax)
+      : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
+    SetBoundaryMarkerToExternal();
+  }
+
+  // Parallel constructor with specified boundary.
+  PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
+                mfem::Array<int>& bdr_marker)
+      : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
+    SetBoundaryMarker(bdr_marker);
+  }
+#endif
+};
+
+/*===============================================================
+    DtN operator for Poisson's equation on a spherical boundary
+=================================================================*/
+class PoissonSphere : public Poisson {
+ private:
   int _lMax;
-  int _coeff_dim;
-  mfem::Array<int> _bdr_marker;
-  mfem::SparseMatrix _mat;
 
   static constexpr mfem::real_t sqrt2 = std::sqrt(2);
   static constexpr mfem::real_t pi = std::atan(1) * 4;
@@ -154,22 +138,9 @@ class Poisson3D : public mfem::Integrator, public mfem::Operator {
   static mfem::Vector _sqrt;
   static mfem::Vector _isqrt;
 
-#ifdef MFEM_USE_MPI
-  bool _parallel = false;
-  mfem::ParFiniteElementSpace* _pfes;
-  MPI_Comm _comm;
-#endif
-
 #ifndef MFEM_THREAD_SAFE
-  mutable mfem::Vector _c;
-  mfem::Vector shape, _x, _sin, _cos, _p, _pm1;
-  mfem::DenseMatrix elmat;
+  mfem::Vector _sin, _cos, _p, _pm1;
 #endif
-
-  // Element level calculation of sparse matrix.
-  void AssembleElementMatrix(const mfem::FiniteElement& fe,
-                             mfem::ElementTransformation& Trans,
-                             mfem::DenseMatrix& elmat);
 
   // Precompute integer square roots as static members.
   static void SetSquareRoots(int lMax);
@@ -185,96 +156,42 @@ class Poisson3D : public mfem::Integrator, public mfem::Operator {
   // Returns P_{ll}(x)
   mfem::real_t Pll(int l, mfem::real_t x) const;
 
+  void AssembleElementMatrix(const mfem::FiniteElement& fe,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+
  public:
-  /*
-Construct the operator for a serial calculation.
-
-  fes          -- The finite element space.
-  lMax         -- Degree for the spherical harmonic exapansion.
-  bdr_marker   -- Marker for the boundary on which the
-                  mapping is applied.
-
-  Note that the operator is not ready for use following construction.
-  Its Assemble() method must be called to assemble the neccesary
-  sparse matrix.
-
-  It is assumed that the boundary to which the DtN mapping is evaluated
-  is spherical with centre at the origin.
-*/
-  Poisson3D(mfem::FiniteElementSpace* fes, int lMax,
-            mfem::Array<int>& bdr_marker);
-
-  /*
-  Construct the operator for a serial calculation using the default
-  choice of boundary.
-
-    fes          -- The finite element space.
-    lMax         -- Degree for the spherical harmonic exapansion.
-
-    Note that the operator is not ready for use following construction.
-    Its Assemble() method must be called to assemble the neccesary
-    sparse matrix.
-
-    It is assumed that the boundary to which the DtN mapping is evaluated
-    is spherical with centre at the origin.
-  */
-  Poisson3D(mfem::FiniteElementSpace* fes, int lMax);
-
-#ifdef MFEM_USE_MPI
-  /*
-  Construct the operator for a parallel calculation.
-
-    comm         -- The MPI communicator.
-    fes          -- The parallel finite element space.
-    lMax         -- Degree for the spherical harmonic exapansion.
-    bdr_marker   -- Marker for the boundary on which the
-                    mapping is applied.
-
-
-    Note that the operator is not ready for use following construction.
-    Its Assemble() method must be called to assemble the neccesary
-    sparse matrix.
-
-    It is assumed that the boundary to which the DtN mapping is evaluated
-    is spherical with centre at the origin.
-  */
-  Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
-            mfem::Array<int>& bdr_marker);
-
-  /*
-  Construct the operator for a parallel calculation using the default
-  choice of boundary.
-
-  comm         -- The MPI communicator.
-  fes          -- The parallel finite element space.
-  lMax         -- Degree for the spherical harmonic exapansion.
-
-  Note that the operator is not ready for use following construction.
-  Its Assemble() method must be called to assemble the neccesary
-  sparse matrix.
-
-  It is assumed that the boundary to which the DtN mapping is evaluated
-  is spherical with centre at the origin.
-  */
-  Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax);
-
-#endif
-
-  // Multiplication method for the operator.
-  void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
-
-  // Transposed multiplication, which is just multiplication because the
-  // operator is self-adjoint.
-  void MultTranspose(const mfem::Vector& x, mfem::Vector& y) const override {
-    Mult(x, y);
+  // Serial constructor with default boundary.
+  PoissonSphere(mfem::FiniteElementSpace* fes, int lMax)
+      : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
+    SetSquareRoots(_lMax);
+    SetBoundaryMarkerToExternal();
   }
 
-  // Assemble the sparse matrix associated with the operator.
-  void Assemble();
+  // Serial constructor with specified boundary.
+  PoissonSphere(mfem::FiniteElementSpace* fes, int lMax,
+                mfem::Array<int>& bdr_marker)
+      : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
+    SetSquareRoots(_lMax);
+    SetBoundaryMarker(bdr_marker);
+  }
 
-  // Return the associated RAP operator that occurs within
-  // linear systems involving true degrees of freedom.
-  mfem::RAPOperator RAP() const;
+#ifdef MFEM_USE_MPI
+  // Parallel constructor with default boundary.
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax)
+      : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
+    SetSquareRoots(_lMax);
+    SetBoundaryMarkerToExternal();
+  }
+
+  // Parallel constructor with specified boundary.
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
+                mfem::Array<int>& bdr_marker)
+      : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
+    SetSquareRoots(_lMax);
+    SetBoundaryMarker(bdr_marker);
+  }
+#endif
 };
 
 }  // namespace DtN

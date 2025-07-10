@@ -80,7 +80,7 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::Poisson3D(MPI_COMM_WORLD, &fes, lMax);
+  auto C = DtN::PoissonSphere(MPI_COMM_WORLD, &fes, lMax);
   C.Assemble();
 
   // Set the density.
@@ -105,13 +105,17 @@ int main(int argc, char *argv[]) {
   auto RCP = C.RAP();
   auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &RCP, 1, false, false);
 
-  auto prec = HypreBoomerAMG(A);
+  auto boomer = HypreBoomerAMG(A);
+  auto prec = ShiftedPreconditioner(MPI_COMM_WORLD, 1);
+  prec.SetSolver(boomer);
+  // auto prec= HypreBoomerAMG(A);
 
   // Set the solver.
   auto solver = CGSolver(MPI_COMM_WORLD);
+  // auto solver = GMRESSolver(MPI_COMM_WORLD);
 
   solver.SetOperator(D);
-  // solver.SetPreconditioner(prec);
+  solver.SetPreconditioner(prec);
 
   solver.SetRelTol(1e-12);
   solver.SetMaxIter(10000);

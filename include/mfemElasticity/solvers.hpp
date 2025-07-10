@@ -160,4 +160,56 @@ class RigidBodySolver : public mfem::Solver {
   void Mult(const mfem::Vector &b, mfem::Vector &x) const override;
 };
 
+class ShiftedPreconditioner : public mfem::Solver {
+ private:
+  mfem::Solver *_solver = nullptr;
+  mfem::real_t _eps;
+  mutable mfem::Vector _b;
+  const bool _parallel = false;
+
+#ifdef MFEM_USE_MPI
+  MPI_Comm _comm;
+#endif
+
+ public:
+  /*
+    To construct a class instance the finite element space on
+    which the displacements are defined must be provided.
+
+    This constructor can be used only within serial codes.
+  */
+  ShiftedPreconditioner(mfem::real_t eps) : _eps{eps} {}
+
+#ifdef MFEM_USE_MPI
+  /*
+    To construct a class instance the MPI communicator and
+    finite element space on which the displacements are defined
+    must be provided.
+
+    This constructor can be used only within parallel codes.
+  */
+  ShiftedPreconditioner(MPI_Comm comm, mfem::real_t eps)
+      : _comm{comm}, _parallel{true}, _eps{eps} {}
+#endif
+
+  /*
+    Set the underlying solver.
+  */
+  void SetSolver(mfem::Solver &solver);
+
+  /*
+    Set the operator. The solver must be set before calling
+    this routine. If the operator is already set within the
+    solver, then this method need not be called.
+  */
+  void SetOperator(const mfem::Operator &op) override;
+
+  /*
+    Implementation of the Mult method. The action of the
+    underlying solver is wrapped with projections orhtogonal
+    to the rigid body modes.
+  */
+  void Mult(const mfem::Vector &b, mfem::Vector &x) const override;
+};
+
 }  // namespace mfemElasticity

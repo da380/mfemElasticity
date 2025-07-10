@@ -6,69 +6,34 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kMax,
-                     mfem::Array<int>& bdr_marker)
+Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim)
     : mfem::Operator(fes->GetVSize()),
       _fes{fes},
-      _kMax{kMax},
-      _coeff_dim{2 * kMax},
-      _bdr_marker{bdr_marker},
+      _coeff_dim{coeff_dim},
+      _bdr_marker(_fes->GetMesh()->bdr_attributes.Max()),
       _mat(_coeff_dim, fes->GetVSize()) {
-  assert(_kMax > 0);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
-}
-
-Poisson2D::Poisson2D(mfem::FiniteElementSpace* fes, int kMax)
-    : mfem::Operator(fes->GetVSize()),
-      _fes{fes},
-      _kMax{kMax},
-      _coeff_dim{2 * kMax},
-      _mat(_coeff_dim, fes->GetVSize()) {
-  assert(_kMax > 0);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
-  _bdr_marker.SetSize(mesh->bdr_attributes.Max());
+  CheckMesh();
   _bdr_marker = 0;
-  mesh->MarkExternalBoundaries(_bdr_marker);
 }
 
 #ifdef MFEM_USE_MPI
-Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
-                     mfem::Array<int>& bdr_marker)
+
+Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim)
     : mfem::Operator(fes->GetVSize()),
+      _parallel{true},
       _comm{comm},
       _pfes{fes},
       _fes{fes},
-      _kMax{kMax},
-      _coeff_dim{2 * kMax},
-      _bdr_marker{bdr_marker},
-      _mat(_coeff_dim, fes->GetVSize()),
-      _parallel{true} {
-  assert(_kMax > 0);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
+      _coeff_dim{coeff_dim},
+      _bdr_marker(_fes->GetMesh()->bdr_attributes.Max()),
+      _mat(_coeff_dim, fes->GetVSize()) {
+  CheckMesh();
+  _bdr_marker = 0;
 }
 
-Poisson2D::Poisson2D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax)
-    : mfem::Operator(fes->GetVSize()),
-      _comm{comm},
-      _pfes{fes},
-      _fes{fes},
-      _kMax{kMax},
-      _coeff_dim{2 * kMax},
-      _mat(_coeff_dim, fes->GetVSize()),
-      _parallel{true} {
-  assert(_kMax > 0);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
-  _bdr_marker.SetSize(mesh->bdr_attributes.Max());
-  _bdr_marker = 0;
-  mesh->MarkExternalBoundaries(_bdr_marker);
-}
 #endif
 
-void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
+void Poisson::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
@@ -89,9 +54,41 @@ void Poisson2D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   _mat.MultTranspose(_c, y);
 }
 
-void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
-                                      mfem::ElementTransformation& Trans,
-                                      mfem::DenseMatrix& elmat) {
+void Poisson::Assemble() {
+  using namespace mfem;
+  auto* mesh = _fes->GetMesh();
+
+  auto elmat = DenseMatrix();
+  auto vdofs = Array<int>();
+  auto rows = Array<int>(_coeff_dim);
+  for (auto i = 0; i < _coeff_dim; i++) {
+    rows[i] = i;
+  }
+
+  for (auto i = 0; i < _fes->GetNBE(); i++) {
+    const auto elm_attr = mesh->GetBdrAttribute(i);
+    if (_bdr_marker[elm_attr - 1] == 1) {
+      _fes->GetBdrElementVDofs(i, vdofs);
+      const auto* fe = _fes->GetBE(i);
+      auto* Trans = _fes->GetBdrElementTransformation(i);
+
+      AssembleElementMatrix(*fe, *Trans, elmat);
+
+      _mat.AddSubMatrix(rows, vdofs, elmat);
+    }
+  }
+
+  _mat.Finalize();
+}
+
+mfem::RAPOperator Poisson::RAP() const {
+  auto* P = _fes->GetProlongationMatrix();
+  return mfem::RAPOperator(*P, *this, *P);
+}
+
+void PoissonCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
+                                          mfem::ElementTransformation& Trans,
+                                          mfem::DenseMatrix& elmat) {
   using namespace mfem;
   auto dof = fe.GetDof();
 
@@ -141,42 +138,10 @@ void Poisson2D::AssembleElementMatrix(const mfem::FiniteElement& fe,
   }
 }
 
-void Poisson2D::Assemble() {
-  using namespace mfem;
-  auto* mesh = _fes->GetMesh();
+mfem::Vector PoissonSphere::_sqrt;
+mfem::Vector PoissonSphere::_isqrt;
 
-  auto elmat = DenseMatrix();
-  auto vdofs = Array<int>();
-  auto rows = Array<int>(_coeff_dim);
-  for (auto i = 0; i < _coeff_dim; i++) {
-    rows[i] = i;
-  }
-
-  for (auto i = 0; i < _fes->GetNBE(); i++) {
-    const auto elm_attr = mesh->GetBdrAttribute(i);
-    if (_bdr_marker[elm_attr - 1] == 1) {
-      _fes->GetBdrElementVDofs(i, vdofs);
-      const auto* fe = _fes->GetBE(i);
-      auto* Trans = _fes->GetBdrElementTransformation(i);
-
-      AssembleElementMatrix(*fe, *Trans, elmat);
-
-      _mat.AddSubMatrix(rows, vdofs, elmat);
-    }
-  }
-
-  _mat.Finalize();
-}
-
-mfem::RAPOperator Poisson2D::RAP() const {
-  auto* P = _fes->GetProlongationMatrix();
-  return mfem::RAPOperator(*P, *this, *P);
-}
-
-mfem::Vector Poisson3D::_sqrt;
-mfem::Vector Poisson3D::_isqrt;
-
-void Poisson3D::SetSquareRoots(int lMax) {
+void PoissonSphere::SetSquareRoots(int lMax) {
   _sqrt.SetSize(2 * lMax + 2);
   _isqrt.SetSize(2 * lMax + 2);
   for (auto l = 0; l <= 2 * lMax + 1; l++) {
@@ -187,16 +152,16 @@ void Poisson3D::SetSquareRoots(int lMax) {
   }
 }
 
-mfem::real_t Poisson3D::LogFactorial(int m) const {
+mfem::real_t PoissonSphere::LogFactorial(int m) const {
   return std::lgamma(static_cast<mfem::real_t>(m + 1));
 }
 
-mfem::real_t Poisson3D::LogDoubleFactorial(int m) const {
+mfem::real_t PoissonSphere::LogDoubleFactorial(int m) const {
   return -logSqrtPi + m * log2 +
          std::lgamma(static_cast<mfem::real_t>(m + 0.5));
 }
 
-mfem::real_t Poisson3D::Pll(int l, mfem::real_t x) const {
+mfem::real_t PoissonSphere::Pll(int l, mfem::real_t x) const {
   using namespace mfem;
   if (l == 0) return invSqrtFourPi;
   auto sin2 = 1 - x * x;
@@ -207,98 +172,9 @@ mfem::real_t Poisson3D::Pll(int l, mfem::real_t x) const {
   return MinusOnePower(l) * invSqrtFourPi * std::exp(logValue);
 }
 
-Poisson3D::Poisson3D(mfem::FiniteElementSpace* fes, int lMax,
-                     mfem::Array<int>& bdr_marker)
-    : mfem::Operator(fes->GetVSize()),
-      _fes{fes},
-      _lMax{lMax},
-      _coeff_dim{(lMax + 1) * (lMax + 1)},
-      _bdr_marker{bdr_marker},
-      _mat((lMax + 1) * (lMax + 1), fes->GetVSize()) {
-  assert(_lMax >= 0);
-  SetSquareRoots(_lMax);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
-}
-
-Poisson3D::Poisson3D(mfem::FiniteElementSpace* fes, int lMax)
-    : mfem::Operator(fes->GetVSize()),
-      _fes{fes},
-      _lMax{lMax},
-      _coeff_dim{(lMax + 1) * (lMax + 1)},
-      _mat((lMax + 1) * (lMax + 1), fes->GetVSize()) {
-  assert(_lMax >= 0);
-  SetSquareRoots(_lMax);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
-
-  _bdr_marker.SetSize(mesh->bdr_attributes.Max());
-  _bdr_marker = 0;
-  mesh->MarkExternalBoundaries(_bdr_marker);
-}
-
-#ifdef MFEM_USE_MPI
-Poisson3D::Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
-                     mfem::Array<int>& bdr_marker)
-    : mfem::Operator(fes->GetVSize()),
-      _comm{comm},
-      _pfes{fes},
-      _fes{fes},
-      _lMax{lMax},
-      _coeff_dim{(lMax + 1) * (lMax + 1)},
-      _bdr_marker{bdr_marker},
-      _mat((lMax + 1) * (lMax + 1), fes->GetVSize()),
-      _parallel{true} {
-  assert(_lMax >= 0);
-  SetSquareRoots(_lMax);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
-}
-
-Poisson3D::Poisson3D(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax)
-    : mfem::Operator(fes->GetVSize()),
-      _comm{comm},
-      _pfes{fes},
-      _fes{fes},
-      _lMax{lMax},
-      _coeff_dim{(lMax + 1) * (lMax + 1)},
-      _mat((lMax + 1) * (lMax + 1), fes->GetVSize()),
-      _parallel{true} {
-  assert(_lMax >= 0);
-  SetSquareRoots(_lMax);
-  auto* mesh = _fes->GetMesh();
-  assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
-
-  _bdr_marker.SetSize(mesh->bdr_attributes.Max());
-  _bdr_marker = 0;
-  mesh->MarkExternalBoundaries(_bdr_marker);
-}
-#endif
-
-void Poisson3D::Mult(const mfem::Vector& x, mfem::Vector& y) const {
-  using namespace mfem;
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c;
-#endif
-
-  _c.SetSize(_coeff_dim);
-  _mat.Mult(x, _c);
-
-#ifdef MFEM_USE_MPI
-  if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                  MPI_SUM, _comm);
-  }
-#endif
-
-  y.SetSize(x.Size());
-  _mat.MultTranspose(_c, y);
-}
-
-void Poisson3D::AssembleElementMatrix(const mfem::FiniteElement& fe,
-                                      mfem::ElementTransformation& Trans,
-                                      mfem::DenseMatrix& elmat) {
+void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
+                                          mfem::ElementTransformation& Trans,
+                                          mfem::DenseMatrix& elmat) {
   using namespace mfem;
 
   auto dof = fe.GetDof();
@@ -379,38 +255,6 @@ void Poisson3D::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
     AddMult_a_VWt(w, _c, shape, elmat);
   }
-}
-
-void Poisson3D::Assemble() {
-  using namespace mfem;
-  auto* mesh = _fes->GetMesh();
-
-  auto elmat = DenseMatrix();
-  auto vdofs = Array<int>();
-  auto rows = Array<int>(_coeff_dim);
-  for (auto i = 0; i < _coeff_dim; i++) {
-    rows[i] = i;
-  }
-
-  for (auto i = 0; i < _fes->GetNBE(); i++) {
-    const auto elm_attr = mesh->GetBdrAttribute(i);
-    if (_bdr_marker[elm_attr - 1] == 1) {
-      _fes->GetBdrElementVDofs(i, vdofs);
-      const auto* fe = _fes->GetBE(i);
-      auto* Trans = _fes->GetBdrElementTransformation(i);
-
-      AssembleElementMatrix(*fe, *Trans, elmat);
-
-      _mat.AddSubMatrix(rows, vdofs, elmat);
-    }
-  }
-
-  _mat.Finalize();
-}
-
-mfem::RAPOperator Poisson3D::RAP() const {
-  auto* P = _fes->GetProlongationMatrix();
-  return mfem::RAPOperator(*P, *this, *P);
 }
 
 }  // namespace DtN

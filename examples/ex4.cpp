@@ -52,13 +52,16 @@ int main(int argc, char *argv[]) {
   auto fes = FiniteElementSpace(&mesh, &fec);
   cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
 
+  std::cout << "building bilinear form\n";
   BilinearForm a(&fes);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::Poisson3D(&fes, lMax);
+  std::cout << "building DtN operator\n";
+  auto C = DtN::PoissonSphere(&fes, lMax);
   C.Assemble();
 
+  std::cout << "Doing the rest\n";
   // Set the density.
   auto rho_coefficient =
       FunctionCoefficient([=](const Vector &x) { return rho; });
