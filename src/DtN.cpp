@@ -19,7 +19,6 @@ Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim)
 }
 
 #ifdef MFEM_USE_MPI
-
 Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim)
     : mfem::Operator(fes->GetVSize()),
       _parallel{true},
@@ -32,7 +31,6 @@ Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim)
   CheckMesh();
   _bdr_marker = 0;
 }
-
 #endif
 
 void Poisson::Mult(const mfem::Vector& x, mfem::Vector& y) const {
@@ -40,9 +38,9 @@ void Poisson::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 
 #ifdef MFEM_THREAD_SAFE
   Vector _c;
+  _c.SetSize(_coeff_dim);
 #endif
 
-  _c.SetSize(_coeff_dim);
   _mat.Mult(x, _c);
 
 #ifdef MFEM_USE_MPI
@@ -96,9 +94,10 @@ void PoissonCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
 #ifdef MFEM_THREAD_SAFE
   Vector _c, shape, _x;
-#endif
   _x.SetSize(2);
   _c.SetSize(_coeff_dim);
+#endif
+
   shape.SetSize(dof);
   elmat.SetSize(_coeff_dim, dof);
   elmat = 0.0;
@@ -138,40 +137,6 @@ void PoissonCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
     AddMult_a_VWt(w, _c, shape, elmat);
   }
-}
-
-mfem::Vector PoissonSphere::_sqrt;
-mfem::Vector PoissonSphere::_isqrt;
-
-void PoissonSphere::SetSquareRoots(int lMax) {
-  _sqrt.SetSize(2 * lMax + 2);
-  _isqrt.SetSize(2 * lMax + 2);
-  for (auto l = 0; l <= 2 * lMax + 1; l++) {
-    _sqrt(l) = std::sqrt(static_cast<mfem::real_t>(l));
-  }
-  for (auto l = 1; l <= 2 * lMax + 1; l++) {
-    _isqrt(l) = 1 / _sqrt(l);
-  }
-}
-
-mfem::real_t PoissonSphere::LogFactorial(int m) const {
-  return std::lgamma(static_cast<mfem::real_t>(m + 1));
-}
-
-mfem::real_t PoissonSphere::LogDoubleFactorial(int m) const {
-  return -logSqrtPi + m * log2 +
-         std::lgamma(static_cast<mfem::real_t>(m + 0.5));
-}
-
-mfem::real_t PoissonSphere::Pll(int l, mfem::real_t x) const {
-  using namespace mfem;
-  if (l == 0) return invSqrtFourPi;
-  auto sin2 = 1 - x * x;
-  if (std::abs(sin2) < std::numeric_limits<real_t>::min()) return 0;
-  auto logValue =
-      0.5 * (std::log(static_cast<real_t>(2 * l + 1)) - LogFactorial(2 * l)) +
-      LogDoubleFactorial(l) + 0.5 * l * std::log(sin2);
-  return MinusOnePower(l) * invSqrtFourPi * std::exp(logValue);
 }
 
 void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
@@ -229,14 +194,11 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
     for (auto l = 1; l <= _lMax; l++) {
       auto fac = rfac * _sqrt[l + 1];
 
-      _sin(l) = _sin(l - 1) * cos + _cos(l - 1) * sin;
+      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
       _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
 
       for (auto m = 0; m < l; m++) {
-        const auto alpha =
-            _sqrt[2 * l + 1] * _sqrt[2 * l - 1] * _isqrt[l + m] * _isqrt[l - m];
-        const auto beta = _sqrt[l - 1 + m] * _sqrt[l - 1 - m] *
-                          _isqrt[2 * (l - 1) + 1] * _isqrt[2 * (l - 1) - 1];
+        const auto [alpha, beta] = RecursionCoefficients(l, m);
         _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
       }
       _pm1(l) = Pll(l, cos_theta);
@@ -245,10 +207,10 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
       _c(i++) = fac * _p(0);
 
-      fac *= sqrt2;
+      fac *= _sqrt[2];
       for (auto m = 1; m <= l; m++) {
         _c(i++) = fac * _p[m] * _cos(m);
-        _c(i++) = fac * _p[m] * _sin(m);
+        _c(i++) = rxy > 0 ? fac * _p[m] * _sin(m) : 0.0;
       }
     }
 

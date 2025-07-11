@@ -3,95 +3,44 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
-#include <iostream>
 #include <limits>
 #include <vector>
 
-template <typename Real>
-class Legendre {
- private:
-  using Int = std::ptrdiff_t;
-  const Real invSqrtFourPi =
-      0.28209479177387814347403972578038629292202531466449942842204286085532123422;
-  const Real logSqrtPi =
-      0.5723649429247000870717136756765293558236474064576557857568115357360;
-  const Real log2 =
-      0.69314718055994530941723212145817656807550013436025525412068000949339362196;
+#include "mfem.hpp"
 
-  Int _l;
-  Real _x;
+namespace mfemElasticity {
 
-  std::vector<Real> _current;
-  std::vector<Real> _previous;
+struct LegendreHelper {
+  static constexpr mfem::real_t pi = std::atan(1) * 4;
+  static constexpr mfem::real_t invSqrtFourPi = 1 / std::sqrt(4 * pi);
+  static constexpr mfem::real_t logSqrtPi = std::log(std::sqrt(pi));
+  static constexpr mfem::real_t log2 = std::log(static_cast<mfem::real_t>(2));
 
-  // Returns (-1)^m
-  Int MinusOnePower(Int m) const { return m % 2 ? -1 : 1; }
+  mfem::Vector _sqrt;
+  mfem::Vector _isqrt;
 
-  // Returns log[m!]
-  Real LogFactorial(Int m) const {
-    return std::lgamma(static_cast<Real>(m + 1));
-  }
+  void SetSquareRoots(int lMax);
+
+  int MinusOnePower(int m) const { return m % 2 ? -1 : 1; }
+
+  // Returns log(m!)
+  mfem::real_t LogFactorial(int m) const;
 
   // Returns log[(2m-1)!!]
-  Real LogDoubleFactorial(Int m) const {
-    return -logSqrtPi + m * log2 + std::lgamma(static_cast<Real>(m + 0.5));
-  }
+  mfem::real_t LogDoubleFactorial(int m) const;
 
-  // Returns P_{ll} at the stored argument.
-  Real Pll(Int l) const {
-    if (l == 0) return invSqrtFourPi;
-    auto sin2 = 1 - _x * _x;
-    if (std::abs(sin2) < std::numeric_limits<Real>::min()) return 0;
-    auto logValue =
-        0.5 * (std::log(static_cast<Real>(2 * l + 1)) - LogFactorial(2 * l)) +
-        LogDoubleFactorial(l) + 0.5 * l * std::log(sin2);
-    return MinusOnePower(l) * invSqrtFourPi * std::exp(logValue);
-  }
+  // Returns P_{ll}(x)
+  mfem::real_t Pll(int l, mfem::real_t x) const;
 
- public:
-  Legendre(Real x) {
-    _l = 0;
-    _x = x;
-    _previous.push_back(0);
-    _current.push_back(Pll(0));
-  }
-
-  Legendre(Real x, Int l) : Legendre(x) {
-    for (auto n = 0; n < l; n++) {
-      ++(*this);
-    }
-  }
-
-  // Return the current degree.
-  Int Degree() const { return _l; }
-
-  // Return the value at a given order.
-  Real operator()(Int m) const {
-    assert(std::abs(m) <= _l);
-    return m >= 0 ? _current[m] : MinusOnePower(m) * _current[-m];
-  }
-
-  // Constant iterators to the data.
-  auto begin() const { return _current.cbegin(); }
-  auto end() const { return _current.cend(); }
-
-  // Return the current size.
-  auto size() const { return _current.size(); }
-
-  // Increment the degree by one.
-  auto& operator++() {
-    _l++;
-    for (auto m = 0; m < _l; m++) {
-      const auto alpha = std::sqrt(static_cast<Real>(4 * _l * _l - 1) /
-                                   static_cast<Real>(_l * _l - m * m));
-      const auto beta =
-          std::sqrt(static_cast<Real>((_l - 1) * (_l - 1) - m * m) /
-                    static_cast<Real>(4 * (_l - 1) * (_l - 1) - 1));
-      _previous[m] = alpha * (_x * _current[m] - beta * _previous[m]);
-    }
-    _previous.push_back(Pll(_l));
-    _current.push_back(0);
-    std::swap(_current, _previous);
-    return *this;
+  // Returns three-point recursion coefficients for given degree and order
+  std::pair<mfem::real_t, mfem::real_t> RecursionCoefficients(int l,
+                                                              int m) const {
+    auto alpha =
+        _sqrt[2 * l + 1] * _sqrt[2 * l - 1] * _isqrt[l + m] * _isqrt[l - m];
+    auto beta = _sqrt[l - 1 + m] * _sqrt[l - 1 - m] * _isqrt[2 * (l - 1) + 1] *
+                _isqrt[2 * (l - 1) - 1];
+    return {alpha, beta};
   }
 };
+
+}  // namespace mfemElasticity

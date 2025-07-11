@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 
+#include "Legendre.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity/Legendre.hpp"
 
@@ -99,11 +100,19 @@ class PoissonCircle : public Poisson {
     assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
   }
 
+  void SetSizes() {
+#ifndef MFEM_THREAD_SAFE
+    _x.SetSize(2);
+    _c.SetSize(_coeff_dim);
+#endif
+  }
+
  public:
   // Serial constructor with default boundary.
   PoissonCircle(mfem::FiniteElementSpace* fes, int kMax)
       : Poisson(fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarkerToExternal();
+    SetSizes();
   }
 
   // Serial constructor with specified boundary.
@@ -111,6 +120,7 @@ class PoissonCircle : public Poisson {
                 mfem::Array<int>& bdr_marker)
       : Poisson(fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarker(bdr_marker);
+    SetSizes();
   }
 
 #ifdef MFEM_USE_MPI
@@ -118,6 +128,7 @@ class PoissonCircle : public Poisson {
   PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax)
       : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarkerToExternal();
+    SetSizes();
   }
 
   // Parallel constructor with specified boundary.
@@ -125,6 +136,7 @@ class PoissonCircle : public Poisson {
                 mfem::Array<int>& bdr_marker)
       : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarker(bdr_marker);
+    SetSizes();
   }
 #endif
 };
@@ -132,36 +144,13 @@ class PoissonCircle : public Poisson {
 /*===============================================================
     DtN operator for Poisson's equation on a spherical boundary
 =================================================================*/
-class PoissonSphere : public Poisson {
+class PoissonSphere : public Poisson, private LegendreHelper {
  private:
   int _lMax;
-
-  static constexpr mfem::real_t sqrt2 = std::sqrt(2);
-  static constexpr mfem::real_t pi = std::atan(1) * 4;
-  static constexpr mfem::real_t invSqrtFourPi = 1 / std::sqrt(4 * pi);
-  static constexpr mfem::real_t logSqrtPi = std::log(std::sqrt(pi));
-  static constexpr mfem::real_t log2 = std::log(static_cast<mfem::real_t>(2));
-
-  static mfem::Vector _sqrt;
-  static mfem::Vector _isqrt;
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector _sin, _cos, _p, _pm1;
 #endif
-
-  // Precompute integer square roots as static members.
-  static void SetSquareRoots(int lMax);
-
-  int MinusOnePower(int m) const { return m % 2 ? -1 : 1; }
-
-  // Returns log(m!)
-  mfem::real_t LogFactorial(int m) const;
-
-  // Returns log[(2m-1)!!]
-  mfem::real_t LogDoubleFactorial(int m) const;
-
-  // Returns P_{ll}(x)
-  mfem::real_t Pll(int l, mfem::real_t x) const;
 
   void AssembleElementMatrix(const mfem::FiniteElement& fe,
                              mfem::ElementTransformation& Trans,
@@ -189,36 +178,36 @@ class PoissonSphere : public Poisson {
   // Serial constructor with default boundary.
   PoissonSphere(mfem::FiniteElementSpace* fes, int lMax)
       : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetSquareRoots(_lMax);
     SetBoundaryMarkerToExternal();
     SetSizes();
+    SetSquareRoots(_lMax);
   }
 
   // Serial constructor with specified boundary.
   PoissonSphere(mfem::FiniteElementSpace* fes, int lMax,
                 mfem::Array<int>& bdr_marker)
       : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetSquareRoots(_lMax);
     SetBoundaryMarker(bdr_marker);
     SetSizes();
+    SetSquareRoots(_lMax);
   }
 
 #ifdef MFEM_USE_MPI
   // Parallel constructor with default boundary.
   PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax)
       : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetSquareRoots(_lMax);
     SetBoundaryMarkerToExternal();
     SetSizes();
+    SetSquareRoots(_lMax);
   }
 
   // Parallel constructor with specified boundary.
   PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
                 mfem::Array<int>& bdr_marker)
       : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetSquareRoots(_lMax);
     SetBoundaryMarker(bdr_marker);
     SetSizes();
+    SetSquareRoots(_lMax);
   }
 #endif
 };

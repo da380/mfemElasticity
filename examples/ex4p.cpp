@@ -119,7 +119,10 @@ int main(int argc, char *argv[]) {
   auto P = HypreParMatrix(A);
   auto M = HypreParMatrix();
   m.FormSystemMatrix(ess_tdof_list, M);
-  P.Add(0.1, M);
+  auto A_norm = A.FNorm();
+  auto M_norm = M.FNorm();
+  auto eps = 1e-6 * A_norm / M_norm;
+  P.Add(eps, M);
   auto prec = HypreBoomerAMG(P);
 
   // Set the solver.
