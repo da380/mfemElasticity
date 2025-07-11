@@ -16,6 +16,10 @@ Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim)
       _mat(_coeff_dim, fes->GetVSize()) {
   CheckMesh();
   _bdr_marker = 0;
+#ifndef MFEM_THREAD_SAFE
+  _c.SetSize(_coeff_dim);
+  _x.SetSize(_fes->GetMesh()->Dimension());
+#endif
 }
 
 #ifdef MFEM_USE_MPI
@@ -30,6 +34,10 @@ Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim)
       _mat(_coeff_dim, fes->GetVSize()) {
   CheckMesh();
   _bdr_marker = 0;
+#ifndef MFEM_THREAD_SAFE
+  _c.SetSize(_coeff_dim);
+  _x.SetSize(_fes->GetMesh()->Dimension());
+#endif
 }
 #endif
 
@@ -37,8 +45,7 @@ void Poisson::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c;
-  _c.SetSize(_coeff_dim);
+  Vector _c(_coeff_dim);
 #endif
 
   _mat.Mult(x, _c);

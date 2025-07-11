@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
   auto z = GridFunction(&dfes);
   z.ProjectCoefficient(rho_coeff);
 
-  auto C = Multipole::Poisson2D(&dfes, &fes, kMax);
+  auto C = Multipole::PoissonCircle(&dfes, &fes, kMax);
   C.Assemble();
 
   BilinearForm a(&fes);

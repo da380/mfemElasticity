@@ -14,17 +14,15 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-/*===========================================================
+/*----------------------------------------------------------
       Base class for DtN operator for Poisson equation
-============================================================*/
+------------------------------------------------------------*/
 class Poisson : public mfem::Integrator, public mfem::Operator {
  protected:
   mfem::FiniteElementSpace* _fes;
   int _coeff_dim;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
-
-  static constexpr mfem::real_t pi = std::atan(1) * 4;
 
 #ifdef MFEM_USE_MPI
   bool _parallel = false;
@@ -91,6 +89,8 @@ class PoissonCircle : public Poisson {
  private:
   int _kMax;
 
+  static constexpr mfem::real_t pi = std::atan(1) * 4;
+
   void AssembleElementMatrix(const mfem::FiniteElement& fe,
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat) override;
@@ -100,19 +100,11 @@ class PoissonCircle : public Poisson {
     assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
   }
 
-  void SetSizes() {
-#ifndef MFEM_THREAD_SAFE
-    _x.SetSize(2);
-    _c.SetSize(_coeff_dim);
-#endif
-  }
-
  public:
   // Serial constructor with default boundary.
   PoissonCircle(mfem::FiniteElementSpace* fes, int kMax)
       : Poisson(fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarkerToExternal();
-    SetSizes();
   }
 
   // Serial constructor with specified boundary.
@@ -120,7 +112,6 @@ class PoissonCircle : public Poisson {
                 mfem::Array<int>& bdr_marker)
       : Poisson(fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarker(bdr_marker);
-    SetSizes();
   }
 
 #ifdef MFEM_USE_MPI
@@ -128,7 +119,6 @@ class PoissonCircle : public Poisson {
   PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax)
       : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarkerToExternal();
-    SetSizes();
   }
 
   // Parallel constructor with specified boundary.
@@ -136,14 +126,13 @@ class PoissonCircle : public Poisson {
                 mfem::Array<int>& bdr_marker)
       : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
     SetBoundaryMarker(bdr_marker);
-    SetSizes();
   }
 #endif
 };
 
-/*===============================================================
+/*---------------------------------------------------------------
     DtN operator for Poisson's equation on a spherical boundary
-=================================================================*/
+----------------------------------------------------------------*/
 class PoissonSphere : public Poisson, private LegendreHelper {
  private:
   int _lMax;
@@ -163,9 +152,6 @@ class PoissonSphere : public Poisson, private LegendreHelper {
 
   void SetSizes() {
 #ifndef MFEM_THREAD_SAFE
-    _x.SetSize(3);
-    _c.SetSize(_coeff_dim);
-
     _sin.SetSize(_lMax + 1);
     _cos.SetSize(_lMax + 1);
 

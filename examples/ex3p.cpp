@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
   auto z = ParGridFunction(&dfes);
   z.ProjectCoefficient(rho_coeff);
 
-  auto C = Multipole::Poisson2D(MPI_COMM_WORLD, &dfes, &fes, kMax);
+  auto C = Multipole::PoissonCircle(MPI_COMM_WORLD, &dfes, &fes, kMax);
   C.Assemble();
 
   auto a = ParBilinearForm(&fes);

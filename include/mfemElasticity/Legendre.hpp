@@ -10,6 +10,10 @@
 
 namespace mfemElasticity {
 
+/*
+  Helper struct for computation of Associated Legendre polynomials
+  normalised following the conventions in Dahlen & Tromp (1998).
+*/
 struct LegendreHelper {
   static constexpr mfem::real_t pi = std::atan(1) * 4;
   static constexpr mfem::real_t invSqrtFourPi = 1 / std::sqrt(4 * pi);
@@ -19,6 +23,7 @@ struct LegendreHelper {
   mfem::Vector _sqrt;
   mfem::Vector _isqrt;
 
+  // Precompute integer square roots up to 2*lMax+1.
   void SetSquareRoots(int lMax);
 
   int MinusOnePower(int m) const { return m % 2 ? -1 : 1; }
@@ -29,10 +34,13 @@ struct LegendreHelper {
   // Returns log[(2m-1)!!]
   mfem::real_t LogDoubleFactorial(int m) const;
 
-  // Returns P_{ll}(x)
+  // Returns p_{ll}(x)
   mfem::real_t Pll(int l, mfem::real_t x) const;
 
-  // Returns three-point recursion coefficients for given degree and order
+  /*
+    Returns three-point recursion coefficients such that:
+    p_{l+1,m} = alpha * (x * p_{l,m} - beta * p_{l-1,m})
+  */
   std::pair<mfem::real_t, mfem::real_t> RecursionCoefficients(int l,
                                                               int m) const {
     auto alpha =
