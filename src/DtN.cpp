@@ -83,7 +83,7 @@ void Poisson::Assemble() {
   _mat.Finalize();
 }
 
-mfem::RAPOperator Poisson::FormSystemMatrix() const {
+mfem::RAPOperator Poisson::RAPOperator() const {
   auto* P = _fes->GetProlongationMatrix();
   return mfem::RAPOperator(*P, *this, *P);
 }
@@ -183,8 +183,6 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
 #ifdef MFEM_THREAD_SAFE
   Vector _c, shape, _x, _sin, _cos, _p, _pm1;
-#endif
-
   _x.SetSize(3);
   _c.SetSize(_coeff_dim);
 
@@ -193,6 +191,7 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
   _p.SetSize(_lMax + 1);
   _pm1.SetSize(_lMax + 1);
+#endif
 
   shape.SetSize(dof);
 
@@ -250,64 +249,6 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
       for (auto m = 1; m <= l; m++) {
         _c(i++) = fac * _p[m] * _cos(m);
         _c(i++) = fac * _p[m] * _sin(m);
-      }
-    }
-
-    fe.CalcShape(ip, shape);
-    auto w = Trans.Weight() * ip.weight;
-
-    AddMult_a_VWt(w, _c, shape, elmat);
-  }
-}
-
-void PoissonSphere::AssembleElementMatrix2(const mfem::FiniteElement& fe,
-                                           mfem::ElementTransformation& Trans,
-                                           mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
-#endif
-
-  _x.SetSize(3);
-  _c.SetSize(_coeff_dim);
-
-  shape.SetSize(dof);
-
-  elmat.SetSize(_coeff_dim, dof);
-  elmat = 0.0;
-
-  const auto* ir = GetIntegrationRule(fe, Trans);
-  if (ir == nullptr) {
-    int intorder = fe.GetOrder() + Trans.OrderW();
-    ir = &IntRules.Get(fe.GetGeomType(), intorder);
-  }
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-
-    const auto r = _x.Norml2();
-    const auto ri = 1 / r;
-
-    auto theta = std::acos(_x(2) / r);
-    auto phi = std::atan2(_x(1), _x(0));
-
-    auto rfac = std::sqrt(ri) * ri;
-
-    auto i = 0;
-    for (auto l = 0; l <= _lMax; l++) {
-      auto fac = rfac * _sqrt[l + 1];
-
-      _c(i++) = fac * std::sph_legendre(l, 0, theta);
-
-      fac *= sqrt2;
-      for (auto m = 1; m <= l; m++) {
-        _c(i++) = fac * std::sph_legendre(l, m, theta) * std::cos(m * phi);
-        _c(i++) = fac * std::sph_legendre(l, m, theta) * std::sin(m * phi);
       }
     }
 

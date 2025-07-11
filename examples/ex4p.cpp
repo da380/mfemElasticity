@@ -80,14 +80,19 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
+  /*
   auto eps = ConstantCoefficient(0.1);
   auto p = ParBilinearForm(&fes);
   p.AddDomainIntegrator(new DiffusionIntegrator());
   p.AddDomainIntegrator(new MassIntegrator(eps));
   p.Assemble();
+  */
+  auto m = ParBilinearForm(&fes);
+  m.AddDomainIntegrator(new MassIntegrator());
+  m.Assemble();
 
-  auto C = DtN::PoissonSphere(MPI_COMM_WORLD, &fes, lMax);
-  C.Assemble();
+  auto c = DtN::PoissonSphere(MPI_COMM_WORLD, &fes, lMax);
+  c.Assemble();
 
   // Set the density.
   auto rho_coefficient =
@@ -108,12 +113,13 @@ int main(int argc, char *argv[]) {
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  auto RCP = C.FormSystemMatrix();
-  auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &RCP, 1, false, false);
+  auto C = c.RAPOperator();
+  auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &C, 1, false, false);
 
-  HypreParMatrix P;
-  p.FormSystemMatrix(ess_tdof_list, P);
-
+  auto P = HypreParMatrix(A);
+  auto M = HypreParMatrix();
+  m.FormSystemMatrix(ess_tdof_list, M);
+  P.Add(0.1, M);
   auto prec = HypreBoomerAMG(P);
 
   // Set the solver.
@@ -144,7 +150,6 @@ int main(int argc, char *argv[]) {
 
   auto y = ParGridFunction(&fes);
   y.ProjectCoefficient(phi);
-
   x -= y;
 
   // Write to file.

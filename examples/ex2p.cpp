@@ -115,7 +115,7 @@ int main(int argc, char *argv[]) {
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  auto C = c.FormSystemMatrix();
+  auto C = c.RAPOperator();
   auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &C, 1, false, false);
 
   auto prec = HypreBoomerAMG(A);

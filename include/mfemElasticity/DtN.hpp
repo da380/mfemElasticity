@@ -80,7 +80,7 @@ class Poisson : public mfem::Integrator, public mfem::Operator {
   void Assemble();
 
   // Return the associated RAP operator.
-  mfem::RAPOperator FormSystemMatrix() const;
+  mfem::RAPOperator RAPOperator() const;
 };
 
 /*===============================================================
@@ -167,13 +167,22 @@ class PoissonSphere : public Poisson {
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat) override;
 
-  void AssembleElementMatrix2(const mfem::FiniteElement& fe,
-                              mfem::ElementTransformation& Trans,
-                              mfem::DenseMatrix& elmat);
-
   void CheckMesh() const override {
     auto* mesh = _fes->GetMesh();
     assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
+  }
+
+  void SetSizes() {
+#ifndef MFEM_THREAD_SAFE
+    _x.SetSize(3);
+    _c.SetSize(_coeff_dim);
+
+    _sin.SetSize(_lMax + 1);
+    _cos.SetSize(_lMax + 1);
+
+    _p.SetSize(_lMax + 1);
+    _pm1.SetSize(_lMax + 1);
+#endif
   }
 
  public:
@@ -182,6 +191,7 @@ class PoissonSphere : public Poisson {
       : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
     SetSquareRoots(_lMax);
     SetBoundaryMarkerToExternal();
+    SetSizes();
   }
 
   // Serial constructor with specified boundary.
@@ -190,6 +200,7 @@ class PoissonSphere : public Poisson {
       : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
     SetSquareRoots(_lMax);
     SetBoundaryMarker(bdr_marker);
+    SetSizes();
   }
 
 #ifdef MFEM_USE_MPI
@@ -198,6 +209,7 @@ class PoissonSphere : public Poisson {
       : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
     SetSquareRoots(_lMax);
     SetBoundaryMarkerToExternal();
+    SetSizes();
   }
 
   // Parallel constructor with specified boundary.
@@ -206,6 +218,7 @@ class PoissonSphere : public Poisson {
       : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
     SetSquareRoots(_lMax);
     SetBoundaryMarker(bdr_marker);
+    SetSizes();
   }
 #endif
 };
