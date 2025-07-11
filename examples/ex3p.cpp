@@ -27,7 +27,7 @@ int main(int argc, char *argv[]) {
   int order = 3;
   int serial_refinement = 0;
   int parallel_refinement = 0;
-  int kmax = 16;
+  int kMax = 16;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -39,7 +39,7 @@ int main(int argc, char *argv[]) {
   args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",
                  "number of parallel mesh refinements");
 
-  args.AddOption(&kmax, "-kmax", "--kmax", "Order for Fourier exapansion");
+  args.AddOption(&kMax, "-kMax", "--kMax", "Order for Fourier exapansion");
 
   args.Parse();
   if (!args.Good()) {
@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
   auto z = ParGridFunction(&dfes);
   z.ProjectCoefficient(rho_coeff);
 
-  auto C = Multipole::Poisson2D(MPI_COMM_WORLD, &dfes, &fes, kmax);
+  auto C = Multipole::Poisson2D(MPI_COMM_WORLD, &dfes, &fes, kMax);
   C.Assemble();
 
   auto a = ParBilinearForm(&fes);

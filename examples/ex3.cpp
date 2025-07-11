@@ -21,7 +21,7 @@ int main(int argc, char *argv[]) {
 
   int order = 3;
   int ref_levels = 0;
-  int kmax = 16;
+  int kMax = 16;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) {
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
   args.AddOption(&ref_levels, "-r", "--refine", "Number of mesh refinements");
-  args.AddOption(&kmax, "-kmax", "--kmax", "Order for Fourier exapansion");
+  args.AddOption(&kMax, "-kMax", "--kMax", "Order for Fourier exapansion");
 
   args.Parse();
   if (!args.Good()) {
@@ -64,7 +64,7 @@ int main(int argc, char *argv[]) {
   auto z = GridFunction(&dfes);
   z.ProjectCoefficient(rho_coeff);
 
-  auto C = Multipole::Poisson2D(&dfes, &fes, kmax);
+  auto C = Multipole::Poisson2D(&dfes, &fes, kMax);
   C.Assemble();
 
   BilinearForm a(&fes);

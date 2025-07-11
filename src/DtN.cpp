@@ -2,6 +2,8 @@
 
 #include "mfemElasticity/DtN.hpp"
 
+#include <cmath>
+
 namespace mfemElasticity {
 
 namespace DtN {
@@ -81,7 +83,7 @@ void Poisson::Assemble() {
   _mat.Finalize();
 }
 
-mfem::RAPOperator Poisson::RAP() const {
+mfem::RAPOperator Poisson::FormSystemMatrix() const {
   auto* P = _fes->GetProlongationMatrix();
   return mfem::RAPOperator(*P, *this, *P);
 }
@@ -123,7 +125,7 @@ void PoissonCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
     auto i = 0;
     for (auto k = 1; k <= _kMax; k++) {
-      auto fac = std::sqrt(M_PI * k);
+      auto fac = std::sqrt(pi * k);
       auto sin_k = sin_k_m * cos + cos_k_m * sin;
       auto cos_k = cos_k_m * cos - sin_k_m * sin;
       _c(i++) = fac * cos_k;
@@ -132,7 +134,7 @@ void PoissonCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
       cos_k_m = cos_k;
     }
 
-    auto w = ri * Trans.Weight() * ip.weight / M_PI;
+    auto w = ri * Trans.Weight() * ip.weight / pi;
 
     AddMult_a_VWt(w, _c, shape, elmat);
   }
@@ -226,27 +228,86 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
 
     auto i = 1;
     for (auto l = 1; l <= _lMax; l++) {
-      auto fac = rfac * _sqrt(l + 1);
+      auto fac = rfac * _sqrt[l + 1];
 
       _sin(l) = _sin(l - 1) * cos + _cos(l - 1) * sin;
       _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
 
       for (auto m = 0; m < l; m++) {
         const auto alpha =
-            _sqrt(2 * l + 1) * _sqrt(2 * l - 1) * _isqrt[l + m] * _isqrt[l - m];
-        const auto beta = _sqrt(l - 1 + m) * _sqrt(l - 1 - m) *
-                          _isqrt(2 * (l - 1) + 1) * _isqrt(2 * (l - 1) - 1);
+            _sqrt[2 * l + 1] * _sqrt[2 * l - 1] * _isqrt[l + m] * _isqrt[l - m];
+        const auto beta = _sqrt[l - 1 + m] * _sqrt[l - 1 - m] *
+                          _isqrt[2 * (l - 1) + 1] * _isqrt[2 * (l - 1) - 1];
         _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
       }
       _pm1(l) = Pll(l, cos_theta);
+      _p(l) = 0.0;
       std::swap(_p, _pm1);
 
       _c(i++) = fac * _p(0);
 
       fac *= sqrt2;
       for (auto m = 1; m <= l; m++) {
-        _c(i++) = fac * _p(m) * _cos(m);
-        _c(i++) = fac * _p(m) * _sin(m);
+        _c(i++) = fac * _p[m] * _cos(m);
+        _c(i++) = fac * _p[m] * _sin(m);
+      }
+    }
+
+    fe.CalcShape(ip, shape);
+    auto w = Trans.Weight() * ip.weight;
+
+    AddMult_a_VWt(w, _c, shape, elmat);
+  }
+}
+
+void PoissonSphere::AssembleElementMatrix2(const mfem::FiniteElement& fe,
+                                           mfem::ElementTransformation& Trans,
+                                           mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto dof = fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
+#endif
+
+  _x.SetSize(3);
+  _c.SetSize(_coeff_dim);
+
+  shape.SetSize(dof);
+
+  elmat.SetSize(_coeff_dim, dof);
+  elmat = 0.0;
+
+  const auto* ir = GetIntegrationRule(fe, Trans);
+  if (ir == nullptr) {
+    int intorder = fe.GetOrder() + Trans.OrderW();
+    ir = &IntRules.Get(fe.GetGeomType(), intorder);
+  }
+
+  for (auto j = 0; j < ir->GetNPoints(); j++) {
+    const auto& ip = ir->IntPoint(j);
+    Trans.SetIntPoint(&ip);
+    Trans.Transform(ip, _x);
+
+    const auto r = _x.Norml2();
+    const auto ri = 1 / r;
+
+    auto theta = std::acos(_x(2) / r);
+    auto phi = std::atan2(_x(1), _x(0));
+
+    auto rfac = std::sqrt(ri) * ri;
+
+    auto i = 0;
+    for (auto l = 0; l <= _lMax; l++) {
+      auto fac = rfac * _sqrt[l + 1];
+
+      _c(i++) = fac * std::sph_legendre(l, 0, theta);
+
+      fac *= sqrt2;
+      for (auto m = 1; m <= l; m++) {
+        _c(i++) = fac * std::sph_legendre(l, m, theta) * std::cos(m * phi);
+        _c(i++) = fac * std::sph_legendre(l, m, theta) * std::sin(m * phi);
       }
     }
 

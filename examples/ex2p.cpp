@@ -28,7 +28,7 @@ int main(int argc, char *argv[]) {
   int order = 3;
   int serial_refinement = 0;
   int parallel_refinement = 0;
-  int kmax = 16;
+  int kMax = 16;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -40,7 +40,7 @@ int main(int argc, char *argv[]) {
   args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",
                  "number of parallel mesh refinements");
 
-  args.AddOption(&kmax, "-kmax", "--kmax", "Order for Fourier exapansion");
+  args.AddOption(&kMax, "-kMax", "--kMax", "Order for Fourier exapansion");
 
   args.Parse();
   if (!args.Good()) {
@@ -81,8 +81,8 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::PoissonCircle(MPI_COMM_WORLD, &fespace, kmax);
-  C.Assemble();
+  auto c = DtN::PoissonCircle(MPI_COMM_WORLD, &fespace, kMax);
+  c.Assemble();
 
   // Set the density.
   auto rho_coefficient =
@@ -115,8 +115,8 @@ int main(int argc, char *argv[]) {
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  auto RCP = C.RAP();
-  auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &RCP, 1, false, false);
+  auto C = c.FormSystemMatrix();
+  auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &C, 1, false, false);
 
   auto prec = HypreBoomerAMG(A);
 

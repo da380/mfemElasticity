@@ -22,7 +22,7 @@ int main(int argc, char *argv[]) {
   // "/home/david/dev/meshing/examples/circular_shell.msh";
   int order = 3;
   int ref_levels = 0;
-  int kmax = 16;
+  int kMax = 16;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -30,7 +30,7 @@ int main(int argc, char *argv[]) {
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
   args.AddOption(&ref_levels, "-r", "--refine", "Number of mesh refinements");
-  args.AddOption(&kmax, "-kmax", "--kmax", "Order for Fourier exapansion");
+  args.AddOption(&kMax, "-kMax", "--kMax", "Order for Fourier exapansion");
 
   args.Parse();
   if (!args.Good()) {
@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::PoissonCircle(&fespace, kmax);
+  auto C = DtN::PoissonCircle(&fespace, kMax);
   C.Assemble();
 
   // Set the density.

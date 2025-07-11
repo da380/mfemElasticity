@@ -13,15 +13,17 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-/*
-Base class for DtN operator for Poisson equation.
-*/
+/*===========================================================
+      Base class for DtN operator for Poisson equation
+============================================================*/
 class Poisson : public mfem::Integrator, public mfem::Operator {
  protected:
   mfem::FiniteElementSpace* _fes;
   int _coeff_dim;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
+
+  static constexpr mfem::real_t pi = std::atan(1) * 4;
 
 #ifdef MFEM_USE_MPI
   bool _parallel = false;
@@ -78,7 +80,7 @@ class Poisson : public mfem::Integrator, public mfem::Operator {
   void Assemble();
 
   // Return the associated RAP operator.
-  mfem::RAPOperator RAP() const;
+  mfem::RAPOperator FormSystemMatrix() const;
 };
 
 /*===============================================================
@@ -91,6 +93,11 @@ class PoissonCircle : public Poisson {
   void AssembleElementMatrix(const mfem::FiniteElement& fe,
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat) override;
+
+  void CheckMesh() const override {
+    auto* mesh = _fes->GetMesh();
+    assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
+  }
 
  public:
   // Serial constructor with default boundary.
@@ -159,6 +166,15 @@ class PoissonSphere : public Poisson {
   void AssembleElementMatrix(const mfem::FiniteElement& fe,
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat) override;
+
+  void AssembleElementMatrix2(const mfem::FiniteElement& fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat);
+
+  void CheckMesh() const override {
+    auto* mesh = _fes->GetMesh();
+    assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
+  }
 
  public:
   // Serial constructor with default boundary.

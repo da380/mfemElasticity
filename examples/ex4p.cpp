@@ -80,6 +80,12 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
+  auto eps = ConstantCoefficient(0.1);
+  auto p = ParBilinearForm(&fes);
+  p.AddDomainIntegrator(new DiffusionIntegrator());
+  p.AddDomainIntegrator(new MassIntegrator(eps));
+  p.Assemble();
+
   auto C = DtN::PoissonSphere(MPI_COMM_WORLD, &fes, lMax);
   C.Assemble();
 
@@ -102,13 +108,13 @@ int main(int argc, char *argv[]) {
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  auto RCP = C.RAP();
+  auto RCP = C.FormSystemMatrix();
   auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &RCP, 1, false, false);
 
-  auto boomer = HypreBoomerAMG(A);
-  auto prec = ShiftedPreconditioner(MPI_COMM_WORLD, 1);
-  prec.SetSolver(boomer);
-  // auto prec= HypreBoomerAMG(A);
+  HypreParMatrix P;
+  p.FormSystemMatrix(ess_tdof_list, P);
+
+  auto prec = HypreBoomerAMG(P);
 
   // Set the solver.
   auto solver = CGSolver(MPI_COMM_WORLD);
