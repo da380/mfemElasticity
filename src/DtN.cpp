@@ -8,14 +8,21 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim)
+mfem::Array<int> Poisson::ExternalBoundaryMarker(mfem::Mesh* mesh) {
+  auto bdr_marker = mfem::Array<int>(mesh->bdr_attributes.Max());
+  bdr_marker = 0;
+  mesh->MarkExternalBoundaries(bdr_marker);
+  return bdr_marker;
+}
+
+Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim,
+                 const mfem::Array<int>& bdr_marker)
     : mfem::Operator(fes->GetVSize()),
       _fes{fes},
       _coeff_dim{coeff_dim},
-      _bdr_marker(_fes->GetMesh()->bdr_attributes.Max()),
+      _bdr_marker{bdr_marker},
       _mat(_coeff_dim, fes->GetVSize()) {
   CheckMesh();
-  _bdr_marker = 0;
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
   _x.SetSize(_fes->GetMesh()->Dimension());
@@ -23,17 +30,17 @@ Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim)
 }
 
 #ifdef MFEM_USE_MPI
-Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim)
+Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim,
+                 const mfem::Array<int>& bdr_marker)
     : mfem::Operator(fes->GetVSize()),
       _parallel{true},
       _comm{comm},
       _pfes{fes},
       _fes{fes},
       _coeff_dim{coeff_dim},
-      _bdr_marker(_fes->GetMesh()->bdr_attributes.Max()),
+      _bdr_marker{bdr_marker},
       _mat(_coeff_dim, fes->GetVSize()) {
   CheckMesh();
-  _bdr_marker = 0;
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
   _x.SetSize(_fes->GetMesh()->Dimension());

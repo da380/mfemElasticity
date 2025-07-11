@@ -4,28 +4,44 @@ namespace mfemElasticity {
 
 namespace Multipole {
 
+mfem::Array<int> Poisson::ExternalBoundaryMarker(mfem::Mesh* mesh) {
+  auto bdr_marker = mfem::Array<int>(mesh->bdr_attributes.Max());
+  bdr_marker = 0;
+  mesh->MarkExternalBoundaries(bdr_marker);
+  return bdr_marker;
+}
+
+mfem::Array<int> Poisson::DomainMarker(mfem::Mesh* mesh) {
+  auto dom_marker = mfem::Array<int>(mesh->attributes.Max());
+  dom_marker = 1;
+  return dom_marker;
+}
+
 Poisson::Poisson(mfem::FiniteElementSpace* tr_fes,
-                 mfem::FiniteElementSpace* te_fes, int coeff_dim)
+                 mfem::FiniteElementSpace* te_fes, int coeff_dim,
+                 const mfem::Array<int>& dom_marker,
+                 const mfem::Array<int>& bdr_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
       _tr_fes{tr_fes},
       _te_fes{te_fes},
       _coeff_dim{coeff_dim},
-      _dom_marker(_tr_fes->GetMesh()->attributes.Max()),
-      _bdr_marker(_tr_fes->GetMesh()->bdr_attributes.Max()),
+      _dom_marker{dom_marker},
+      _bdr_marker{bdr_marker},
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   CheckMesh();
-  _bdr_marker = 0;
-  _dom_marker = 0;
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
   _x.SetSize(_tr_fes->GetMesh()->Dimension());
 #endif
+  _bdr_radius = ExternalBoundaryRadius();
 }
 
 #ifdef MFEM_USE_MPI
 Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
-                 mfem::ParFiniteElementSpace* te_fes, int coeff_dim)
+                 mfem::ParFiniteElementSpace* te_fes, int coeff_dim,
+                 const mfem::Array<int>& dom_marker,
+                 const mfem::Array<int>& bdr_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
       _parallel{true},
       _comm{comm},
@@ -34,17 +50,16 @@ Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
       _te_fes{te_fes},
       _te_pfes{te_fes},
       _coeff_dim{coeff_dim},
-      _dom_marker(_tr_fes->GetMesh()->attributes.Max()),
-      _bdr_marker(_tr_fes->GetMesh()->bdr_attributes.Max()),
+      _dom_marker{dom_marker},
+      _bdr_marker{bdr_marker},
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   CheckMesh();
-  _bdr_marker = 0;
-  _dom_marker = 0;
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
   _x.SetSize(_tr_fes->GetMesh()->Dimension());
 #endif
+  _bdr_radius = ParallelExternalBoundaryRadius();
 }
 #endif
 
@@ -125,6 +140,7 @@ void Poisson::Mult(const mfem::Vector& x, mfem::Vector& y) const {
                   MPI_SUM, _comm);
   }
 #endif
+
   y.SetSize(_lmat.Height());
   _lmat.Mult(_c, y);
 }

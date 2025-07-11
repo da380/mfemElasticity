@@ -45,27 +45,29 @@ class Poisson : public mfem::Integrator, public mfem::Operator {
   // Check that the mesh is suitable. Can be overridden.
   virtual void CheckMesh() const {}
 
+  static mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh);
+
  public:
-  // Serial constructor.
-  Poisson(mfem::FiniteElementSpace* fes, int coeff_dim);
+  // Serial constructors.
+  Poisson(mfem::FiniteElementSpace* fes, int coeff_dim,
+          const mfem::Array<int>& bdr_marker);
+
+  Poisson(mfem::FiniteElementSpace* fes, int coeff_dim,
+          mfem::Array<int>&& bdr_marker)
+      : Poisson(fes, coeff_dim, bdr_marker) {}
 
 #ifdef MFEM_USE_MPI
-  // Parallel constructor.
-  Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim);
+  // Parallel constructors.
+  Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim,
+          const mfem::Array<int>& bdr_marker);
+
+  Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim,
+          mfem::Array<int>&& bdr_marker)
+      : Poisson(comm, fes, coeff_dim, bdr_marker) {}
+
+  Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim)
+      : Poisson(comm, fes, coeff_dim, ExternalBoundaryMarker(fes->GetMesh())) {}
 #endif
-
-  // Set the boundary marker to the default.
-  void SetBoundaryMarkerToExternal() {
-    auto* mesh = _fes->GetMesh();
-    _bdr_marker.SetSize(mesh->bdr_attributes.Max());
-    _bdr_marker = 0;
-    mesh->MarkExternalBoundaries(_bdr_marker);
-  }
-
-  // Set the boundary marker.
-  void SetBoundaryMarker(mfem::Array<int>& bdr_marker) {
-    _bdr_marker = bdr_marker;
-  }
 
   // Multiplication by the operator.
   void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
@@ -101,32 +103,33 @@ class PoissonCircle : public Poisson {
   }
 
  public:
-  // Serial constructor with default boundary.
-  PoissonCircle(mfem::FiniteElementSpace* fes, int kMax)
-      : Poisson(fes, 2 * kMax), _kMax{kMax} {
-    SetBoundaryMarkerToExternal();
-  }
-
-  // Serial constructor with specified boundary.
+  // Serial constructors.
   PoissonCircle(mfem::FiniteElementSpace* fes, int kMax,
-                mfem::Array<int>& bdr_marker)
-      : Poisson(fes, 2 * kMax), _kMax{kMax} {
-    SetBoundaryMarker(bdr_marker);
-  }
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(fes, 2 * kMax, bdr_marker), _kMax{kMax} {}
+
+  PoissonCircle(mfem::FiniteElementSpace* fes, int kMax,
+                mfem::Array<int>&& bdr_marker)
+      : PoissonCircle(fes, kMax, bdr_marker) {}
+
+  PoissonCircle(mfem::FiniteElementSpace* fes, int kMax)
+      : Poisson(fes, 2 * kMax, ExternalBoundaryMarker(fes->GetMesh())),
+        _kMax{kMax} {}
 
 #ifdef MFEM_USE_MPI
-  // Parallel constructor with default boundary.
-  PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax)
-      : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
-    SetBoundaryMarkerToExternal();
-  }
-
-  // Parallel constructor with specified boundary.
+  // Parallel constructors.
   PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
-                mfem::Array<int>& bdr_marker)
-      : Poisson(comm, fes, 2 * kMax), _kMax{kMax} {
-    SetBoundaryMarker(bdr_marker);
-  }
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(comm, fes, 2 * kMax, bdr_marker), _kMax{kMax} {}
+
+  PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
+                mfem::Array<int>&& bdr_marker)
+      : PoissonCircle(comm, fes, kMax, bdr_marker) {}
+
+  PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax)
+      : Poisson(comm, fes, 2 * kMax, ExternalBoundaryMarker(fes->GetMesh())),
+        _kMax{kMax} {}
+
 #endif
 };
 
@@ -150,51 +153,54 @@ class PoissonSphere : public Poisson, private LegendreHelper {
     assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
   }
 
-  void SetSizes() {
+  void SetUp() {
 #ifndef MFEM_THREAD_SAFE
     _sin.SetSize(_lMax + 1);
     _cos.SetSize(_lMax + 1);
-
     _p.SetSize(_lMax + 1);
     _pm1.SetSize(_lMax + 1);
 #endif
+    SetSquareRoots(_lMax);
   }
 
  public:
-  // Serial constructor with default boundary.
-  PoissonSphere(mfem::FiniteElementSpace* fes, int lMax)
-      : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetBoundaryMarkerToExternal();
-    SetSizes();
-    SetSquareRoots(_lMax);
+  // Serial constructors.
+  PoissonSphere(mfem::FiniteElementSpace* fes, int lMax,
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(fes, (lMax + 1) * (lMax + 1), bdr_marker), _lMax{lMax} {
+    SetUp();
   }
 
-  // Serial constructor with specified boundary.
   PoissonSphere(mfem::FiniteElementSpace* fes, int lMax,
-                mfem::Array<int>& bdr_marker)
-      : Poisson(fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetBoundaryMarker(bdr_marker);
-    SetSizes();
-    SetSquareRoots(_lMax);
+                mfem::Array<int>&& bdr_marker)
+      : PoissonSphere(fes, lMax, bdr_marker) {}
+
+  PoissonSphere(mfem::FiniteElementSpace* fes, int lMax)
+      : Poisson(fes, (lMax + 1) * (lMax + 1),
+                ExternalBoundaryMarker(fes->GetMesh())),
+        _lMax{lMax} {
+    SetUp();
   }
 
 #ifdef MFEM_USE_MPI
-  // Parallel constructor with default boundary.
-  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax)
-      : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetBoundaryMarkerToExternal();
-    SetSizes();
-    SetSquareRoots(_lMax);
+  // Parallel constructors.
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(comm, fes, (lMax + 1) * (lMax + 1), bdr_marker), _lMax{lMax} {
+    SetUp();
   }
 
-  // Parallel constructor with specified boundary.
   PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
-                mfem::Array<int>& bdr_marker)
-      : Poisson(comm, fes, (lMax + 1) * (lMax + 1)), _lMax{lMax} {
-    SetBoundaryMarker(bdr_marker);
-    SetSizes();
-    SetSquareRoots(_lMax);
+                mfem::Array<int>&& bdr_marker)
+      : PoissonSphere(comm, fes, (lMax + 1) * (lMax + 1), bdr_marker) {}
+
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax)
+      : Poisson(comm, fes, (lMax + 1) * (lMax + 1),
+                ExternalBoundaryMarker(fes->GetMesh())),
+        _lMax{lMax} {
+    SetUp();
   }
+
 #endif
 };
 
