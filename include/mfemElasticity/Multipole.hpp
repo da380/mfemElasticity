@@ -7,6 +7,7 @@
 #include <type_traits>
 
 #include "mfem.hpp"
+#include "mfemElasticity/Legendre.hpp"
 
 namespace mfemElasticity {
 
@@ -127,6 +128,9 @@ class Poisson : public mfem::Integrator, public mfem::Operator {
   mfem::RAPOperator RAPOperator() const;
 };
 
+/*----------------------------------------------------------
+     Class for Multipole operator for Poisson 2D equation
+------------------------------------------------------------*/
 class PoissonCircle : public Poisson {
  private:
   int _kMax;
@@ -216,6 +220,144 @@ class PoissonCircle : public Poisson {
       : Poisson(comm, tr_fes, te_fes, 2 * kMax, DomainMarker(tr_fes->GetMesh()),
                 ExternalBoundaryMarker(tr_fes->GetMesh())),
         _kMax{kMax} {}
+
+#endif
+};
+
+/*----------------------------------------------------------
+     Class for Multipole operator for Poisson 3D equation
+------------------------------------------------------------*/
+class PoissonSphere : public Poisson, private LegendreHelper {
+ private:
+  int _lMax;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector _sin, _cos, _p, _pm1;
+#endif
+
+  void AssembleLeftElementMatrix(const mfem::FiniteElement& fe,
+                                 mfem::ElementTransformation& Trans,
+                                 mfem::DenseMatrix& elmat) override;
+
+  void AssembleRightElementMatrix(const mfem::FiniteElement& fe,
+                                  mfem::ElementTransformation& Trans,
+                                  mfem::DenseMatrix& elmat) override;
+
+  void CheckMesh() const override {
+    assert(_te_fes->GetMesh() == _tr_fes->GetMesh());
+    assert(_tr_fes->GetMesh()->Dimension() == 3 &&
+           _tr_fes->GetMesh()->SpaceDimension() == 3);
+  }
+
+  void SetUp() {
+#ifndef MFEM_THREAD_SAFE
+    _sin.SetSize(_lMax + 1);
+    _cos.SetSize(_lMax + 1);
+    _p.SetSize(_lMax + 1);
+    _pm1.SetSize(_lMax + 1);
+#endif
+    SetSquareRoots(_lMax);
+  }
+
+ public:
+  // Serial constructors
+  PoissonSphere(mfem::FiniteElementSpace* tr_fes,
+                mfem::FiniteElementSpace* te_fes, int lMax,
+                const mfem::Array<int>& dom_marker,
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(mfem::FiniteElementSpace* tr_fes,
+                mfem::FiniteElementSpace* te_fes, int lMax,
+                mfem::Array<int>&& dom_marker,
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(mfem::FiniteElementSpace* tr_fes,
+                mfem::FiniteElementSpace* te_fes, int lMax,
+                const mfem::Array<int>& dom_marker,
+                mfem::Array<int>&& bdr_marker)
+      : Poisson(tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(mfem::FiniteElementSpace* tr_fes,
+                mfem::FiniteElementSpace* te_fes, int lMax,
+                mfem::Array<int>&& dom_marker, mfem::Array<int>&& bdr_marker)
+      : Poisson(tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(mfem::FiniteElementSpace* tr_fes,
+                mfem::FiniteElementSpace* te_fes, int lMax)
+      : Poisson(tr_fes, te_fes, (lMax + 1) * (lMax + 1),
+                DomainMarker(tr_fes->GetMesh()),
+                ExternalBoundaryMarker(tr_fes->GetMesh())),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+#ifdef MFEM_USE_MPI
+  // Parallel constructors.
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                mfem::ParFiniteElementSpace* te_fes, int lMax,
+                const mfem::Array<int>& dom_marker,
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(comm, tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                mfem::ParFiniteElementSpace* te_fes, int lMax,
+                mfem::Array<int>&& dom_marker,
+                const mfem::Array<int>& bdr_marker)
+      : Poisson(comm, tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                mfem::ParFiniteElementSpace* te_fes, int lMax,
+                const mfem::Array<int>& dom_marker,
+                mfem::Array<int>&& bdr_marker)
+      : Poisson(comm, tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                mfem::ParFiniteElementSpace* te_fes, int lMax,
+                mfem::Array<int>&& dom_marker, mfem::Array<int>&& bdr_marker)
+      : Poisson(comm, tr_fes, te_fes, (lMax + 1) * (lMax + 1), dom_marker,
+                bdr_marker),
+        _lMax{lMax} {
+    SetUp();
+  }
+
+  PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                mfem::ParFiniteElementSpace* te_fes, int lMax)
+      : Poisson(comm, tr_fes, te_fes, (lMax + 1) * (lMax + 1),
+                DomainMarker(tr_fes->GetMesh()),
+                ExternalBoundaryMarker(tr_fes->GetMesh())),
+        _lMax{lMax} {
+    SetUp();
+  }
 
 #endif
 };

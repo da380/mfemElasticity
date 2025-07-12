@@ -10,19 +10,20 @@ using namespace mfemElasticity;
 
 const real_t G = 1;
 const real_t rho = 1;
-const real_t radius = 1;
-const real_t x00 = 0.5;
-const real_t x01 = 0.5;
+const real_t radius = 0.5;
+const real_t x00 = 0.0;
+const real_t x01 = 0.25;
+const real_t x02 = 0.0;
+constexpr real_t pi = atan(1) * 4;
 
 int main(int argc, char *argv[]) {
   // 1. Parse command-line options.
   const char *mesh_file =
-      "/home/david/dev/meshing/examples/circular_offset.msh";
-  // const char *mesh_file =
-  // "/home/david/dev/meshing/examples/circular_shell.msh";
-  int order = 3;
+      "/home/david/dev/meshing/examples/spherical_offset.msh";
+
+  int order = 1;
   int ref_levels = 0;
-  int kMax = 16;
+  int lMax = 4;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -30,7 +31,7 @@ int main(int argc, char *argv[]) {
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
   args.AddOption(&ref_levels, "-r", "--refine", "Number of mesh refinements");
-  args.AddOption(&kMax, "-kMax", "--kMax", "Order for Fourier exapansion");
+  args.AddOption(&lMax, "-lMax", "--lMax", "Order for Fourier exapansion");
 
   args.Parse();
   if (!args.Good()) {
@@ -48,44 +49,44 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  auto fec = H1_FECollection(order, dim);
-  auto fespace = FiniteElementSpace(&mesh, &fec);
-  cout << "Number of finite element unknowns: " << fespace.GetTrueVSize()
-       << endl;
+  auto L2 = L2_FECollection(order - 1, dim);
+  auto H1 = H1_FECollection(order, dim);
+  auto dfes = FiniteElementSpace(&mesh, &L2);
+  auto fes = FiniteElementSpace(&mesh, &H1);
+  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
 
-  BilinearForm a(&fespace);
+  // Set piecewise coefficient for density.
+  auto rho_coeff1 = ConstantCoefficient(rho);
+  auto rho_coeff2 = ConstantCoefficient(0);
+
+  auto attr = Array<int>{1, 2};
+  auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
+  auto rho_coeff = PWCoefficient(attr, coeffs);
+
+  auto z = GridFunction(&dfes);
+  z.ProjectCoefficient(rho_coeff);
+
+  auto C = Multipole::PoissonSphere(&dfes, &fes, lMax);
+  C.Assemble();
+
+  BilinearForm a(&fes);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto C = DtN::PoissonCircle(&fespace, kMax);
-  C.Assemble();
-
-  // Set the density.
-  auto rho_coefficient =
-      FunctionCoefficient([=](const Vector &x) { return rho; });
-
   // Set up the form on the domain.
   auto domain_marker = Array<int>{1, 0};
-  LinearForm b(&fespace);
-  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coefficient), domain_marker);
+  LinearForm b(&fes);
+  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff), domain_marker);
   b.Assemble();
-  auto mass = b.Sum();
 
-  // And now the form on the boundary.
-  auto b2 = LinearForm(&fespace);
-  auto one = ConstantCoefficient(1);
-  auto boundary_marker = Array<int>{0, 1};
-  b2.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
-  b2.Assemble();
-  auto length = b2.Sum();
-
-  // Form the total form.
-  b.Add(-mass / length, b2);
-  b *= -4 * M_PI * G;
+  auto n = GridFunction(&fes);
+  C.Mult(z, n);
+  b -= n;
+  b *= -4 * pi * G;
 
   OperatorPtr A;
   Vector B, X;
-  auto x = GridFunction(&fespace);
+  auto x = GridFunction(&fes);
   x = 0.0;
 
   Array<int> ess_tdof_list{};
@@ -94,10 +95,8 @@ int main(int argc, char *argv[]) {
 
   GSSmoother M((SparseMatrix &)(*A));
 
-  auto D = SumOperator(A.Ptr(), 1, &C, 1, false, false);
-
   auto solver = CGSolver();
-  solver.SetOperator(D);
+  solver.SetOperator(*A);
   solver.SetPreconditioner(M);
 
   solver.SetRelTol(1e-12);
@@ -111,23 +110,24 @@ int main(int argc, char *argv[]) {
   a.RecoverFEMSolution(X, b, x);
 
   auto phi = FunctionCoefficient([=](const Vector &x) {
-    auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
+    auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01) +
+             (x(2) - x02) * (x(2) - x02);
     r = sqrt(r);
-    if (r < radius) {
-      return M_PI * G * rho * r * r;
+    if (r <= radius) {
+      return -2 * pi * G * rho * (3 * radius * radius - r * r) / 3;
     } else {
-      return 2 * M_PI * G * rho * radius * log(r / radius) +
-             M_PI * G * rho * radius * radius;
+      return -4 * pi * G * rho * pow(radius, 3) / (3 * r);
     }
   });
 
-  auto l = LinearForm(&fespace);
+  auto one = ConstantCoefficient(1);
+  auto l = LinearForm(&fes);
   l.AddDomainIntegrator(new DomainLFIntegrator(one));
   l.Assemble();
-  auto area = l.Sum();
-  l /= area;
+  auto vol = l.Sum();
+  l /= vol;
 
-  auto y = GridFunction(&fespace);
+  auto y = GridFunction(&fes);
   y.ProjectCoefficient(phi);
 
   auto py = l * y;
@@ -135,6 +135,8 @@ int main(int argc, char *argv[]) {
 
   auto px = l * x;
   x -= px;
+
+  // x -= y;
 
   ofstream mesh_ofs("refined.mesh");
   mesh_ofs.precision(8);
@@ -144,14 +146,11 @@ int main(int argc, char *argv[]) {
   sol_ofs.precision(8);
   x.Save(sol_ofs);
 
-  ofstream exact_ofs("exact.gf");
-  exact_ofs.precision(8);
-  y.Save(exact_ofs);
-
-  x -= y;
-  ofstream diff_ofs("diff.gf");
-  diff_ofs.precision(8);
-  x.Save(diff_ofs);
-
-  return 0;
+  // Visualise if glvis is open.
+  char vishost[] = "localhost";
+  int visport = 19916;
+  socketstream sol_sock(vishost, visport);
+  sol_sock.precision(8);
+  sol_sock << "solution\n" << mesh << x << flush;
+  sol_sock << "keys RRRilmc\n" << flush;
 }

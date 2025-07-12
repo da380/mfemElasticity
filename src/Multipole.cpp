@@ -329,5 +329,153 @@ void PoissonCircle::AssembleLeftElementMatrix(
   }
 }
 
+void PoissonSphere::AssembleRightElementMatrix(
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto dof = fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
+  _x.SetSize(3);
+  _c.SetSize(_coeff_dim);
+  _sin.SetSize(_lMax + 1);
+  _cos.SetSize(_lMax + 1);
+  _p.SetSize(_lMax + 1);
+  _pm1.SetSize(_lMax + 1);
+#endif
+
+  shape.SetSize(dof);
+  elmat.SetSize(dof, _coeff_dim);
+  elmat = 0.0;
+
+  const auto* ir = GetIntegrationRule(fe, Trans);
+  if (ir == nullptr) {
+    int intorder = fe.GetOrder() + Trans.OrderW();
+    ir = &IntRules.Get(fe.GetGeomType(), intorder);
+  }
+
+  for (auto j = 0; j < ir->GetNPoints(); j++) {
+    const auto& ip = ir->IntPoint(j);
+    Trans.SetIntPoint(&ip);
+    Trans.Transform(ip, _x);
+
+    const auto r = _x.Norml2();
+    const auto ri = 1 / r;
+    const auto cos_theta = _x(2) * ri;
+    const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
+    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
+    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
+
+    _pm1(0) = 0.0;
+    _p(0) = Pll(0, cos_theta);
+
+    const auto ratio = r / _bdr_radius;
+    auto rfac = 1 / (_bdr_radius * _bdr_radius);
+    _c(0) = rfac * _p(0);
+
+    auto i = 1;
+    for (auto l = 1; l <= _lMax; l++) {
+      rfac *= ratio;
+      auto fac = rfac * (l + 1) / (2 * l + 1);
+
+      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
+      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
+
+      for (auto m = 0; m < l; m++) {
+        const auto [alpha, beta] = RecursionCoefficients(l, m);
+        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
+      }
+      _pm1(l) = Pll(l, cos_theta);
+      _p(l) = 0.0;
+      std::swap(_p, _pm1);
+
+      _c(i++) = fac * _p(0);
+
+      fac *= _sqrt[2];
+      for (auto m = 1; m <= l; m++) {
+        _c(i++) = fac * _p[m] * _cos(m);
+        _c(i++) = rxy > 0 ? fac * _p[m] * _sin(m) : 0.0;
+      }
+    }
+
+    fe.CalcShape(ip, shape);
+    auto w = Trans.Weight() * ip.weight;
+    AddMult_a_VWt(w, shape, _c, elmat);
+  }
+}
+
+void PoissonSphere::AssembleLeftElementMatrix(
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto dof = fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
+  _x.SetSize(3);
+  _c.SetSize(_coeff_dim);
+  _sin.SetSize(_lMax + 1);
+  _cos.SetSize(_lMax + 1);
+  _p.SetSize(_lMax + 1);
+  _pm1.SetSize(_lMax + 1);
+#endif
+
+  shape.SetSize(dof);
+  elmat.SetSize(dof, _coeff_dim);
+  elmat = 0.0;
+
+  const auto* ir = GetIntegrationRule(fe, Trans);
+  if (ir == nullptr) {
+    int intorder = fe.GetOrder() + Trans.OrderW();
+    ir = &IntRules.Get(fe.GetGeomType(), intorder);
+  }
+
+  for (auto j = 0; j < ir->GetNPoints(); j++) {
+    const auto& ip = ir->IntPoint(j);
+    Trans.SetIntPoint(&ip);
+    Trans.Transform(ip, _x);
+
+    const auto r = _x.Norml2();
+    const auto ri = 1 / r;
+    const auto cos_theta = _x(2) * ri;
+    const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
+    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
+    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
+
+    _pm1(0) = 0.0;
+    _p(0) = Pll(0, cos_theta);
+
+    _c(0) = _p(0);
+
+    auto i = 1;
+    for (auto l = 1; l <= _lMax; l++) {
+      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
+      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
+
+      for (auto m = 0; m < l; m++) {
+        const auto [alpha, beta] = RecursionCoefficients(l, m);
+        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
+      }
+      _pm1(l) = Pll(l, cos_theta);
+      _p(l) = 0.0;
+      std::swap(_p, _pm1);
+
+      _c(i++) = _p(0);
+
+      for (auto m = 1; m <= l; m++) {
+        _c(i++) = _sqrt[2] * _p[m] * _cos(m);
+        _c(i++) = rxy > 0 ? _sqrt[2] * _p[m] * _sin(m) : 0.0;
+      }
+    }
+
+    fe.CalcShape(ip, shape);
+    auto w = Trans.Weight() * ip.weight;
+    AddMult_a_VWt(w, shape, _c, elmat);
+  }
+}
+
 }  // namespace Multipole
 }  // namespace mfemElasticity

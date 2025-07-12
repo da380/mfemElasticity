@@ -164,16 +164,13 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
   Vector _c, shape, _x, _sin, _cos, _p, _pm1;
   _x.SetSize(3);
   _c.SetSize(_coeff_dim);
-
   _sin.SetSize(_lMax + 1);
   _cos.SetSize(_lMax + 1);
-
   _p.SetSize(_lMax + 1);
   _pm1.SetSize(_lMax + 1);
 #endif
 
   shape.SetSize(dof);
-
   elmat.SetSize(_coeff_dim, dof);
   elmat = 0.0;
 
