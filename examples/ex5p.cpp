@@ -10,9 +10,11 @@ using namespace mfemElasticity;
 
 const real_t G = 1;
 const real_t rho = 1;
-const real_t radius = 1;
-const real_t x00 = 0.5;
-const real_t x01 = 0.5;
+const real_t radius = 0.5;
+const real_t x00 = 0.0;
+const real_t x01 = 0.25;
+const real_t x02 = 0.0;
+constexpr real_t pi = atan(1) * 4;
 
 int main(int argc, char *argv[]) {
   Mpi::Init();
@@ -21,13 +23,14 @@ int main(int argc, char *argv[]) {
   Hypre::Init();
 
   const char *mesh_file =
-      "/home/david/dev/meshing/examples/circular_offset.msh";
+      "/home/david/dev/meshing/examples/spherical_offset.msh";
   // const char *mesh_file = "../data/star.mesh";
 
-  int order = 3;
+  int order = 1;
   int serial_refinement = 0;
   int parallel_refinement = 0;
-  int kMax = 16;
+
+  int lMax = 4;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -39,7 +42,7 @@ int main(int argc, char *argv[]) {
   args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",
                  "number of parallel mesh refinements");
 
-  args.AddOption(&kMax, "-kMax", "--kMax", "Order for Fourier exapansion");
+  args.AddOption(&lMax, "-lMax", "--lMax", "Order for Fourier exapansion");
 
   args.Parse();
   if (!args.Good()) {
@@ -68,7 +71,6 @@ int main(int argc, char *argv[]) {
 
   auto L2 = L2_FECollection(order - 1, dim);
   auto H1 = H1_FECollection(order, dim);
-
   auto dfes = ParFiniteElementSpace(&pmesh, &L2);
   auto fes = ParFiniteElementSpace(&pmesh, &H1);
   HYPRE_BigInt size = fes.GlobalTrueVSize();
@@ -76,11 +78,15 @@ int main(int argc, char *argv[]) {
     cout << "Number of finite element unknowns: " << size << endl;
   }
 
-  auto one_function = ParGridFunction(&fes);
-  one_function = 1.0;
-  auto one = ConstantCoefficient(1);
+  ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new DiffusionIntegrator());
+  a.Assemble();
 
-  // Set piecewise coefficient for density.
+  auto m = ParBilinearForm(&fes);
+  m.AddDomainIntegrator(new MassIntegrator());
+  m.Assemble();
+
+  // Set the density.
   auto rho_coeff1 = ConstantCoefficient(rho);
   auto rho_coeff2 = ConstantCoefficient(0);
 
@@ -88,26 +94,23 @@ int main(int argc, char *argv[]) {
   auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
   auto rho_coeff = PWCoefficient(attr, coeffs);
 
-  auto C = Multipole::PoissonCircle(MPI_COMM_WORLD, &dfes, &fes, kMax);
-  C.Assemble();
-
-  auto a = ParBilinearForm(&fes);
-  a.AddDomainIntegrator(new DiffusionIntegrator());
-  a.Assemble();
-
   // Set up the form on the domain.
-  auto b = ParLinearForm(&fes);
-  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff));
+  auto domain_marker = Array<int>{1, 0};
+  ParLinearForm b(&fes);
+  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff), domain_marker);
   b.Assemble();
+
+  auto c = Multipole::PoissonSphere(MPI_COMM_WORLD, &dfes, &fes, lMax);
+  c.Assemble();
 
   auto z = ParGridFunction(&dfes);
   z.ProjectCoefficient(rho_coeff);
 
   auto n = ParGridFunction(&fes);
-  C.Mult(z, n);
+  c.Mult(z, n);
   b -= n;
 
-  b *= -4 * M_PI * G;
+  b *= -4 * pi * G;
 
   // Form the Linear system.
   auto x = ParGridFunction(&fes);
@@ -117,48 +120,54 @@ int main(int argc, char *argv[]) {
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  auto prec = HypreBoomerAMG();
+  auto P = HypreParMatrix(A);
+  auto M = HypreParMatrix();
+  m.FormSystemMatrix(ess_tdof_list, M);
+  auto A_norm = A.FNorm();
+  auto M_norm = M.FNorm();
+  auto eps = 1e-6 * A_norm / M_norm;
+  P.Add(eps, M);
+  auto prec = HypreBoomerAMG(P);
 
   // Set the solver.
-  auto solver = GMRESSolver(MPI_COMM_WORLD);
-  // auto solver = CGSolver(MPI_COMM_WORLD);
-  // auto solver = HyprePCG(MPI_COMM_WORLD);
+  auto solver = CGSolver(MPI_COMM_WORLD);
 
-  solver.SetPreconditioner(prec);
   solver.SetOperator(A);
+  solver.SetPreconditioner(prec);
 
   solver.SetRelTol(1e-12);
-  // solver.SetTol(1e-12);
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
-  // Set the orthosolver.
   auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
   orthoSolver.SetSolver(solver);
-
-  // Solve and recover the solution.
   orthoSolver.Mult(B, X);
+
   a.RecoverFEMSolution(X, b, x);
 
   auto phi = FunctionCoefficient([=](const Vector &x) {
-    auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
+    auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01) +
+             (x(2) - x02) * (x(2) - x02);
     r = sqrt(r);
-    if (r < radius) {
-      return M_PI * G * rho * r * r;
+    if (r <= radius) {
+      return -2 * pi * G * rho * (3 * radius * radius - r * r) / 3;
     } else {
-      return 2 * M_PI * G * rho * radius * log(r / radius) +
-             M_PI * G * rho * radius * radius;
+      return -4 * pi * G * rho * pow(radius, 3) / (3 * r);
     }
   });
 
+  auto y = ParGridFunction(&fes);
+  y.ProjectCoefficient(phi);
+
+  auto one = ConstantCoefficient(1);
   auto l = ParLinearForm(&fes);
   l.AddDomainIntegrator(new DomainLFIntegrator(one));
   l.Assemble();
-  auto area = l(one_function);
-  l /= area;
 
-  auto y = ParGridFunction(&fes);
-  y.ProjectCoefficient(phi);
+  auto one_function = ParGridFunction(&fes);
+  one_function.ProjectCoefficient(one);
+  auto vol = l(one_function);
+  l /= vol;
 
   auto py = l(y);
   y -= py;
@@ -179,7 +188,7 @@ int main(int argc, char *argv[]) {
 
   ofstream sol_ofs(sol_name.str().c_str());
   sol_ofs.precision(8);
-  z.Save(sol_ofs);
+  x.Save(sol_ofs);
 
   // Visualise if glvis is open.
   char vishost[] = "localhost";
@@ -188,5 +197,5 @@ int main(int argc, char *argv[]) {
   sol_sock << "parallel " << num_procs << " " << myid << "\n";
   sol_sock.precision(8);
   sol_sock << "solution\n" << pmesh << x << flush;
-  sol_sock << "keys Rjlbc\n" << flush;
+  sol_sock << "keys RRRilmc\n" << flush;
 }

@@ -356,6 +356,9 @@ void PoissonSphere::AssembleRightElementMatrix(
     ir = &IntRules.Get(fe.GetGeomType(), intorder);
   }
 
+  _sin(0) = 0.0;
+  _cos(0) = 1.0;
+
   for (auto j = 0; j < ir->GetNPoints(); j++) {
     const auto& ip = ir->IntPoint(j);
     Trans.SetIntPoint(&ip);
@@ -432,6 +435,9 @@ void PoissonSphere::AssembleLeftElementMatrix(
     int intorder = fe.GetOrder() + Trans.OrderW();
     ir = &IntRules.Get(fe.GetGeomType(), intorder);
   }
+
+  _sin(0) = 0.0;
+  _cos(0) = 1.0;
 
   for (auto j = 0; j < ir->GetNPoints(); j++) {
     const auto& ip = ir->IntPoint(j);

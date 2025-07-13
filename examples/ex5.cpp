@@ -136,7 +136,7 @@ int main(int argc, char *argv[]) {
   auto px = l * x;
   x -= px;
 
-  // x -= y;
+  x -= y;
 
   ofstream mesh_ofs("refined.mesh");
   mesh_ofs.precision(8);
