@@ -80,13 +80,6 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  /*
-  auto eps = ConstantCoefficient(0.1);
-  auto p = ParBilinearForm(&fes);
-  p.AddDomainIntegrator(new DiffusionIntegrator());
-  p.AddDomainIntegrator(new MassIntegrator(eps));
-  p.Assemble();
-  */
   auto m = ParBilinearForm(&fes);
   m.AddDomainIntegrator(new MassIntegrator());
   m.Assemble();
@@ -113,7 +106,7 @@ int main(int argc, char *argv[]) {
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  auto C = c.RAPOperator();
+  auto C = c.RAP();
   auto D = SumOperator(dynamic_cast<Operator *>(&A), 1, &C, 1, false, false);
 
   auto P = HypreParMatrix(A);

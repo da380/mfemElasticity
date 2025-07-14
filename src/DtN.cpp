@@ -95,7 +95,7 @@ void Poisson::Assemble() {
   _mat.Finalize();
 }
 
-mfem::RAPOperator Poisson::RAPOperator() const {
+mfem::RAPOperator Poisson::RAP() const {
   auto* P = _fes->GetProlongationMatrix();
   return mfem::RAPOperator(*P, *this, *P);
 }

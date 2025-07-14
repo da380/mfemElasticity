@@ -1,5 +1,4 @@
 #pragma once
-
 #include <cassert>
 #include <cmath>
 #include <functional>
@@ -81,7 +80,7 @@ class Poisson : public mfem::Integrator, public mfem::Operator {
   void Assemble();
 
   // Return the associated RAP operator.
-  mfem::RAPOperator RAPOperator() const;
+  mfem::RAPOperator RAP() const;
 };
 
 /*===============================================================

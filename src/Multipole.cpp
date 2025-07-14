@@ -206,7 +206,7 @@ void Poisson::Assemble() {
   _rmat.Finalize();
 }
 
-mfem::RAPOperator Poisson::RAPOperator() const {
+mfem::RAPOperator Poisson::RAP() const {
   auto* P_te = _te_fes->GetProlongationMatrix();
   auto* P_tr = _tr_fes->GetProlongationMatrix();
   return mfem::RAPOperator(*P_te, *this, *P_tr);
