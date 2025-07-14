@@ -8,13 +8,6 @@ namespace mfemElasticity {
 
 namespace DtN {
 
-mfem::Array<int> Poisson::ExternalBoundaryMarker(mfem::Mesh* mesh) {
-  auto bdr_marker = mfem::Array<int>(mesh->bdr_attributes.Max());
-  bdr_marker = 0;
-  mesh->MarkExternalBoundaries(bdr_marker);
-  return bdr_marker;
-}
-
 Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim,
                  const mfem::Array<int>& bdr_marker)
     : mfem::Operator(fes->GetVSize()),

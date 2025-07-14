@@ -8,6 +8,7 @@
 
 #include "mfem.hpp"
 #include "mfemElasticity/Legendre.hpp"
+#include "mfemElasticity/utils.hpp"
 
 namespace mfemElasticity {
 
@@ -54,10 +55,6 @@ class Poisson : public mfem::Integrator, public mfem::Operator {
 
   // Check that the mesh is suitable. Can be overridden.
   virtual void CheckMesh() const {}
-
-  static mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh);
-
-  static mfem::Array<int> DomainMarker(mfem::Mesh* mesh);
 
  public:
   // Serial constructors.
@@ -182,7 +179,7 @@ class PoissonCircle : public Poisson {
 
   PoissonCircle(mfem::FiniteElementSpace* tr_fes,
                 mfem::FiniteElementSpace* te_fes, int kMax)
-      : Poisson(tr_fes, te_fes, 2 * kMax, DomainMarker(tr_fes->GetMesh()),
+      : Poisson(tr_fes, te_fes, 2 * kMax, AllDomainsMarker(tr_fes->GetMesh()),
                 ExternalBoundaryMarker(tr_fes->GetMesh())),
         _kMax{kMax} {}
 
@@ -217,7 +214,8 @@ class PoissonCircle : public Poisson {
 
   PoissonCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
                 mfem::ParFiniteElementSpace* te_fes, int kMax)
-      : Poisson(comm, tr_fes, te_fes, 2 * kMax, DomainMarker(tr_fes->GetMesh()),
+      : Poisson(comm, tr_fes, te_fes, 2 * kMax,
+                AllDomainsMarker(tr_fes->GetMesh()),
                 ExternalBoundaryMarker(tr_fes->GetMesh())),
         _kMax{kMax} {}
 
@@ -303,7 +301,7 @@ class PoissonSphere : public Poisson, private LegendreHelper {
   PoissonSphere(mfem::FiniteElementSpace* tr_fes,
                 mfem::FiniteElementSpace* te_fes, int lMax)
       : Poisson(tr_fes, te_fes, (lMax + 1) * (lMax + 1),
-                DomainMarker(tr_fes->GetMesh()),
+                AllDomainsMarker(tr_fes->GetMesh()),
                 ExternalBoundaryMarker(tr_fes->GetMesh())),
         _lMax{lMax} {
     SetUp();
@@ -353,7 +351,7 @@ class PoissonSphere : public Poisson, private LegendreHelper {
   PoissonSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
                 mfem::ParFiniteElementSpace* te_fes, int lMax)
       : Poisson(comm, tr_fes, te_fes, (lMax + 1) * (lMax + 1),
-                DomainMarker(tr_fes->GetMesh()),
+                AllDomainsMarker(tr_fes->GetMesh()),
                 ExternalBoundaryMarker(tr_fes->GetMesh())),
         _lMax{lMax} {
     SetUp();

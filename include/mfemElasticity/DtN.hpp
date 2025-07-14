@@ -1,13 +1,11 @@
 #pragma once
 #include <cassert>
 #include <cmath>
-#include <functional>
-#include <iostream>
-#include <limits>
 
 #include "Legendre.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity/Legendre.hpp"
+#include "mfemElasticity/utils.hpp"
 
 namespace mfemElasticity {
 
@@ -43,8 +41,6 @@ class Poisson : public mfem::Integrator, public mfem::Operator {
 
   // Check that the mesh is suitable. Can be overridden.
   virtual void CheckMesh() const {}
-
-  static mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh);
 
  public:
   // Serial constructors.

@@ -4,4 +4,6 @@ target_sources(${PROJECT_NAME} PRIVATE solvers.cpp
                                        DtN.cpp                                      
                                        Multipole.cpp
                                        Legendre.cpp
+                                       Moments.cpp
+                                       utils.cpp
                                        )

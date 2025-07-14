@@ -4,19 +4,6 @@ namespace mfemElasticity {
 
 namespace Multipole {
 
-mfem::Array<int> Poisson::ExternalBoundaryMarker(mfem::Mesh* mesh) {
-  auto bdr_marker = mfem::Array<int>(mesh->bdr_attributes.Max());
-  bdr_marker = 0;
-  mesh->MarkExternalBoundaries(bdr_marker);
-  return bdr_marker;
-}
-
-mfem::Array<int> Poisson::DomainMarker(mfem::Mesh* mesh) {
-  auto dom_marker = mfem::Array<int>(mesh->attributes.Max());
-  dom_marker = 1;
-  return dom_marker;
-}
-
 Poisson::Poisson(mfem::FiniteElementSpace* tr_fes,
                  mfem::FiniteElementSpace* te_fes, int coeff_dim,
                  const mfem::Array<int>& dom_marker,
