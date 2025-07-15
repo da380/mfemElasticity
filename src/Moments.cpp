@@ -150,4 +150,41 @@ void MomentsOperator::Centroid(const mfem::Vector& moments_vector,
   }
 }
 
+mfem::Vector MomentsOperator::Centroid(
+    const mfem::Vector& moments_vector) const {
+  auto centroid = mfem::Vector();
+  Centroid(moments_vector, centroid);
+  return centroid;
+}
+
+void MomentsOperator::InertiaTensor(const mfem::Vector& moments_vector,
+                                    mfem::DenseMatrix& inertia_tensor) const {
+  using namespace mfem;
+  auto dim = _fes->GetMesh()->Dimension();
+  inertia_tensor.SetSize(dim, dim);
+
+  auto centroid = Centroid(moments_vector);
+
+  auto* it = &moments_vector[1 + dim];
+  for (auto j = 0; j < dim; j++) {
+    for (auto i = j; i < dim; i++) {
+      inertia_tensor(i, j) = -(*it++);
+      if (i != j) {
+        inertia_tensor(j, i) = inertia_tensor(i, j);
+      }
+    }
+  }
+  auto trace = -inertia_tensor.Trace();
+  for (auto i = 0; i < dim; i++) {
+    inertia_tensor(i, i) += trace;
+  }
+}
+
+mfem::DenseMatrix MomentsOperator::InertiaTensor(
+    const mfem::Vector& moments_vector) const {
+  auto inertia_tensor = mfem::DenseMatrix();
+  InertiaTensor(moments_vector, inertia_tensor);
+  return inertia_tensor;
+}
+
 }  // namespace mfemElasticity

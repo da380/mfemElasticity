@@ -58,7 +58,7 @@ int main(int argc, char *argv[]) {
   a.Assemble();
 
   std::cout << "building DtN operator\n";
-  auto C = DtN::PoissonSphere(&fes, lMax);
+  auto C = PoissonDtNSphere(&fes, lMax);
   C.Assemble();
 
   std::cout << "Doing the rest\n";

@@ -78,11 +78,13 @@ class MomentsOperator : public mfem::Operator, public mfem::Integrator {
   void Centroid(const mfem::Vector& moments_vector,
                 mfem::Vector& centroid) const;
 
-  mfem::Vector Centroid(const mfem::Vector& moments_vector) const {
-    auto centroid = mfem::Vector();
-    Centroid(moments_vector, centroid);
-    return centroid;
-  }
+  mfem::Vector Centroid(const mfem::Vector& moments_vector) const;
+
+  // Return the inertia tensor.
+  void InertiaTensor(const mfem::Vector& moments_vector,
+                     mfem::DenseMatrix& inertia_tensor) const;
+
+  mfem::DenseMatrix InertiaTensor(const mfem::Vector& moments_vector) const;
 };
 
 }  // namespace mfemElasticity

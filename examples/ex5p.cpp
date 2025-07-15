@@ -100,7 +100,7 @@ int main(int argc, char *argv[]) {
   b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff), domain_marker);
   b.Assemble();
 
-  auto c = Multipole::PoissonSphere(MPI_COMM_WORLD, &dfes, &fes, lMax);
+  auto c = PoissonMultipoleSphere(MPI_COMM_WORLD, &dfes, &fes, lMax);
   c.Assemble();
 
   auto z = ParGridFunction(&dfes);

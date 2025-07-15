@@ -34,4 +34,7 @@ if(USE_MPI)
 
         add_executable(ex5p ex5p.cpp)
         target_link_libraries(ex5p mfemElasticity)
+
+        add_executable(ex6p ex6p.cpp)
+        target_link_libraries(ex6p mfemElasticity)
 endif()

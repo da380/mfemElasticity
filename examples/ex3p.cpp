@@ -88,7 +88,7 @@ int main(int argc, char *argv[]) {
   auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
   auto rho_coeff = PWCoefficient(attr, coeffs);
 
-  auto C = Multipole::PoissonCircle(MPI_COMM_WORLD, &dfes, &fes, kMax);
+  auto C = PoissonMultipoleCircle(MPI_COMM_WORLD, &dfes, &fes, kMax);
   C.Assemble();
 
   auto a = ParBilinearForm(&fes);

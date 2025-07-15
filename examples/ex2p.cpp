@@ -81,7 +81,7 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  auto c = DtN::PoissonCircle(MPI_COMM_WORLD, &fespace, kMax);
+  auto c = PoissonDtNCircle(MPI_COMM_WORLD, &fespace, kMax);
   c.Assemble();
 
   // Set the density.

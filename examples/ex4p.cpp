@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
   m.AddDomainIntegrator(new MassIntegrator());
   m.Assemble();
 
-  auto c = DtN::PoissonSphere(MPI_COMM_WORLD, &fes, lMax);
+  auto c = PoissonDtNSphere(MPI_COMM_WORLD, &fes, lMax);
   c.Assemble();
 
   // Set the density.
