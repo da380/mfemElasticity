@@ -14,7 +14,7 @@ Poisson::Poisson(mfem::FiniteElementSpace* fes, int coeff_dim,
       _fes{fes},
       _coeff_dim{coeff_dim},
       _bdr_marker{bdr_marker},
-      _mat(_coeff_dim, fes->GetVSize()) {
+      _mat(fes->GetVSize(), _coeff_dim) {
   CheckMesh();
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
@@ -32,7 +32,7 @@ Poisson::Poisson(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim,
       _fes{fes},
       _coeff_dim{coeff_dim},
       _bdr_marker{bdr_marker},
-      _mat(_coeff_dim, fes->GetVSize()) {
+      _mat(fes->GetVSize(), _coeff_dim) {
   CheckMesh();
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
@@ -48,7 +48,7 @@ void Poisson::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   Vector _c(_coeff_dim);
 #endif
 
-  _mat.Mult(x, _c);
+  _mat.MultTranspose(x, _c);
 
 #ifdef MFEM_USE_MPI
   if (_parallel) {
@@ -58,7 +58,7 @@ void Poisson::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 #endif
 
   y.SetSize(x.Size());
-  _mat.MultTranspose(_c, y);
+  _mat.Mult(_c, y);
 }
 
 void Poisson::Assemble() {
@@ -81,7 +81,7 @@ void Poisson::Assemble() {
 
       AssembleElementMatrix(*fe, *Trans, elmat);
 
-      _mat.AddSubMatrix(rows, vdofs, elmat);
+      _mat.AddSubMatrix(vdofs, rows, elmat);
     }
   }
 
@@ -106,7 +106,7 @@ void PoissonCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
 #endif
 
   shape.SetSize(dof);
-  elmat.SetSize(_coeff_dim, dof);
+  elmat.SetSize(dof, _coeff_dim);
   elmat = 0.0;
 
   const auto* ir = GetIntegrationRule(fe, Trans);
@@ -141,8 +141,7 @@ void PoissonCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
     }
 
     auto w = ri * Trans.Weight() * ip.weight / pi;
-
-    AddMult_a_VWt(w, _c, shape, elmat);
+    AddMult_a_VWt(w, shape, _c, elmat);
   }
 }
 
@@ -164,7 +163,7 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
 #endif
 
   shape.SetSize(dof);
-  elmat.SetSize(_coeff_dim, dof);
+  elmat.SetSize(dof, _coeff_dim);
   elmat = 0.0;
 
   const auto* ir = GetIntegrationRule(fe, Trans);
@@ -221,7 +220,7 @@ void PoissonSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
     fe.CalcShape(ip, shape);
     auto w = Trans.Weight() * ip.weight;
 
-    AddMult_a_VWt(w, _c, shape, elmat);
+    AddMult_a_VWt(w, shape, _c, elmat);
   }
 }
 

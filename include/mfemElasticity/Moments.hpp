@@ -9,11 +9,12 @@
 namespace mfemElasticity {
 
 /*
-mfem::Operator acting on a density field to return the mass, centroid, and
-Moments of inertia.
+mfem::Operator acting on a density field to return its moments up to
+degree two.
 */
 class MomentsOperator : public mfem::Operator, public mfem::Integrator {
  private:
+  int _moments_dim;
   mfem::FiniteElementSpace* _fes;
   mfem::Array<int> _dom_marker;
   mfem::SparseMatrix _mat;
@@ -24,9 +25,11 @@ class MomentsOperator : public mfem::Operator, public mfem::Integrator {
   MPI_Comm _comm;
 #endif
 
-  static int RowDim(mfem::Mesh* mesh);
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector _c, _x, shape;
+#endif
 
-  int RowDim() const { return RowDim(_fes->GetMesh()); }
+  static int RowDim(mfem::Mesh* mesh);
 
   // Element level calculation of sparse matrix. Pure virtual method
   // that is overridden in derived classes.
@@ -70,6 +73,16 @@ class MomentsOperator : public mfem::Operator, public mfem::Integrator {
 
   // Return the associated RAP operator.
   mfem::RAPOperator RAP() const;
+
+  // Return the centroid given the moments vector.
+  void Centroid(const mfem::Vector& moments_vector,
+                mfem::Vector& centroid) const;
+
+  mfem::Vector Centroid(const mfem::Vector& moments_vector) const {
+    auto centroid = mfem::Vector();
+    Centroid(moments_vector, centroid);
+    return centroid;
+  }
 };
 
 }  // namespace mfemElasticity
