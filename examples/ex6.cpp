@@ -8,18 +8,24 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
-const real_t G = 1;
-const real_t rho_constant = 1;
-const real_t radius = 0.5;
-const real_t x00 = 0.0;
-const real_t x01 = 0.25;
-const real_t x02 = 0.0;
-constexpr real_t pi = atan(1) * 4;
+bool SphericalBoundary(const Mesh &mesh, const Vector &x0) {
+  auto bdr_marker = Array<int>(mesh.bdr_attributes.Max());
+  bdr_marker = 0;
+  mesh.MarkExternalBoundaries(bdr_marker);
+  auto count = 0;
+  for (auto mark : bdr_marker) {
+    if (mark == 1) {
+      count++;
+    }
+  }
+
+  return true;
+}
 
 int main(int argc, char *argv[]) {
   // 1. Parse command-line options.
   const char *mesh_file =
-      "/home/david/dev/meshing/examples/spherical_offset.msh";
+      "/home/david/dev/meshing/examples/circular_offset.msh";
   int order = 1;
   int ref_levels = 0;
 
@@ -46,45 +52,21 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  auto L2 = L2_FECollection(order, dim);
-  auto H1 = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &L2);
-  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
+  /*
+  auto bdr_attributes = Array<int>{2};
+  auto subMesh = SubMesh::CreateFromBoundary(mesh, bdr_attributes);
 
-  auto rho_coeff1 = ConstantCoefficient(rho_constant);
-  auto rho_coeff2 = ConstantCoefficient(0);
+  auto *nodes = subMesh.GetNodes();
 
-  auto attr = Array<int>{1, 2};
-  auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
-  auto rho_coeff = PWCoefficient(attr, coeffs);
+  auto ofs = ofstream("nodes.txt");
 
-  auto rho = GridFunction(&fes);
-  rho.ProjectCoefficient(rho_coeff);
-
-  auto A = FirstMoments(&fes);
-  A.Assemble();
-
-  auto m = Vector(dim);
-
-  A.Mult(rho, m);
-
-  ofstream mesh_ofs("refined.mesh");
-  mesh_ofs.precision(8);
-  mesh.Print(mesh_ofs);
-
-  ofstream sol_ofs("sol.gf");
-  sol_ofs.precision(8);
-  rho.Save(sol_ofs);
-
-  // Visualise if glvis is open.
-  char vishost[] = "localhost";
-  int visport = 19916;
-  socketstream sol_sock(vishost, visport);
-  sol_sock.precision(8);
-  sol_sock << "solution\n" << mesh << rho << flush;
-  if (dim == 2) {
-    sol_sock << "keys Rjlb\n" << flush;
-  } else {
-    sol_sock << "keys RRRilmc\n" << flush;
+  auto x = Vector(dim);
+  for (auto i = 0; i < subMesh.GetNE(); i++) {
+    for (auto j = 0; j < subMesh.SpaceDimension(); j++) {
+      x(j) = (*nodes)(j + dim * i);
+    }
+    x.Print(ofs);
+    cout << x.Norml2() << endl;
   }
+*/
 }

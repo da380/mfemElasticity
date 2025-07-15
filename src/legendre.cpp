@@ -1,4 +1,4 @@
-#include "mfemElasticity/Legendre.hpp"
+#include "mfemElasticity/legendre.hpp"
 
 namespace mfemElasticity {
 

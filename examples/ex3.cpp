@@ -135,14 +135,6 @@ int main(int argc, char *argv[]) {
   auto px = l * x;
   x -= px;
 
-  ofstream mesh_ofs("refined.mesh");
-  mesh_ofs.precision(8);
-  mesh.Print(mesh_ofs);
-
-  ofstream sol_ofs("sol.gf");
-  sol_ofs.precision(8);
-  x.Save(sol_ofs);
-
   ofstream exact_ofs("exact.gf");
   exact_ofs.precision(8);
   y.Save(exact_ofs);

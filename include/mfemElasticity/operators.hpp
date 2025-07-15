@@ -1,19 +1,21 @@
 #include <cassert>
 #include <cmath>
 
-#include "Legendre.hpp"
 #include "mfem.hpp"
-#include "mfemElasticity/Legendre.hpp"
-#include "mfemElasticity/utils.hpp"
+#include "mfemElasticity/legendre.hpp"
+#include "mfemElasticity/mesh.hpp"
 
 namespace mfemElasticity {
 
-/*----------------------------------------------------------
-      Base class for DtN operator for Poisson equation
-------------------------------------------------------------*/
-class PoissonDtN : public mfem::Integrator, public mfem::Operator {
+/**
+  DtN operator for Poissons equation on a spherical
+  boundary in 2D or 3D.
+**/
+class PoissonDtNOperator : public mfem::Operator, private LegendreHelper {
  protected:
   mfem::FiniteElementSpace* _fes;
+  int _dim;
+  int _degree;
   int _coeff_dim;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
@@ -26,40 +28,48 @@ class PoissonDtN : public mfem::Integrator, public mfem::Operator {
 
 #ifndef MFEM_THREAD_SAFE
   mutable mfem::Vector _c;
-  mfem::Vector shape, _x;
+  mfem::Vector shape, _x, _sin, _cos, _p, _pm1;
   mfem::DenseMatrix elmat;
 #endif
 
-  // Element level calculation of sparse matrix. Pure virtual method
-  // that is overridden in derived classes.
-  virtual void AssembleElementMatrix(const mfem::FiniteElement& fe,
-                                     mfem::ElementTransformation& Trans,
-                                     mfem::DenseMatrix& elmat) = 0;
+  // Common set up between the serial and parallel constructors.
+  void SetUp();
 
-  // Check that the mesh is suitable. Can be overridden.
-  virtual void CheckMesh() const {}
+  // Element level calculations.
+  void AssembleElementMatrix2D(const mfem::FiniteElement& fe,
+                               mfem::ElementTransformation& Trans,
+                               mfem::DenseMatrix& elmat);
+
+  void AssembleElementMatrix3D(const mfem::FiniteElement& fe,
+                               mfem::ElementTransformation& Trans,
+                               mfem::DenseMatrix& elmat);
 
  public:
   // Serial constructors.
-  PoissonDtN(mfem::FiniteElementSpace* fes, int coeff_dim,
-             const mfem::Array<int>& bdr_marker);
+  PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree,
+                     const mfem::Array<int>& bdr_marker);
 
-  PoissonDtN(mfem::FiniteElementSpace* fes, int coeff_dim,
-             mfem::Array<int>&& bdr_marker)
-      : PoissonDtN(fes, coeff_dim, bdr_marker) {}
+  PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree,
+                     mfem::Array<int>&& bdr_marker)
+      : PoissonDtNOperator(fes, degree, bdr_marker) {}
+
+  PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree)
+      : PoissonDtNOperator(fes, degree,
+                           ExternalBoundaryMarker(fes->GetMesh())) {}
 
 #ifdef MFEM_USE_MPI
   // Parallel constructors.
-  PoissonDtN(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim,
-             const mfem::Array<int>& bdr_marker);
+  PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
+                     int degree, const mfem::Array<int>& bdr_marker);
 
-  PoissonDtN(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim,
-             mfem::Array<int>&& bdr_marker)
-      : PoissonDtN(comm, fes, coeff_dim, bdr_marker) {}
+  PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
+                     int degree, mfem::Array<int>&& bdr_marker)
+      : PoissonDtNOperator(comm, fes, degree, bdr_marker) {}
 
-  PoissonDtN(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int coeff_dim)
-      : PoissonDtN(comm, fes, coeff_dim,
-                   ExternalBoundaryMarker(fes->GetMesh())) {}
+  PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
+                     int degree)
+      : PoissonDtNOperator(comm, fes, degree,
+                           ExternalBoundaryMarker(fes->GetMesh())) {}
 #endif
 
   // Multiplication by the operator.
@@ -73,128 +83,143 @@ class PoissonDtN : public mfem::Integrator, public mfem::Operator {
   // Assemble the sparse matrix associated with the operator.
   void Assemble();
 
+#ifdef MFEM_USE_MPI
   // Return the associated RAP operator.
   mfem::RAPOperator RAP() const;
-};
-
-/*===============================================================
-   DtN operator for Poisson's equation on a circular boundary
-=================================================================*/
-class PoissonDtNCircle : public PoissonDtN {
- private:
-  int _kMax;
-
-  static constexpr mfem::real_t pi = std::atan(1) * 4;
-
-  void AssembleElementMatrix(const mfem::FiniteElement& fe,
-                             mfem::ElementTransformation& Trans,
-                             mfem::DenseMatrix& elmat) override;
-
-  void CheckMesh() const override {
-    auto* mesh = _fes->GetMesh();
-    assert(mesh->Dimension() == 2 && mesh->SpaceDimension() == 2);
-  }
-
- public:
-  // Serial constructors.
-  PoissonDtNCircle(mfem::FiniteElementSpace* fes, int kMax,
-                   const mfem::Array<int>& bdr_marker)
-      : PoissonDtN(fes, 2 * kMax, bdr_marker), _kMax{kMax} {}
-
-  PoissonDtNCircle(mfem::FiniteElementSpace* fes, int kMax,
-                   mfem::Array<int>&& bdr_marker)
-      : PoissonDtNCircle(fes, kMax, bdr_marker) {}
-
-  PoissonDtNCircle(mfem::FiniteElementSpace* fes, int kMax)
-      : PoissonDtN(fes, 2 * kMax, ExternalBoundaryMarker(fes->GetMesh())),
-        _kMax{kMax} {}
-
-#ifdef MFEM_USE_MPI
-  // Parallel constructors.
-  PoissonDtNCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
-                   const mfem::Array<int>& bdr_marker)
-      : PoissonDtN(comm, fes, 2 * kMax, bdr_marker), _kMax{kMax} {}
-
-  PoissonDtNCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax,
-                   mfem::Array<int>&& bdr_marker)
-      : PoissonDtNCircle(comm, fes, kMax, bdr_marker) {}
-
-  PoissonDtNCircle(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int kMax)
-      : PoissonDtN(comm, fes, 2 * kMax, ExternalBoundaryMarker(fes->GetMesh())),
-        _kMax{kMax} {}
-
 #endif
 };
 
-/*---------------------------------------------------------------
-    DtN operator for Poisson's equation on a spherical boundary
-----------------------------------------------------------------*/
-class PoissonDtNSphere : public PoissonDtN, private LegendreHelper {
- private:
-  int _lMax;
+/**
+  Multipole operator for Poissons equation on a spherical
+  boundary in 2D or 3D.
+**/
+class PoissonMultipoleOperator : public mfem::Operator, private LegendreHelper {
+ protected:
+  mfem::FiniteElementSpace* _tr_fes;
+  mfem::FiniteElementSpace* _te_fes;
+  int _dim;
+  int _degree;
+  int _coeff_dim;
+  mfem::real_t _bdr_radius;
+  mfem::Array<int> _bdr_marker;
+  mfem::Array<int> _dom_marker;
+  mfem::SparseMatrix _lmat;
+  mfem::SparseMatrix _rmat;
 
-#ifndef MFEM_THREAD_SAFE
-  mfem::Vector _sin, _cos, _p, _pm1;
+#ifdef MFEM_USE_MPI
+  bool _parallel = false;
+  mfem::ParFiniteElementSpace* _pfes;
+  MPI_Comm _comm;
 #endif
 
-  void AssembleElementMatrix(const mfem::FiniteElement& fe,
-                             mfem::ElementTransformation& Trans,
-                             mfem::DenseMatrix& elmat) override;
-
-  void CheckMesh() const override {
-    auto* mesh = _fes->GetMesh();
-    assert(mesh->Dimension() == 3 && mesh->SpaceDimension() == 3);
-  }
-
-  void SetUp() {
 #ifndef MFEM_THREAD_SAFE
-    _sin.SetSize(_lMax + 1);
-    _cos.SetSize(_lMax + 1);
-    _p.SetSize(_lMax + 1);
-    _pm1.SetSize(_lMax + 1);
+  mutable mfem::Vector _c;
+  mfem::Vector shape, _x, _sin, _cos, _p, _pm1;
+  mfem::DenseMatrix elmat;
 #endif
-    SetSquareRoots(_lMax);
-  }
+
+  // Common set up between the serial and parallel constructors.
+  void SetUp();
+
+  // Element level calculations.
+  void AssembleLeftElementMatrix2D(const mfem::FiniteElement& fe,
+                                   mfem::ElementTransformation& Trans,
+                                   mfem::DenseMatrix& elmat);
+
+  void AssembleLeftElementMatrix3D(const mfem::FiniteElement& fe,
+                                   mfem::ElementTransformation& Trans,
+                                   mfem::DenseMatrix& elmat);
+
+  void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
+                                    mfem::ElementTransformation& Trans,
+                                    mfem::DenseMatrix& elmat);
+
+  void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
+                                    mfem::ElementTransformation& Trans,
+                                    mfem::DenseMatrix& elmat);
 
  public:
   // Serial constructors.
-  PoissonDtNSphere(mfem::FiniteElementSpace* fes, int lMax,
-                   const mfem::Array<int>& bdr_marker)
-      : PoissonDtN(fes, (lMax + 1) * (lMax + 1), bdr_marker), _lMax{lMax} {
-    SetUp();
-  }
+  PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                           mfem::FiniteElementSpace* te_fes, int degree,
+                           const mfem::Array<int>& dom_marker,
+                           const mfem::Array<int>& bdr_marker);
 
-  PoissonDtNSphere(mfem::FiniteElementSpace* fes, int lMax,
-                   mfem::Array<int>&& bdr_marker)
-      : PoissonDtNSphere(fes, lMax, bdr_marker) {}
+  PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                           mfem::FiniteElementSpace* te_fes, int degree,
+                           mfem::Array<int>&& dom_marker,
+                           const mfem::Array<int>& bdr_marker)
+      : PoissonMultipoleOperator(tr_fes, te_fes, degree, dom_marker,
+                                 bdr_marker) {}
 
-  PoissonDtNSphere(mfem::FiniteElementSpace* fes, int lMax)
-      : PoissonDtN(fes, (lMax + 1) * (lMax + 1),
-                   ExternalBoundaryMarker(fes->GetMesh())),
-        _lMax{lMax} {
-    SetUp();
-  }
+  PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                           mfem::FiniteElementSpace* te_fes, int degree,
+                           const mfem::Array<int>& dom_marker,
+                           mfem::Array<int>&& bdr_marker)
+      : PoissonMultipoleOperator(tr_fes, te_fes, degree, dom_marker,
+                                 bdr_marker) {}
+
+  PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                           mfem::FiniteElementSpace* te_fes, int degree,
+                           mfem::Array<int>&& dom_marker,
+                           mfem::Array<int>&& bdr_marker)
+      : PoissonMultipoleOperator(tr_fes, te_fes, degree, dom_marker,
+                                 bdr_marker) {}
+
+  PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                           mfem::FiniteElementSpace* te_fes, int degree)
+      : PoissonMultipoleOperator(tr_fes, te_fes, degree,
+                                 AllBoundariesMarker(tr_fes->GetMesh()),
+                                 ExternalBoundaryMarker(tr_fes->GetMesh())) {}
 
 #ifdef MFEM_USE_MPI
   // Parallel constructors.
-  PoissonDtNSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
-                   const mfem::Array<int>& bdr_marker)
-      : PoissonDtN(comm, fes, (lMax + 1) * (lMax + 1), bdr_marker),
-        _lMax{lMax} {
-    SetUp();
-  }
+  PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                           mfem::ParFiniteElementSpace* te_fes, int degree,
+                           const mfem::Array<int>& dom_marker,
+                           const mfem::Array<int>& bdr_marker);
 
-  PoissonDtNSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax,
-                   mfem::Array<int>&& bdr_marker)
-      : PoissonDtNSphere(comm, fes, (lMax + 1) * (lMax + 1), bdr_marker) {}
+  PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                           mfem::ParFiniteElementSpace* te_fes, int degree,
+                           mfem::Array<int>&& dom_marker,
+                           const mfem::Array<int>& bdr_marker)
+      : PoissonMultipoleOperator(comm, tr_fes, te_fes, degree, dom_marker,
+                                 bdr_marker) {}
 
-  PoissonDtNSphere(MPI_Comm comm, mfem::ParFiniteElementSpace* fes, int lMax)
-      : PoissonDtN(comm, fes, (lMax + 1) * (lMax + 1),
-                   ExternalBoundaryMarker(fes->GetMesh())),
-        _lMax{lMax} {
-    SetUp();
-  }
+  PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                           mfem::ParFiniteElementSpace* te_fes, int degree,
+                           const mfem::Array<int>& dom_marker,
+                           mfem::Array<int>&& bdr_marker)
+      : PoissonMultipoleOperator(comm, tr_fes, te_fes, degree, dom_marker,
+                                 bdr_marker) {}
 
+  PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                           mfem::ParFiniteElementSpace* te_fes, int degree,
+                           mfem::Array<int>&& dom_marker,
+                           mfem::Array<int>&& bdr_marker)
+      : PoissonMultipoleOperator(comm, tr_fes, te_fes, degree, dom_marker,
+                                 bdr_marker) {}
+
+  PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+                           mfem::ParFiniteElementSpace* te_fes, int degree)
+      : PoissonMultipoleOperator(comm, tr_fes, te_fes, degree,
+                                 AllBoundariesMarker(tr_fes->GetMesh()),
+                                 ExternalBoundaryMarker(tr_fes->GetMesh())) {}
+
+#endif
+
+  // Multiplication by the operator.
+  void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
+
+  // Transposed multiplication by the operator.
+  void MultTranspose(const mfem::Vector& x, mfem::Vector& y) const override;
+
+  // Assemble the sparse matrix associated with the operator.
+  void Assemble();
+
+#ifdef MFEM_USE_MPI
+  // Return the associated RAP operator.
+  mfem::RAPOperator RAP() const;
 #endif
 };
 

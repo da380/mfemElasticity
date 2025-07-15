@@ -4,7 +4,7 @@
 #include <cmath>
 
 #include "mfem.hpp"
-#include "mfemElasticity/utils.hpp"
+#include "mfemElasticity/mesh_utils.hpp"
 
 namespace mfemElasticity {
 

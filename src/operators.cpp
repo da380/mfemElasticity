@@ -2,40 +2,57 @@
 
 namespace mfemElasticity {
 
-PoissonDtN::PoissonDtN(mfem::FiniteElementSpace* fes, int coeff_dim,
-                       const mfem::Array<int>& bdr_marker)
-    : mfem::Operator(fes->GetVSize()),
-      _fes{fes},
-      _coeff_dim{coeff_dim},
-      _bdr_marker{bdr_marker},
-      _mat(fes->GetVSize(), _coeff_dim) {
-  CheckMesh();
+void PoissonDtNOperator::SetUp() {
+  assert(_dim == 2 || _dim == 3);
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
-  _x.SetSize(_fes->GetMesh()->Dimension());
+  _x.SetSize(_dim);
+  if (_dim == 3) {
+    _sin.SetSize(_degree + 1);
+    _cos.SetSize(_degree + 1);
+    _p.SetSize(_degree + 1);
+    _pm1.SetSize(_degree + 1);
+  }
 #endif
+  if (_dim == 3) {
+    SetSquareRoots(_degree);
+  }
+  Assemble();
+}
+
+PoissonDtNOperator::PoissonDtNOperator(mfem::FiniteElementSpace* fes,
+                                       int degree,
+                                       const mfem::Array<int>& bdr_marker)
+    : mfem::Operator(fes->GetVSize()),
+      _fes{fes},
+      _dim{fes->GetMesh()->Dimension()},
+      _degree{degree},
+      _coeff_dim{_dim == 2 ? 2 * degree : (degree + 1) * (degree + 1)},
+      _bdr_marker{bdr_marker},
+      _mat(fes->GetVSize(), _coeff_dim) {
+  SetUp();
 }
 
 #ifdef MFEM_USE_MPI
-PoissonDtN::PoissonDtN(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
-                       int coeff_dim, const mfem::Array<int>& bdr_marker)
+PoissonDtNOperator::PoissonDtNOperator(MPI_Comm comm,
+                                       mfem::ParFiniteElementSpace* fes,
+                                       int degree,
+                                       const mfem::Array<int>& bdr_marker)
     : mfem::Operator(fes->GetVSize()),
       _parallel{true},
       _comm{comm},
       _pfes{fes},
       _fes{fes},
-      _coeff_dim{coeff_dim},
+      _dim{fes->GetMesh()->Dimension()},
+      _degree{degree},
+      _coeff_dim{_dim == 2 ? 2 * degree : (degree + 1) * (degree + 1)},
       _bdr_marker{bdr_marker},
       _mat(fes->GetVSize(), _coeff_dim) {
-  CheckMesh();
-#ifndef MFEM_THREAD_SAFE
-  _c.SetSize(_coeff_dim);
-  _x.SetSize(_fes->GetMesh()->Dimension());
-#endif
+  SetUp();
 }
 #endif
 
-void PoissonDtN::Mult(const mfem::Vector& x, mfem::Vector& y) const {
+void PoissonDtNOperator::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
@@ -55,7 +72,7 @@ void PoissonDtN::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   _mat.Mult(_c, y);
 }
 
-void PoissonDtN::Assemble() {
+void PoissonDtNOperator::Assemble() {
   using namespace mfem;
   auto* mesh = _fes->GetMesh();
 
@@ -73,7 +90,11 @@ void PoissonDtN::Assemble() {
       const auto* fe = _fes->GetBE(i);
       auto* Trans = _fes->GetBdrElementTransformation(i);
 
-      AssembleElementMatrix(*fe, *Trans, elmat);
+      if (_dim == 2) {
+        AssembleElementMatrix2D(*fe, *Trans, elmat);
+      } else {
+        AssembleElementMatrix3D(*fe, *Trans, elmat);
+      }
 
       _mat.AddSubMatrix(vdofs, rows, elmat);
     }
@@ -82,14 +103,16 @@ void PoissonDtN::Assemble() {
   _mat.Finalize();
 }
 
-mfem::RAPOperator PoissonDtN::RAP() const {
+#ifdef MFEM_USE_MPI
+mfem::RAPOperator PoissonDtNOperator::RAP() const {
   auto* P = _fes->GetProlongationMatrix();
   return mfem::RAPOperator(*P, *this, *P);
 }
+#endif
 
-void PoissonDtNCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
-                                             mfem::ElementTransformation& Trans,
-                                             mfem::DenseMatrix& elmat) {
+void PoissonDtNOperator::AssembleElementMatrix2D(
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
   using namespace mfem;
   auto dof = fe.GetDof();
 
@@ -103,11 +126,8 @@ void PoissonDtNCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
   elmat.SetSize(dof, _coeff_dim);
   elmat = 0.0;
 
-  const auto* ir = GetIntegrationRule(fe, Trans);
-  if (ir == nullptr) {
-    int intorder = fe.GetOrder() + Trans.OrderW();
-    ir = &IntRules.Get(fe.GetGeomType(), intorder);
-  }
+  int intorder = fe.GetOrder() + Trans.OrderW();
+  auto ir = &IntRules.Get(fe.GetGeomType(), intorder);
 
   for (auto j = 0; j < ir->GetNPoints(); j++) {
     const auto& ip = ir->IntPoint(j);
@@ -124,7 +144,7 @@ void PoissonDtNCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
     auto cos_k_m = 1.0;
 
     auto i = 0;
-    for (auto k = 1; k <= _kMax; k++) {
+    for (auto k = 1; k <= _degree; k++) {
       auto fac = std::sqrt(pi * k);
       auto sin_k = sin_k_m * cos + cos_k_m * sin;
       auto cos_k = cos_k_m * cos - sin_k_m * sin;
@@ -139,9 +159,9 @@ void PoissonDtNCircle::AssembleElementMatrix(const mfem::FiniteElement& fe,
   }
 }
 
-void PoissonDtNSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
-                                             mfem::ElementTransformation& Trans,
-                                             mfem::DenseMatrix& elmat) {
+void PoissonDtNOperator::AssembleElementMatrix3D(
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
   using namespace mfem;
 
   auto dof = fe.GetDof();
@@ -150,21 +170,18 @@ void PoissonDtNSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
   Vector _c, shape, _x, _sin, _cos, _p, _pm1;
   _x.SetSize(3);
   _c.SetSize(_coeff_dim);
-  _sin.SetSize(_lMax + 1);
-  _cos.SetSize(_lMax + 1);
-  _p.SetSize(_lMax + 1);
-  _pm1.SetSize(_lMax + 1);
+  _sin.SetSize(_degree + 1);
+  _cos.SetSize(_degree + 1);
+  _p.SetSize(_degree + 1);
+  _pm1.SetSize(_degree + 1);
 #endif
 
   shape.SetSize(dof);
   elmat.SetSize(dof, _coeff_dim);
   elmat = 0.0;
 
-  const auto* ir = GetIntegrationRule(fe, Trans);
-  if (ir == nullptr) {
-    int intorder = fe.GetOrder() + Trans.OrderW();
-    ir = &IntRules.Get(fe.GetGeomType(), intorder);
-  }
+  int intorder = fe.GetOrder() + Trans.OrderW();
+  auto ir = &IntRules.Get(fe.GetGeomType(), intorder);
 
   _sin(0) = 0.0;
   _cos(0) = 1.0;
@@ -188,7 +205,7 @@ void PoissonDtNSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
     _c(0) = rfac * _p(0);
 
     auto i = 1;
-    for (auto l = 1; l <= _lMax; l++) {
+    for (auto l = 1; l <= _degree; l++) {
       auto fac = rfac * _sqrt[l + 1];
 
       _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
@@ -217,6 +234,79 @@ void PoissonDtNSphere::AssembleElementMatrix(const mfem::FiniteElement& fe,
     AddMult_a_VWt(w, shape, _c, elmat);
   }
 }
+
+void PoissonMultipoleOperator::SetUp() {
+#ifndef MFEM_THREAD_SAFE
+  _c.SetSize(_coeff_dim);
+  _x.SetSize(_tr_fes->GetMesh()->Dimension());
+#endif
+  //_bdr_radius = ExternalBoundaryRadius();
+}
+
+PoissonMultipoleOperator::PoissonMultipoleOperator(
+    mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
+    int degree, const mfem::Array<int>& dom_marker,
+    const mfem::Array<int>& bdr_marker)
+    : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
+      _tr_fes{tr_fes},
+      _te_fes{te_fes},
+      _dim{tr_fes->GetMesh()->Dimension()},
+      _degree{degree},
+      _coeff_dim{_dim == 2 ? 2 * degree : (degree + 1) * (degree + 1)},
+      _dom_marker{dom_marker},
+      _bdr_marker{bdr_marker},
+      _lmat(te_fes->GetVSize(), _coeff_dim),
+      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+  SetUp();
+}
+
+void PoissonMultipoleOperator::Mult(const mfem::Vector& x,
+                                    mfem::Vector& y) const {
+  using namespace mfem;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector _c(_coeff_dim);
+#endif
+
+  _rmat.MultTranspose(x, _c);
+
+#ifdef MFEM_USE_MPI
+  if (_parallel) {
+    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
+                  MPI_SUM, _comm);
+  }
+#endif
+
+  y.SetSize(_lmat.Height());
+  _lmat.Mult(_c, y);
+}
+
+void PoissonMultipoleOperator::MultTranspose(const mfem::Vector& x,
+                                             mfem::Vector& y) const {
+  using namespace mfem;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector _c(_coeff_dim);
+#endif
+
+  _lmat.MultTranspose(x, _c);
+
+#ifdef MFEM_USE_MPI
+  if (_parallel) {
+    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
+                  MPI_SUM, _comm);
+  }
+#endif
+
+  y.SetSize(_rmat.Width());
+  _rmat.Mult(_c, y);
+}
+
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////
 
 PoissonMultipole::PoissonMultipole(mfem::FiniteElementSpace* tr_fes,
                                    mfem::FiniteElementSpace* te_fes,
