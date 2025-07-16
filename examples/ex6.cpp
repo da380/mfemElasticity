@@ -8,20 +8,6 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
-bool SphericalBoundary(const Mesh &mesh, const Vector &x0) {
-  auto bdr_marker = Array<int>(mesh.bdr_attributes.Max());
-  bdr_marker = 0;
-  mesh.MarkExternalBoundaries(bdr_marker);
-  auto count = 0;
-  for (auto mark : bdr_marker) {
-    if (mark == 1) {
-      count++;
-    }
-  }
-
-  return true;
-}
-
 int main(int argc, char *argv[]) {
   // 1. Parse command-line options.
   const char *mesh_file =
@@ -50,6 +36,17 @@ int main(int argc, char *argv[]) {
     for (int l = 0; l < ref_levels; l++) {
       mesh.UniformRefinement();
     }
+  }
+
+  auto x0 = DomainCentroid(&mesh, 1);
+  // x0(0) = 0.5;
+  // x0(1) = 0.5;
+
+  auto check_radius = BoundaryRadius(&mesh, 2, x0);
+  if (check_radius) {
+    cout << check_radius.value() << endl;
+  } else {
+    cout << "Boundary is not spherical about given point\n";
   }
 
   /*
