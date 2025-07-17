@@ -38,32 +38,16 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  auto x0 = DomainCentroid(&mesh, 1);
-  // x0(0) = 0.5;
-  // x0(1) = 0.5;
+  auto x0 = MeshCentroid(&mesh);
+  x0.Print(cout);
+  //  x0(0) = 0.5;
+  //  x0(1) = 0.5;
 
-  auto check_radius = BoundaryRadius(&mesh, 2, x0);
-  if (check_radius) {
-    cout << check_radius.value() << endl;
+  auto [found, same, radius] = BoundaryRadius(&mesh);
+
+  if (found == 1 && same == 1) {
+    cout << radius << endl;
   } else {
-    cout << "Boundary is not spherical about given point\n";
+    cout << "Boundary not spherical\n";
   }
-
-  /*
-  auto bdr_attributes = Array<int>{2};
-  auto subMesh = SubMesh::CreateFromBoundary(mesh, bdr_attributes);
-
-  auto *nodes = subMesh.GetNodes();
-
-  auto ofs = ofstream("nodes.txt");
-
-  auto x = Vector(dim);
-  for (auto i = 0; i < subMesh.GetNE(); i++) {
-    for (auto j = 0; j < subMesh.SpaceDimension(); j++) {
-      x(j) = (*nodes)(j + dim * i);
-    }
-    x.Print(ofs);
-    cout << x.Norml2() << endl;
-  }
-*/
 }
