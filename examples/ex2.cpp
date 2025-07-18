@@ -75,10 +75,11 @@ int main(int argc, char *argv[]) {
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  // Assemble the mass form for use in preconditioning.
-  auto m = BilinearForm(&fes);
-  m.AddDomainIntegrator(new MassIntegrator());
-  m.Assemble();
+  // Assemble mass-shifted binlinear form for preconditioning.
+  auto eps = ConstantCoefficient(0.01);
+  auto as = BilinearForm(&fes, &a);
+  as.AddDomainIntegrator(new MassIntegrator(eps));
+  as.Assemble();
 
   // Set up the DtN operator.
   auto c = PoissonDtNOperator(&fes, degree);
@@ -122,17 +123,10 @@ int main(int argc, char *argv[]) {
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
   auto D = SumOperator(&A, 1, &c, 1, false, false);
 
-  // Form the preconditioner, using the mass-matrix to make it
-  // positive-definite.
-  auto AShift = SparseMatrix(A);
-  auto M = SparseMatrix();
-  m.FormSystemMatrix(ess_tdof_list, M);
-  auto A_norm = A.MaxNorm();
-  auto M_norm = M.MaxNorm();
-  auto eps = 1e-6 * A_norm / M_norm;
-  AShift.Add(eps, M);
-
-  auto P = GSSmoother(AShift);
+  // Set up the preconditioner.
+  SparseMatrix As;
+  as.FormSystemMatrix(ess_tdof_list, As);
+  auto P = GSSmoother(As);
 
   // Set up the solver.
   auto solver = CGSolver();

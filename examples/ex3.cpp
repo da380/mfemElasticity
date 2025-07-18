@@ -3,33 +3,37 @@
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
+#include "poisson.hpp"
 
 using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
-const real_t G = 1;
-const real_t rho = 1;
-const real_t radius = 1;
-const real_t x00 = 0.5;
-const real_t x01 = 0.5;
+constexpr real_t pi = atan(1) * 4;
 
 int main(int argc, char *argv[]) {
-  // 1. Parse command-line options.
+  // Set default options.
   const char *mesh_file =
       "/home/david/dev/meshing/examples/circular_offset.msh";
+  int order = 1;
+  int serial_refinement = 0;
+  int parallel_refinement = 0;
+  int degree = 4;
+  int residual = 0;
 
-  int order = 3;
-  int ref_levels = 0;
-  int kMax = 16;
-
+  // Deal with options.
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
   args.AddOption(&order, "-o", "--order",
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
-  args.AddOption(&ref_levels, "-r", "--refine", "Number of mesh refinements");
-  args.AddOption(&kMax, "-kMax", "--kMax", "Order for Fourier exapansion");
+  args.AddOption(&serial_refinement, "-sr", "--serial_refinement",
+                 "number of serial mesh refinements");
+  args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",
+                 "number of parallel mesh refinements");
+  args.AddOption(&degree, "-deg", "--degree", "Order for Fourier exapansion");
+  args.AddOption(&residual, "-res", "--residual",
+                 "Output the residual from reference solution");
 
   args.Parse();
   if (!args.Good()) {
@@ -38,15 +42,45 @@ int main(int argc, char *argv[]) {
   }
   args.PrintOptions(cout);
 
-  Mesh mesh(mesh_file, 1, 1);
-  int dim = mesh.Dimension();
-
+  // Read in mesh in serial.
+  auto mesh = Mesh(mesh_file, 1, 1);
+  auto dim = mesh.Dimension();
   {
-    for (int l = 0; l < ref_levels; l++) {
+    for (int l = 0; l < serial_refinement; l++) {
       mesh.UniformRefinement();
     }
   }
 
+  // Check mesh has two attributes.
+  assert(mesh.attributes.Max() == 2);
+
+  // Get centroid and radius for inner domain.
+  auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
+  auto [found1, same1, r1] = BoundaryRadius(&mesh, Array<int>{1, 0}, c1);
+  assert(found1 == 1 && same1 == 1);
+
+  // Get centroid and radius for combined domain.
+  auto c2 = MeshCentroid(&mesh, Array<int>{1, 1});
+  auto [found2, same2, r2] = BoundaryRadius(&mesh, Array<int>{0, 1}, c2);
+  assert(found2 == 1 && same2 == 1);
+
+  // Set up the finite element space.
+  auto fec = H1_FECollection(order, dim);
+  auto fes = FiniteElementSpace(&mesh, &fec);
+  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
+
+  // Assemble the binlinear form for Poisson's equation.
+  auto a = BilinearForm(&fes);
+  a.AddDomainIntegrator(new DiffusionIntegrator());
+  a.Assemble();
+
+  // Assemble mass-shifted binlinear form for preconditioning.
+  auto eps = ConstantCoefficient(0.01);
+  auto as = BilinearForm(&fes, &a);
+  as.AddDomainIntegrator(new MassIntegrator(eps));
+  as.Assemble();
+
+  /*
   auto L2 = L2_FECollection(order - 1, dim);
   auto H1 = H1_FECollection(order, dim);
   auto dfes = FiniteElementSpace(&mesh, &L2);
@@ -145,4 +179,5 @@ int main(int argc, char *argv[]) {
   x.Save(diff_ofs);
 
   return 0;
+*/
 }

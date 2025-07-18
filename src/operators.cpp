@@ -2,8 +2,35 @@
 
 namespace mfemElasticity {
 
+void PoissonDtNOperator::SetBoundaryMarkerSerial() {
+  _x0 = MeshCentroid(_fes->GetMesh());
+  _bdr_marker = ExternalBoundaryMarker(_fes->GetMesh());
+  auto [found, same, radius] =
+      BoundaryRadius(_fes->GetMesh(), _bdr_marker, _x0);
+  assert(found == 1 && same == 1);
+}
+
+void PoissonDtNOperator::SetBoundaryMarkerParallel() {
+  _x0 = MeshCentroid(_pfes->GetParMesh());
+  _bdr_marker = ExternalBoundaryMarker(_pfes->GetParMesh());
+  auto [found, same, radius] =
+      BoundaryRadius(_pfes->GetParMesh(), _bdr_marker, _x0);
+  assert(found == 1 && same == 1);
+}
+
 void PoissonDtNOperator::SetUp() {
   assert(_dim == 2 || _dim == 3);
+
+#ifdef MFEM_USE_MPI
+  if (_parallel) {
+    SetBoundaryMarkerParallel();
+  } else {
+    SetBoundaryMarkerSerial();
+  }
+#else
+  SetBoundaryMarkerSerial();
+#endif
+
 #ifndef MFEM_THREAD_SAFE
   _c.SetSize(_coeff_dim);
   _x.SetSize(_dim);
@@ -21,14 +48,12 @@ void PoissonDtNOperator::SetUp() {
 }
 
 PoissonDtNOperator::PoissonDtNOperator(mfem::FiniteElementSpace* fes,
-                                       int degree,
-                                       const mfem::Array<int>& bdr_marker)
+                                       int degree)
     : mfem::Operator(fes->GetVSize()),
       _fes{fes},
       _dim{fes->GetMesh()->Dimension()},
       _degree{degree},
       _coeff_dim{_dim == 2 ? 2 * degree : (degree + 1) * (degree + 1)},
-      _bdr_marker{bdr_marker},
       _mat(fes->GetVSize(), _coeff_dim) {
   SetUp();
 }
@@ -36,8 +61,7 @@ PoissonDtNOperator::PoissonDtNOperator(mfem::FiniteElementSpace* fes,
 #ifdef MFEM_USE_MPI
 PoissonDtNOperator::PoissonDtNOperator(MPI_Comm comm,
                                        mfem::ParFiniteElementSpace* fes,
-                                       int degree,
-                                       const mfem::Array<int>& bdr_marker)
+                                       int degree)
     : mfem::Operator(fes->GetVSize()),
       _parallel{true},
       _comm{comm},
@@ -46,7 +70,6 @@ PoissonDtNOperator::PoissonDtNOperator(MPI_Comm comm,
       _dim{fes->GetMesh()->Dimension()},
       _degree{degree},
       _coeff_dim{_dim == 2 ? 2 * degree : (degree + 1) * (degree + 1)},
-      _bdr_marker{bdr_marker},
       _mat(fes->GetVSize(), _coeff_dim) {
   SetUp();
 }
@@ -133,6 +156,7 @@ void PoissonDtNOperator::AssembleElementMatrix2D(
     const auto& ip = ir->IntPoint(j);
     Trans.SetIntPoint(&ip);
     Trans.Transform(ip, _x);
+    _x -= _x0;
 
     fe.CalcShape(ip, shape);
 
@@ -190,6 +214,7 @@ void PoissonDtNOperator::AssembleElementMatrix3D(
     const auto& ip = ir->IntPoint(j);
     Trans.SetIntPoint(&ip);
     Trans.Transform(ip, _x);
+    _x -= _x0;
 
     const auto r = _x.Norml2();
     const auto ri = 1 / r;
@@ -240,7 +265,9 @@ void PoissonMultipoleOperator::SetUp() {
   _c.SetSize(_coeff_dim);
   _x.SetSize(_tr_fes->GetMesh()->Dimension());
 #endif
-  //_bdr_radius = ExternalBoundaryRadius();
+  auto [found, same, radius] = BoundaryRadius(_tr_fes->GetMesh(), _bdr_marker);
+  assert(found == 1 && same == 1);
+  _bdr_radius = radius;
 }
 
 PoissonMultipoleOperator::PoissonMultipoleOperator(

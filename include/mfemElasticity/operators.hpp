@@ -19,6 +19,7 @@ class PoissonDtNOperator : public mfem::Operator, private LegendreHelper {
   int _dim;
   int _degree;
   int _coeff_dim;
+  mfem::Vector _x0;
   mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
 
@@ -34,6 +35,12 @@ class PoissonDtNOperator : public mfem::Operator, private LegendreHelper {
   mfem::DenseMatrix elmat;
 #endif
 
+  // Set the boundary marker for serial calculations.
+  void SetBoundaryMarkerSerial();
+
+  // Set the boundary marker for parallel calculations.
+  void SetBoundaryMarkerParallel();
+
   // Common set up between the serial and parallel constructors.
   void SetUp();
 
@@ -48,30 +55,13 @@ class PoissonDtNOperator : public mfem::Operator, private LegendreHelper {
 
  public:
   // Serial constructors.
-  PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree,
-                     const mfem::Array<int>& bdr_marker);
-
-  PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree,
-                     mfem::Array<int>&& bdr_marker)
-      : PoissonDtNOperator(fes, degree, bdr_marker) {}
-
-  PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree)
-      : PoissonDtNOperator(fes, degree,
-                           ExternalBoundaryMarker(fes->GetMesh())) {}
+  PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree);
 
 #ifdef MFEM_USE_MPI
   // Parallel constructors.
   PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
-                     int degree, const mfem::Array<int>& bdr_marker);
+                     int degree);
 
-  PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
-                     int degree, mfem::Array<int>&& bdr_marker)
-      : PoissonDtNOperator(comm, fes, degree, bdr_marker) {}
-
-  PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
-                     int degree)
-      : PoissonDtNOperator(comm, fes, degree,
-                           ExternalBoundaryMarker(fes->GetMesh())) {}
 #endif
 
   // Multiplication by the operator.
