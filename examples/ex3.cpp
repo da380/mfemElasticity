@@ -64,9 +64,11 @@ int main(int argc, char *argv[]) {
   auto [found2, same2, r2] = BoundaryRadius(&mesh, Array<int>{0, 1}, c2);
   assert(found2 == 1 && same2 == 1);
 
-  // Set up the finite element space.
-  auto fec = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &fec);
+  // Set the finite element spaces.
+  auto L2 = L2_FECollection(order - 1, dim);
+  auto H1 = H1_FECollection(order, dim);
+  auto dfes = FiniteElementSpace(&mesh, &L2);
+  auto fes = FiniteElementSpace(&mesh, &H1);
   cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
 
   // Assemble the binlinear form for Poisson's equation.
@@ -80,60 +82,52 @@ int main(int argc, char *argv[]) {
   as.AddDomainIntegrator(new MassIntegrator(eps));
   as.Assemble();
 
-  /*
-  auto L2 = L2_FECollection(order - 1, dim);
-  auto H1 = H1_FECollection(order, dim);
-  auto dfes = FiniteElementSpace(&mesh, &L2);
-  auto fes = FiniteElementSpace(&mesh, &H1);
-  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
+  // Set the multipole operator.
+  auto C = PoissonMultipoleOperator(&dfes, &fes, degree, Array<int>{1, 0});
 
   // Set piecewise coefficient for density.
-  auto rho_coeff1 = ConstantCoefficient(rho);
+  auto rho_coeff1 = ConstantCoefficient(1);
   auto rho_coeff2 = ConstantCoefficient(0);
 
   auto attr = Array<int>{1, 2};
   auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
   auto rho_coeff = PWCoefficient(attr, coeffs);
 
-  auto z = GridFunction(&dfes);
-  z.ProjectCoefficient(rho_coeff);
-
-  auto C = PoissonMultipoleCircle(&dfes, &fes, kMax);
-  C.Assemble();
-
-  BilinearForm a(&fes);
-  a.AddDomainIntegrator(new DiffusionIntegrator());
-  a.Assemble();
-
-  // Set up the form on the domain.
+  // Set up the linear form.
   auto domain_marker = Array<int>{1, 0};
   LinearForm b(&fes);
   b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff), domain_marker);
   b.Assemble();
 
+  // Peform the multipole correction.
+  auto z = GridFunction(&dfes);
+  z.ProjectCoefficient(rho_coeff);
   auto n = GridFunction(&fes);
   C.Mult(z, n);
   b -= n;
 
-  b *= -4 * M_PI * G;
+  // Scale the linear form.
+  b *= -4 * pi;
 
-  OperatorPtr A;
-  Vector B, X;
+  // Set up the linear system
   auto x = GridFunction(&fes);
   x = 0.0;
-
   Array<int> ess_tdof_list{};
+  SparseMatrix A;
+  Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
-  cout << "Size of linear system: " << A->Height() << endl;
 
-  GSSmoother M((SparseMatrix &)(*A));
+  // Set up the preconditioner.
+  SparseMatrix As;
+  as.FormSystemMatrix(ess_tdof_list, As);
+  auto P = GSSmoother(As);
 
+  // Set up the solver.
   auto solver = CGSolver();
-  solver.SetOperator(*A);
-  solver.SetPreconditioner(M);
-
+  solver.SetOperator(A);
+  solver.SetPreconditioner(P);
   solver.SetRelTol(1e-12);
-  solver.SetMaxIter(2000);
+  solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
   auto orthoSolver = OrthoSolver();
@@ -142,42 +136,50 @@ int main(int argc, char *argv[]) {
 
   a.RecoverFEMSolution(X, b, x);
 
-  auto phi = FunctionCoefficient([=](const Vector &x) {
-    auto r = (x(0) - x00) * (x(0) - x00) + (x(1) - x01) * (x(1) - x01);
-    r = sqrt(r);
-    if (r < radius) {
-      return M_PI * G * rho * r * r;
-    } else {
-      return 2 * M_PI * G * rho * radius * log(r / radius) +
-             M_PI * G * rho * radius * radius;
-    }
-  });
-
-  auto one = ConstantCoefficient(1);
-  auto l = LinearForm(&fes);
-  l.AddDomainIntegrator(new DomainLFIntegrator(one));
-  l.Assemble();
-  auto area = l.Sum();
-  l /= area;
+  auto exact = UniformSphereSolution(dim, c1, r1);
+  auto exact_coeff = exact.Coefficient();
 
   auto y = GridFunction(&fes);
-  y.ProjectCoefficient(phi);
+  y.ProjectCoefficient(exact_coeff);
 
-  auto py = l * y;
-  y -= py;
+  // Remove mean from the solution.
+  {
+    auto l = LinearForm(&fes);
+    auto z = GridFunction(&fes);
+    z = 1.0;
+    auto one = ConstantCoefficient(1);
+    l.AddDomainIntegrator(new DomainLFIntegrator(one));
+    l.Assemble();
+    auto area = l(z);
+    l /= area;
+    auto px = l(x);
+    x -= px;
+    auto py = l(y);
+    y -= py;
+  }
 
-  auto px = l * x;
-  x -= px;
+  if (residual == 1) {
+    x -= y;
+  }
 
-  ofstream exact_ofs("exact.gf");
-  exact_ofs.precision(8);
-  y.Save(exact_ofs);
+  // Write to file.
+  ofstream mesh_ofs("refined.mesh");
+  mesh_ofs.precision(8);
+  mesh.Print(mesh_ofs);
 
-  x -= y;
-  ofstream diff_ofs("diff.gf");
-  diff_ofs.precision(8);
-  x.Save(diff_ofs);
+  ofstream sol_ofs("sol.gf");
+  sol_ofs.precision(8);
+  x.Save(sol_ofs);
 
-  return 0;
-*/
+  // Visualise if glvis is open.
+  char vishost[] = "localhost";
+  int visport = 19916;
+  socketstream sol_sock(vishost, visport);
+  sol_sock.precision(8);
+  sol_sock << "solution\n" << mesh << x << flush;
+  if (dim == 2) {
+    sol_sock << "keys Rjlbc\n" << flush;
+  } else {
+    sol_sock << "keys RRRilmc\n" << flush;
+  }
 }
