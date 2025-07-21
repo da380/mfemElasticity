@@ -2,12 +2,18 @@
 
 namespace mfemElasticity {
 
+/*****************************************************************
+******************************************************************
+******************************************************************
+*****************************************************************/
+
 void PoissonDtNOperator::SetBoundaryMarkerSerial() {
   _x0 = MeshCentroid(_fes->GetMesh());
   _bdr_marker = ExternalBoundaryMarker(_fes->GetMesh());
   auto [found, same, radius] =
       BoundaryRadius(_fes->GetMesh(), _bdr_marker, _x0);
   assert(found == 1 && same == 1);
+  _bdr_radius = radius;
 }
 
 #ifdef MFEM_USE_MPI
@@ -17,6 +23,7 @@ void PoissonDtNOperator::SetBoundaryMarkerParallel() {
   auto [found, same, radius] =
       BoundaryRadius(_pfes->GetParMesh(), _bdr_marker, _x0);
   assert(found == 1 && same == 1);
+  _bdr_radius = radius;
 }
 #endif
 
@@ -162,9 +169,9 @@ void PoissonDtNOperator::AssembleElementMatrix2D(
 
     fe.CalcShape(ip, shape);
 
-    auto ri = 1 / _x.Norml2();
-    auto sin = _x[1] * ri;
-    auto cos = _x[0] * ri;
+    const auto ri = 1 / _x.Norml2();
+    const auto sin = _x[1] * ri;
+    const auto cos = _x[0] * ri;
 
     auto sin_k_m = 0.0;
     auto cos_k_m = 1.0;
@@ -218,8 +225,7 @@ void PoissonDtNOperator::AssembleElementMatrix3D(
     Trans.Transform(ip, _x);
     _x -= _x0;
 
-    const auto r = _x.Norml2();
-    const auto ri = 1 / r;
+    const auto ri = 1 / _x.Norml2();
     const auto cos_theta = _x(2) * ri;
     const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
     const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
@@ -261,6 +267,11 @@ void PoissonDtNOperator::AssembleElementMatrix3D(
     AddMult_a_VWt(w, shape, _c, elmat);
   }
 }
+
+/*****************************************************************
+******************************************************************
+******************************************************************
+*****************************************************************/
 
 void PoissonMultipoleOperator::SetBoundaryMarkerSerial() {
   auto* mesh = _tr_fes->GetMesh();
@@ -710,5 +721,10 @@ void PoissonMultipoleOperator::AssembleLeftElementMatrix3D(
     AddMult_a_VWt(w, shape, _c, elmat);
   }
 }
+
+/*****************************************************************
+******************************************************************
+******************************************************************
+*****************************************************************/
 
 }  // namespace mfemElasticity
