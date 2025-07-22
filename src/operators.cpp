@@ -319,8 +319,6 @@ void PoissonMultipoleOperator::SetUp() {
   if (_dim == 3) {
     SetSquareRoots(_degree);
   }
-
-  Assemble();
 }
 
 PoissonMultipoleOperator::PoissonMultipoleOperator(
@@ -336,6 +334,7 @@ PoissonMultipoleOperator::PoissonMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
+  Assemble();
 }
 
 #ifdef MFEM_USE_MPI
@@ -357,6 +356,7 @@ PoissonMultipoleOperator::PoissonMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
+  Assemble();
 }
 #endif
 
@@ -726,5 +726,13 @@ void PoissonMultipoleOperator::AssembleLeftElementMatrix3D(
 ******************************************************************
 ******************************************************************
 *****************************************************************/
+
+void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix2D(
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {}
+
+void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {};
 
 }  // namespace mfemElasticity

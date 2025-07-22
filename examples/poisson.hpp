@@ -39,4 +39,36 @@ class UniformSphereSolution {
       });
     }
   }
+
+  mfem::FunctionCoefficient LinearisedCoefficient(const mfem::Vector& a) const {
+    using namespace mfem;
+
+    if (_dim == 2) {
+      return FunctionCoefficient([this, a](const Vector& x) {
+        auto dim = x.Size();
+        auto r = x.DistanceTo(_x);
+        auto dr = x;
+        dr -= _x;
+        dr /= r;
+        if (r <= _r) {
+          return -2 * pi * r * (dr * a);
+        } else {
+          return -2 * pi * (dr * a) / r;
+        }
+      });
+    } else {
+      return FunctionCoefficient([this, &a](const Vector& x) {
+        auto dim = x.Size();
+        auto r = x.DistanceTo(_x);
+        auto dr = x;
+        dr -= _x;
+        dr /= r;
+        if (r <= _r) {
+          return -4 * pi * r * (dr * a) / 3;
+        } else {
+          return -4 * pi * std::pow(_r, 3) * (dr * a) / (3 * r * r);
+        }
+      });
+    }
+  }
 };

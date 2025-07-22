@@ -1,10 +1,6 @@
-/******************************************************************************
-Solves Poisson equation in a whole space using a Dirichlet to Neumann mapping
-to account for the exterior domain.
-*******************************************************************************/
-
 #include <cassert>
 #include <fstream>
+#include <functional>
 #include <iostream>
 
 #include "mfem.hpp"
@@ -17,9 +13,9 @@ using namespace mfemElasticity;
 
 constexpr real_t pi = atan(1) * 4;
 
-int main(int argc, char *argv[]) {
+int main(int argc, char* argv[]) {
   // Set default options.
-  const char *mesh_file =
+  const char* mesh_file =
       "/home/david/dev/meshing/examples/circular_offset.msh";
   int order = 1;
   int serial_refinement = 0;
@@ -70,10 +66,44 @@ int main(int argc, char *argv[]) {
   auto [found2, same2, r2] = BoundaryRadius(&mesh, Array<int>{0, 1}, c2);
   assert(found2 == 1 && same2 == 1);
 
-  // Set up the finite element space.
-  auto fec = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &fec);
+  // Set up the scalar finite element space.
+  auto H1 = H1_FECollection(order, dim);
+  auto fes = FiniteElementSpace(&mesh, &H1);
   cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
+
+  // Set up the vector finite element space.
+  auto L2 = L2_FECollection(order - 1, dim);
+  auto vfes = FiniteElementSpace(&mesh, &L2, dim);
+  cout << "Number of finite element unknowns: " << vfes.GetTrueVSize() << endl;
+
+  // Set the density coefficient.
+  auto rho_coeff1 = ConstantCoefficient(1);
+  auto rho_coeff2 = ConstantCoefficient(0);
+
+  auto attr = Array<int>{1, 2};
+  auto coeffs = Array<Coefficient*>{&rho_coeff1, &rho_coeff2};
+  auto rho_coeff = PWCoefficient(attr, coeffs);
+
+  // Set up the displacement
+  auto uv = Vector(dim);
+  uv = 0.0;
+  uv[0] = 1;
+  uv[1] = 1;
+
+  auto uCoeff1 = VectorConstantCoefficient(uv);
+  auto uCoeff = PWVectorCoefficient(dim);
+  uCoeff.UpdateCoefficient(1, uCoeff1);
+  auto u = GridFunction(&vfes);
+  u.ProjectCoefficient(uCoeff);
+
+  // Set up the mixed bilinearform
+  auto d = MixedBilinearForm(&fes, &vfes);
+  d.AddDomainIntegrator(new DomainVectorGradScalarIntegrator(rho_coeff));
+  d.Assemble();
+
+  // Act the transposed form to generate rhs.
+  auto b = GridFunction(&fes);
+  d.MultTranspose(u, b);
 
   // Assemble the binlinear form for Poisson's equation.
   auto a = BilinearForm(&fes);
@@ -89,34 +119,7 @@ int main(int argc, char *argv[]) {
   // Set up the DtN operator.
   auto c = PoissonDtNOperator(&fes, degree);
 
-  // Set the density coefficient.
-  auto rho_coeff1 = ConstantCoefficient(1);
-  auto rho_coeff2 = ConstantCoefficient(0);
-
-  auto attr = Array<int>{1, 2};
-  auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
-  auto rho_coeff = PWCoefficient(attr, coeffs);
-
-  // Set the linear form.
-  auto b = LinearForm(&fes);
-  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff));
-  b.Assemble();
-
-  // If in 2D, add in necessary boundary form.
-  if (dim == 2) {
-    auto x = GridFunction(&fes);
-    x = 1.0;
-    auto mass = b(x);
-    auto bb = LinearForm(&fes);
-    auto one = ConstantCoefficient(1);
-    auto boundary_marker = Array<int>{0, 1};
-    bb.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
-    bb.Assemble();
-    auto length = bb(x);
-    b.Add(-mass / length, bb);
-  }
-
-  // Scale the linear form.
+  // Scale the rhs form.
   b *= -4 * pi;
 
   // Set up the linear system
@@ -152,7 +155,7 @@ int main(int argc, char *argv[]) {
   a.RecoverFEMSolution(X, b, x);
 
   auto exact = UniformSphereSolution(dim, c1, r1);
-  auto exact_coeff = exact.Coefficient();
+  auto exact_coeff = exact.LinearisedCoefficient(uv);
 
   auto y = GridFunction(&fes);
   y.ProjectCoefficient(exact_coeff);
@@ -184,7 +187,7 @@ int main(int argc, char *argv[]) {
 
   ofstream sol_ofs("sol.gf");
   sol_ofs.precision(8);
-  x.Save(sol_ofs);
+  u.Save(sol_ofs);
 
   // Visualise if glvis is open.
   char vishost[] = "localhost";
@@ -193,7 +196,7 @@ int main(int argc, char *argv[]) {
   sol_sock.precision(8);
   sol_sock << "solution\n" << mesh << x << flush;
   if (dim == 2) {
-    sol_sock << "keys Rjlbc\n" << flush;
+    sol_sock << "keys Rjlcb\n" << flush;
   } else {
     sol_sock << "keys RRRilmc\n" << flush;
   }

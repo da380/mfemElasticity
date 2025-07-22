@@ -1,3 +1,10 @@
+/*********************************************************************************
+Solves a static elastic traction problem. This code illustrates the use of the
+RigidBodySolver class to project out the null space for the problem.
+
+This is the parallel version of ex1.cpp that requires compilation of the library
+using a parallel build of MFEM.
+*********************************************************************************/
 
 #include <cmath>
 #include <fstream>

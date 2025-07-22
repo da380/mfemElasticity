@@ -1,4 +1,7 @@
-
+/*********************************************************************************
+Solves a static elastic traction problem. This code illustrates the use of the
+RigidBodySolver class to project out the null space for the problem.
+*********************************************************************************/
 
 #include <cmath>
 #include <fstream>

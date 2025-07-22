@@ -135,13 +135,13 @@ class PoissonMultipoleOperator : public mfem::Operator, private LegendreHelper {
                                    mfem::ElementTransformation& Trans,
                                    mfem::DenseMatrix& elmat);
 
-  void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
-                                    mfem::ElementTransformation& Trans,
-                                    mfem::DenseMatrix& elmat);
+  virtual void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
+                                            mfem::ElementTransformation& Trans,
+                                            mfem::DenseMatrix& elmat);
 
-  void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
-                                    mfem::ElementTransformation& Trans,
-                                    mfem::DenseMatrix& elmat);
+  virtual void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
+                                            mfem::ElementTransformation& Trans,
+                                            mfem::DenseMatrix& elmat);
 
  public:
   // Serial constructors.
@@ -198,5 +198,61 @@ class PoissonMultipoleOperator : public mfem::Operator, private LegendreHelper {
   spherical boundary in 2D or 3D.
 ***************************************************************
 **************************************************************/
+
+class PoissonLinearisedMultipoleOperator : public PoissonMultipoleOperator {
+ protected:
+  // Element level calculations.
+  void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
+                                    mfem::ElementTransformation& Trans,
+                                    mfem::DenseMatrix& elmat) override;
+
+  void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
+                                    mfem::ElementTransformation& Trans,
+                                    mfem::DenseMatrix& elmat) override;
+
+ public:
+  // Serial constructors.
+  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                                     mfem::FiniteElementSpace* te_fes,
+                                     int degree,
+                                     const mfem::Array<int>& dom_marker);
+
+  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                                     mfem::FiniteElementSpace* te_fes,
+                                     int degree, mfem::Array<int>&& dom_marker)
+      : PoissonLinearisedMultipoleOperator(tr_fes, te_fes, degree, dom_marker) {
+  }
+
+  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                                     mfem::FiniteElementSpace* te_fes,
+                                     int degree)
+      : PoissonLinearisedMultipoleOperator(
+            tr_fes, te_fes, degree, AllDomainsMarker(tr_fes->GetMesh())) {}
+
+#ifdef MFEM_USE_MPI
+  // Parallel constructors.
+  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
+                                     mfem::ParFiniteElementSpace* tr_fes,
+                                     mfem::ParFiniteElementSpace* te_fes,
+                                     int degree,
+                                     const mfem::Array<int>& dom_marker);
+
+  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
+                                     mfem::ParFiniteElementSpace* tr_fes,
+                                     mfem::ParFiniteElementSpace* te_fes,
+                                     int degree, mfem::Array<int>&& dom_marker)
+      : PoissonLinearisedMultipoleOperator(comm, tr_fes, te_fes, degree,
+                                           dom_marker) {}
+
+  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
+                                     mfem::ParFiniteElementSpace* tr_fes,
+                                     mfem::ParFiniteElementSpace* te_fes,
+                                     int degree)
+      : PoissonLinearisedMultipoleOperator(
+            comm, tr_fes, te_fes, degree, AllDomainsMarker(tr_fes->GetMesh())) {
+  }
+
+#endif
+};
 
 }  // namespace mfemElasticity
