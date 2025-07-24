@@ -87,10 +87,22 @@ int main(int argc, char* argv[]) {
   // Set up the displacement
   auto uv = Vector(dim);
   uv = 0.0;
-  uv[0] = 1;
-  uv[1] = 0;
+  uv[0] = 0;
+  uv[1] = 1;
+  if (dim == 3) {
+    uv[2] = 0;
+  }
 
   auto uCoeff1 = VectorConstantCoefficient(uv);
+
+  /*
+  auto uCoeff1 =
+      VectorFunctionCoefficient(dim, [&c1](const Vector& x, Vector& y) {
+        y = x;
+        y -= c1;
+      });
+  */
+
   auto uCoeff = PWVectorCoefficient(dim);
   uCoeff.UpdateCoefficient(1, uCoeff1);
   auto u = GridFunction(&vfes);

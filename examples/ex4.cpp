@@ -88,7 +88,7 @@ int main(int argc, char* argv[]) {
   auto uv = Vector(dim);
   uv = 0.0;
   uv[0] = 1;
-  uv[1] = 0;
+  uv[1] = 1;
 
   auto uCoeff1 = VectorConstantCoefficient(uv);
   auto uCoeff = PWVectorCoefficient(dim);

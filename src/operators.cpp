@@ -715,14 +715,15 @@ void PoissonLinearisedMultipoleOperator::SetUp() {
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  _c.SetSize(_coeff_dim);
-  _d.SetSize(_coeff_dim);
+  _c0.SetSize(_coeff_dim);
+  _c1.SetSize(_coeff_dim);
   _x.SetSize(_dim);
   if (_dim == 3) {
     _sin.SetSize(_degree + 1);
     _cos.SetSize(_degree + 1);
     _p.SetSize(_degree + 1);
     _pm1.SetSize(_degree + 1);
+    _c2.SetSize(_coeff_dim);
   }
 #endif
   SetSquareRoots(_dim, _degree);
@@ -772,20 +773,20 @@ void PoissonLinearisedMultipoleOperator::Mult(const mfem::Vector& x,
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c(_coeff_dim);
+  Vector _c0(_coeff_dim);
 #endif
 
-  _rmat.MultTranspose(x, _c);
+  _rmat.MultTranspose(x, _c0);
 
 #ifdef MFEM_USE_MPI
   if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
+    MPI_Allreduce(MPI_IN_PLACE, _c0.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
                   MPI_SUM, _comm);
   }
 #endif
 
   y.SetSize(_lmat.Height());
-  _lmat.Mult(_c, y);
+  _lmat.Mult(_c0, y);
 }
 
 void PoissonLinearisedMultipoleOperator::MultTranspose(const mfem::Vector& x,
@@ -793,20 +794,20 @@ void PoissonLinearisedMultipoleOperator::MultTranspose(const mfem::Vector& x,
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c(_coeff_dim);
+  Vector _c0(_coeff_dim);
 #endif
 
-  _lmat.MultTranspose(x, _c);
+  _lmat.MultTranspose(x, _c0);
 
 #ifdef MFEM_USE_MPI
   if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
+    MPI_Allreduce(MPI_IN_PLACE, _c0.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
                   MPI_SUM, _comm);
   }
 #endif
 
   y.SetSize(_rmat.Width());
-  _rmat.Mult(_c, y);
+  _rmat.Mult(_c0, y);
 }
 
 void PoissonLinearisedMultipoleOperator::Assemble() {
@@ -875,7 +876,7 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix2D(
   auto dim = Trans.GetSpaceDim();
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c(_coeff_dim), _d(_coeff_dim), shape(_coeff_dim), _x(2);
+  Vector _c0(_coeff_dim), _c1(_coeff_dim), shape(_coeff_dim), _x(2);
   DenseMatrix part_elmat;
 #endif
 
@@ -915,11 +916,11 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix2D(
       auto sin_k = sin_k_m * cos + cos_k_m * sin;
       auto cos_k = cos_k_m * cos - sin_k_m * sin;
 
-      _c(i) = k * rfac * cos_k;
-      _d(i++) = -k * rfac * sin_k;
+      _c0(i) = k * rfac * cos_k;
+      _c1(i++) = -k * rfac * sin_k;
 
-      _c(i) = k * rfac * sin_k;
-      _d(i++) = k * rfac * cos_k;
+      _c0(i) = k * rfac * sin_k;
+      _c1(i++) = k * rfac * cos_k;
 
       rfac *= ratio;
       sin_k_m = sin_k;
@@ -928,11 +929,11 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix2D(
 
     auto w = fac * Trans.Weight() * ip.weight;
 
-    MultVWt(shape, _c, part_elmat);
+    MultVWt(shape, _c0, part_elmat);
     elmat.AddMatrix(w * cos, part_elmat, 0, 0);
     elmat.AddMatrix(w * sin, part_elmat, dof, 0);
 
-    MultVWt(shape, _d, part_elmat);
+    MultVWt(shape, _c1, part_elmat);
     elmat.AddMatrix(-w * sin, part_elmat, 0, 0);
     elmat.AddMatrix(w * cos, part_elmat, dof, 0);
   }
@@ -946,9 +947,7 @@ void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix2D(
   auto dof = fe.GetDof();
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x;
-  _c.SetSize(_coeff_dim);
-  _x.SetSize(2);
+  Vector _c0(_coeff_dim), shape(dof), _x(2);
 #endif
 
   shape.SetSize(dof);
@@ -978,14 +977,14 @@ void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix2D(
     for (auto k = 1; k <= _degree; k++) {
       auto sin_k = sin_k_m * cos + cos_k_m * sin;
       auto cos_k = cos_k_m * cos - sin_k_m * sin;
-      _c(i++) = cos_k;
-      _c(i++) = sin_k;
+      _c0(i++) = cos_k;
+      _c0(i++) = sin_k;
       sin_k_m = sin_k;
       cos_k_m = cos_k;
     }
 
     auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c, elmat);
+    AddMult_a_VWt(w, shape, _c0, elmat);
   }
 }
 
@@ -995,25 +994,29 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
   using namespace mfem;
 
   auto dof = fe.GetDof();
+  auto dim = Trans.GetSpaceDim();
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
+  Vector _c0, _c1, _c2, shape, _x, _sin, _cos, _p, _pm1;
   _x.SetSize(3);
-  _c.SetSize(_coeff_dim);
+  _c0.SetSize(_coeff_dim);
+  _c1.SetSize(_coeff_dim);
+  _c2.SetSize(_coeff_dim);
   _sin.SetSize(_degree + 1);
   _cos.SetSize(_degree + 1);
   _p.SetSize(_degree + 1);
   _pm1.SetSize(_degree + 1);
+  DenseMatrix part_elmat;
 #endif
 
   shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
+  part_elmat.SetSize(dof, _coeff_dim);
+
+  elmat.SetSize(dim * dof, _coeff_dim);
   elmat = 0.0;
 
   auto intorder = fe.GetOrder() + Trans.OrderW();
   auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  /*
 
   _sin(0) = 0.0;
   _cos(0) = 1.0;
@@ -1026,8 +1029,10 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
 
     const auto r = _x.Norml2();
     const auto ri = 1 / r;
-    const auto cos_theta = _x(2) * ri;
     const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
+    const auto cos_theta = _x(2) * ri;
+    const auto sin_theta = rxy * ri;
+    const auto cosec_theta = rxy > 0 ? 1 / sin_theta : 0;
     const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
     const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
 
@@ -1035,12 +1040,10 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
     _p(0) = Pll(0, cos_theta);
 
     const auto ratio = r / _bdr_radius;
-    auto rfac = 1 / (_bdr_radius * _bdr_radius);
-    _c(0) = rfac * _p(0);
+    auto rfac = 1 / std::pow(_bdr_radius, 3);
 
-    auto i = 1;
+    auto i = 0;
     for (auto l = 1; l <= _degree; l++) {
-      rfac *= ratio;
       auto fac = rfac * (l + 1) / (2 * l + 1);
 
       _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
@@ -1054,20 +1057,54 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
       _p(l) = 0.0;
       std::swap(_p, _pm1);
 
-      _c(i++) = fac * _p(0);
+      auto _p_th = _sqrt[l] * _sqrt[l + 1] * _p(1);
+      _c0(i) = l * fac * _p(0);
+      _c1(i) = fac * _p_th;
+      _c2(i++) = 0.0;
 
       fac *= _sqrt[2];
-      for (auto m = 1; m <= l; m++) {
-        _c(i++) = fac * _p[m] * _cos(m);
-        _c(i++) = rxy > 0 ? fac * _p[m] * _sin(m) : 0.0;
+      for (auto m = 1; m < l; m++) {
+        _p_th = 0.5 * _sqrt[l - m] * _sqrt[l + m + 1] * _p[m + 1] -
+                0.5 * _sqrt[l + m] * _sqrt[l - m + 1] * _p[m - 1];
+
+        _c0(i) = l * fac * _p(m) * _cos(m);
+        _c1(i) = fac * _p_th * _cos(m);
+        _c2(i++) = -m * fac * cosec_theta * _p(m) * _sin(m);
+
+        _c0(i) = l * fac * _p(m) * _sin(m);
+        _c1(i) = fac * _p_th * _sin(m);
+        _c2(i++) = m * fac * cosec_theta * _p(m) * _cos(m);
       }
+
+      _p_th = -0.5 * _sqrt[2 * l] * _p(l - 1);
+      _c0(i) = l * fac * _p(l) * _cos(l);
+      _c1(i) = fac * _p_th * _cos(l);
+      _c2(i++) = -l * fac * cosec_theta * _p(l) * _sin(l);
+
+      _c0(i) = l * fac * _p(l) * _cos(l);
+      _c1(i) = fac * _p_th * _sin(l);
+      _c2(i++) = l * fac * cosec_theta * _p(l) * _cos(l);
+
+      rfac *= ratio;
     }
 
     fe.CalcShape(ip, shape);
     auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c, elmat);
+
+    MultVWt(shape, _c0, part_elmat);
+    elmat.AddMatrix(w * sin_theta * cos, part_elmat, 0, 0);
+    elmat.AddMatrix(w * sin_theta * sin, part_elmat, dof, 0);
+    elmat.AddMatrix(w * cos_theta, part_elmat, 2 * dof, 0);
+
+    MultVWt(shape, _c1, part_elmat);
+    elmat.AddMatrix(w * cos_theta * cos, part_elmat, 0, 0);
+    elmat.AddMatrix(w * cos_theta * sin, part_elmat, dof, 0);
+    elmat.AddMatrix(-w * sin_theta, part_elmat, 2 * dof, 0);
+
+    MultVWt(shape, _c2, part_elmat);
+    elmat.AddMatrix(-w * sin, part_elmat, 0, 0);
+    elmat.AddMatrix(w * cos, part_elmat, dof, 0);
   }
-  */
 }
 
 void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix3D(
@@ -1078,9 +1115,9 @@ void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix3D(
   auto dof = fe.GetDof();
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
+  Vector _c0, shape, _x, _sin, _cos, _p, _pm1;
   _x.SetSize(3);
-  _c.SetSize(_coeff_dim);
+  _c0.SetSize(_coeff_dim);
   _sin.SetSize(_degree + 1);
   _cos.SetSize(_degree + 1);
   _p.SetSize(_degree + 1);
@@ -1126,17 +1163,17 @@ void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix3D(
       _p(l) = 0.0;
       std::swap(_p, _pm1);
 
-      _c(i++) = _p(0);
+      _c0(i++) = _p(0);
 
       for (auto m = 1; m <= l; m++) {
-        _c(i++) = _sqrt[2] * _p[m] * _cos(m);
-        _c(i++) = rxy > 0 ? _sqrt[2] * _p[m] * _sin(m) : 0.0;
+        _c0(i++) = _sqrt[2] * _p[m] * _cos(m);
+        _c0(i++) = rxy > 0 ? _sqrt[2] * _p[m] * _sin(m) : 0.0;
       }
     }
 
     fe.CalcShape(ip, shape);
     auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c, elmat);
+    AddMult_a_VWt(w, shape, _c0, elmat);
   }
 }
 

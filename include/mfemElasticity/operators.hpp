@@ -215,8 +215,8 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  mutable mfem::Vector _c;
-  mfem::Vector shape, _x, _sin, _cos, _p, _pm1, _d;
+  mutable mfem::Vector _c0;
+  mfem::Vector shape, _x, _sin, _cos, _p, _pm1, _c1, _c2;
   mfem::DenseMatrix elmat, part_elmat;
 #endif
 
