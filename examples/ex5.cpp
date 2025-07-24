@@ -116,8 +116,9 @@ int main(int argc, char* argv[]) {
   as.AddDomainIntegrator(new MassIntegrator(eps));
   as.Assemble();
 
-  // Set up the DtN operator.
-  auto c = PoissonDtNOperator(&fes, degree);
+  // Set up the multipole operator.
+  auto c = PoissonLinearisedMultipoleOperator(&vfes, &fes, degree);
+  c.AddMult(u, b, -1);
 
   // Scale the rhs form.
   b *= -4 * pi;
@@ -129,7 +130,6 @@ int main(int argc, char* argv[]) {
   SparseMatrix A;
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
-  auto D = SumOperator(&A, 1, &c, 1, false, false);
 
   // Set up the preconditioner.
   SparseMatrix As;
@@ -138,20 +138,16 @@ int main(int argc, char* argv[]) {
 
   // Set up the solver.
   auto solver = CGSolver();
-  solver.SetOperator(D);
+  solver.SetOperator(A);
   solver.SetPreconditioner(P);
   solver.SetRelTol(1e-12);
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
   // Sovler the linear system.
-  if (dim == 2) {
-    auto orthoSolver = OrthoSolver();
-    orthoSolver.SetSolver(solver);
-    orthoSolver.Mult(B, X);
-  } else {
-    solver.Mult(B, X);
-  }
+  auto orthoSolver = OrthoSolver();
+  orthoSolver.SetSolver(solver);
+  orthoSolver.Mult(B, X);
   a.RecoverFEMSolution(X, b, x);
 
   auto exact = UniformSphereSolution(dim, c1, r1);
@@ -160,8 +156,8 @@ int main(int argc, char* argv[]) {
   auto y = GridFunction(&fes);
   y.ProjectCoefficient(exact_coeff);
 
-  // In 2D, remove the mean from the solution.
-  if (dim == 2) {
+  //  Remove mean from solution.
+  {
     auto l = LinearForm(&fes);
     auto z = GridFunction(&fes);
     z = 1.0;

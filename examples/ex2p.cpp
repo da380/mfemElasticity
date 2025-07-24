@@ -97,7 +97,7 @@ int main(int argc, char *argv[]) {
   a.Assemble();
 
   // Assemble mass-shifted binlinear form for preconditioning.
-  auto eps = ConstantCoefficient(0.01);
+  auto eps = ConstantCoefficient(0.001);
   auto as = ParBilinearForm(&fes, &a);
   as.AddDomainIntegrator(new MassIntegrator(eps));
   as.Assemble();

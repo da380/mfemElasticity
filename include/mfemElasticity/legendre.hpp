@@ -16,6 +16,7 @@ namespace mfemElasticity {
 */
 struct LegendreHelper {
   static constexpr mfem::real_t pi = std::atan(1) * 4;
+  static constexpr mfem::real_t sqrtPi = std::sqrt(pi);
   static constexpr mfem::real_t invSqrtFourPi = 1 / std::sqrt(4 * pi);
   static constexpr mfem::real_t logSqrtPi = std::log(std::sqrt(pi));
   static constexpr mfem::real_t log2 = std::log(static_cast<mfem::real_t>(2));
@@ -25,6 +26,9 @@ struct LegendreHelper {
 
   // Precompute integer square roots up to 2*lMax+1.
   void SetSquareRoots(int lMax);
+
+  // Precompute necessary square roots based on dimension and degree.
+  void SetSquareRoots(int dim, int degree);
 
   int MinusOnePower(int m) const { return m % 2 ? -1 : 1; }
 

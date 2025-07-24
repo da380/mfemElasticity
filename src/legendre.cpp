@@ -13,6 +13,24 @@ void LegendreHelper::SetSquareRoots(int lMax) {
   }
 }
 
+void LegendreHelper::SetSquareRoots(int dim, int degree) {
+  if (dim == 3) {
+    _sqrt.SetSize(2 * degree + 2);
+    _isqrt.SetSize(2 * degree + 2);
+    for (auto l = 0; l <= 2 * degree + 1; l++) {
+      _sqrt(l) = std::sqrt(static_cast<mfem::real_t>(l));
+    }
+    for (auto l = 1; l <= 2 * degree + 1; l++) {
+      _isqrt(l) = 1 / _sqrt(l);
+    }
+  } else {
+    _sqrt.SetSize(degree + 1);
+    for (auto k = 0; k <= degree; k++) {
+      _sqrt(k) = std::sqrt(static_cast<mfem::real_t>(k));
+    }
+  }
+}
+
 mfem::real_t LegendreHelper::LogFactorial(int m) const {
   return std::lgamma(static_cast<mfem::real_t>(m + 1));
 }

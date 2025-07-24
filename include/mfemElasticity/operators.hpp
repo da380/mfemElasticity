@@ -2,7 +2,9 @@
 
 #include <cassert>
 #include <cmath>
+#include <memory>
 
+#include "mesh.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity/legendre.hpp"
 #include "mfemElasticity/mesh.hpp"
@@ -15,15 +17,14 @@ namespace mfemElasticity {
   boundary in 2D or 3D.
 *************************************************************
 ************************************************************/
-class PoissonDtNOperator : public mfem::Operator, private LegendreHelper {
- protected:
+class PoissonDtNOperator : public mfem::Operator,
+                           protected LegendreHelper,
+                           protected SphericalMeshHelper {
+ private:
   mfem::FiniteElementSpace* _fes;
   int _dim;
   int _degree;
   int _coeff_dim;
-  mfem::real_t _bdr_radius;
-  mfem::Vector _x0;
-  mfem::Array<int> _bdr_marker;
   mfem::SparseMatrix _mat;
 
 #ifdef MFEM_USE_MPI
@@ -38,11 +39,8 @@ class PoissonDtNOperator : public mfem::Operator, private LegendreHelper {
   mfem::DenseMatrix elmat;
 #endif
 
-  // Set the boundary marker for serial calculations.
-  void SetBoundaryMarkerSerial();
-
-  // Set the boundary marker for parallel calculations.
-  void SetBoundaryMarkerParallel();
+  // Return the coefficient dimension.
+  int CoeffDim() const;
 
   // Common set up between the serial and parallel constructors.
   void SetUp();
@@ -90,16 +88,16 @@ class PoissonDtNOperator : public mfem::Operator, private LegendreHelper {
   boundary in 2D or 3D.
 ***************************************************************
 **************************************************************/
-class PoissonMultipoleOperator : public mfem::Operator, private LegendreHelper {
+
+class PoissonMultipoleOperator : public mfem::Operator,
+                                 protected LegendreHelper,
+                                 protected SphericalMeshHelper {
  protected:
   mfem::FiniteElementSpace* _tr_fes;
   mfem::FiniteElementSpace* _te_fes;
   int _dim;
   int _degree;
   int _coeff_dim;
-  mfem::Vector _x0;
-  mfem::real_t _bdr_radius;
-  mfem::Array<int> _bdr_marker;
   mfem::Array<int> _dom_marker;
   mfem::SparseMatrix _lmat;
   mfem::SparseMatrix _rmat;
@@ -117,11 +115,8 @@ class PoissonMultipoleOperator : public mfem::Operator, private LegendreHelper {
   mfem::DenseMatrix elmat;
 #endif
 
-  // Set the boundary marker for serial calculations.
-  void SetBoundaryMarkerSerial();
-
-  // Set the boundary marker for parallel calculations.
-  void SetBoundaryMarkerParallel();
+  // Return the coefficient dimension.
+  int CoeffDim() const;
 
   // Common set up between the serial and parallel constructors.
   void SetUp();
@@ -199,16 +194,54 @@ class PoissonMultipoleOperator : public mfem::Operator, private LegendreHelper {
 ***************************************************************
 **************************************************************/
 
-class PoissonLinearisedMultipoleOperator : public PoissonMultipoleOperator {
+class PoissonLinearisedMultipoleOperator : public mfem::Operator,
+                                           protected LegendreHelper,
+                                           protected SphericalMeshHelper {
  protected:
-  // Element level calculations.
-  void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
-                                    mfem::ElementTransformation& Trans,
-                                    mfem::DenseMatrix& elmat) override;
+  mfem::FiniteElementSpace* _tr_fes;
+  mfem::FiniteElementSpace* _te_fes;
+  int _dim;
+  int _degree;
+  int _coeff_dim;
+  mfem::Array<int> _dom_marker;
+  mfem::SparseMatrix _lmat;
+  mfem::SparseMatrix _rmat;
 
-  void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
-                                    mfem::ElementTransformation& Trans,
-                                    mfem::DenseMatrix& elmat) override;
+#ifdef MFEM_USE_MPI
+  bool _parallel = false;
+  mfem::ParFiniteElementSpace* _tr_pfes;
+  mfem::ParFiniteElementSpace* _te_pfes;
+  MPI_Comm _comm;
+#endif
+
+#ifndef MFEM_THREAD_SAFE
+  mutable mfem::Vector _c;
+  mfem::Vector shape, _x, _sin, _cos, _p, _pm1, _d;
+  mfem::DenseMatrix elmat, part_elmat;
+#endif
+
+  // Return the coefficient dimension.
+  int CoeffDim() const;
+
+  // Common set up between the serial and parallel constructors.
+  void SetUp();
+
+  // Element level calculations.
+  void AssembleLeftElementMatrix2D(const mfem::FiniteElement& fe,
+                                   mfem::ElementTransformation& Trans,
+                                   mfem::DenseMatrix& elmat);
+
+  void AssembleLeftElementMatrix3D(const mfem::FiniteElement& fe,
+                                   mfem::ElementTransformation& Trans,
+                                   mfem::DenseMatrix& elmat);
+
+  virtual void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
+                                            mfem::ElementTransformation& Trans,
+                                            mfem::DenseMatrix& elmat);
+
+  virtual void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
+                                            mfem::ElementTransformation& Trans,
+                                            mfem::DenseMatrix& elmat);
 
  public:
   // Serial constructors.
@@ -252,6 +285,20 @@ class PoissonLinearisedMultipoleOperator : public PoissonMultipoleOperator {
             comm, tr_fes, te_fes, degree, AllDomainsMarker(tr_fes->GetMesh())) {
   }
 
+#endif
+
+  // Multiplication by the operator.
+  void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
+
+  // Transposed multiplication by the operator.
+  void MultTranspose(const mfem::Vector& x, mfem::Vector& y) const override;
+
+  // Assemble the sparse matrix associated with the operator.
+  void Assemble();
+
+#ifdef MFEM_USE_MPI
+  // Return the associated RAP operator.
+  mfem::RAPOperator RAP() const;
 #endif
 };
 

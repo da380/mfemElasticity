@@ -76,4 +76,17 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>&& dom_marker,
 mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order = 1);
 #endif
 
+// Struct providing utilies for a mesh with a spherical external boundary.
+struct SphericalMeshHelper {
+  mfem::real_t _bdr_radius;
+  mfem::Vector _x0;
+  mfem::Array<int> _bdr_marker;
+
+  void SetBoundaryMarker(mfem::Mesh* mesh);
+
+#ifdef MFEM_USE_MPI
+  void SetBoundaryMarker(mfem::ParMesh* mesh);
+#endif
+};
+
 }  // namespace mfemElasticity

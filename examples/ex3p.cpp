@@ -124,9 +124,7 @@ int main(int argc, char *argv[]) {
   // Peform the multipole correction.
   auto z = ParGridFunction(&dfes);
   z.ProjectCoefficient(rho_coeff);
-  auto n = GridFunction(&fes);
-  C.Mult(z, n);
-  b -= n;
+  C.AddMult(z, b, -1);
 
   // Scale the linear form.
   b *= -4 * pi;
