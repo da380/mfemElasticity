@@ -1,6 +1,4 @@
-#include <cassert>
 #include <fstream>
-#include <functional>
 #include <iostream>
 
 #include "mfem.hpp"
@@ -13,9 +11,15 @@ using namespace mfemElasticity;
 
 constexpr real_t pi = atan(1) * 4;
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
+  // Initialise MPI and Hypre.
+  Mpi::Init();
+  int num_procs = Mpi::WorldSize();
+  int myid = Mpi::WorldRank();
+  Hypre::Init();
+
   // Set default options.
-  const char* mesh_file =
+  const char *mesh_file =
       "/home/david/dev/meshing/examples/circular_offset.msh";
   int order = 1;
   int serial_refinement = 0;
@@ -42,7 +46,9 @@ int main(int argc, char* argv[]) {
     args.PrintUsage(cout);
     return 1;
   }
-  args.PrintOptions(cout);
+  if (myid == 0) {
+    args.PrintOptions(cout);
+  }
 
   // Read in mesh in serial.
   auto mesh = Mesh(mesh_file, 1, 1);
@@ -53,35 +59,48 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // Check mesh has two attributes.
+  // Check the mesh has two attributes.
   assert(mesh.attributes.Max() == 2);
 
+  // Form the parallel mesh.
+  auto pmesh = ParMesh(MPI_COMM_WORLD, mesh);
+  mesh.Clear();
+  {
+    for (int l = 0; l < parallel_refinement; l++) {
+      pmesh.UniformRefinement();
+    }
+  }
+
+  assert(pmesh.attributes.Max() == 2);
+
   // Get centroid and radius for inner domain.
-  auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
-  auto [found1, same1, r1] = BoundaryRadius(&mesh, Array<int>{1, 0}, c1);
+  auto c1 = MeshCentroid(&pmesh, Array<int>{1, 0});
+  auto [found1, same1, r1] = BoundaryRadius(&pmesh, Array<int>{1, 0}, c1);
   assert(found1 == 1 && same1 == 1);
 
   // Get centroid and radius for combined domain.
-  auto c2 = MeshCentroid(&mesh, Array<int>{1, 1});
-  auto [found2, same2, r2] = BoundaryRadius(&mesh, Array<int>{0, 1}, c2);
+  auto c2 = MeshCentroid(&pmesh, Array<int>{1, 1});
+  auto [found2, same2, r2] = BoundaryRadius(&pmesh, Array<int>{0, 1}, c2);
   assert(found2 == 1 && same2 == 1);
 
   // Set up the scalar finite element space.
   auto H1 = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &H1);
-  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
+  ParFiniteElementSpace fes(&pmesh, &H1);
+  HYPRE_BigInt size = fes.GlobalTrueVSize();
+  if (myid == 0) {
+    cout << "Number of finite element unknowns: " << size << endl;
+  }
 
   // Set up the vector finite element space.
   auto L2 = L2_FECollection(order - 1, dim);
-  auto vfes = FiniteElementSpace(&mesh, &L2, dim);
-  cout << "Number of finite element unknowns: " << vfes.GetTrueVSize() << endl;
+  auto vfes = ParFiniteElementSpace(&pmesh, &L2, dim);
 
   // Set the density coefficient.
   auto rho_coeff1 = ConstantCoefficient(1);
   auto rho_coeff2 = ConstantCoefficient(0);
 
   auto attr = Array<int>{1, 2};
-  auto coeffs = Array<Coefficient*>{&rho_coeff1, &rho_coeff2};
+  auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
   auto rho_coeff = PWCoefficient(attr, coeffs);
 
   // Set up the displacement
@@ -94,54 +113,55 @@ int main(int argc, char* argv[]) {
   }
 
   auto uCoeff1 = VectorConstantCoefficient(uv);
-
   auto uCoeff = PWVectorCoefficient(dim);
   uCoeff.UpdateCoefficient(1, uCoeff1);
-  auto u = GridFunction(&vfes);
+  auto u = ParGridFunction(&vfes);
   u.ProjectCoefficient(uCoeff);
 
   // Set up the mixed bilinearform
-  auto d = MixedBilinearForm(&fes, &vfes);
+  auto d = ParMixedBilinearForm(&fes, &vfes);
   d.AddDomainIntegrator(new DomainVectorGradScalarIntegrator(rho_coeff));
   d.Assemble();
 
   // Act the transposed form to generate rhs.
-  auto b = GridFunction(&fes);
+  auto b = ParGridFunction(&fes);
   d.MultTranspose(u, b);
 
   // Assemble the binlinear form for Poisson's equation.
-  auto a = BilinearForm(&fes);
+  ParBilinearForm a(&fes);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
   // Assemble mass-shifted binlinear form for preconditioning.
   auto eps = ConstantCoefficient(0.01);
-  auto as = BilinearForm(&fes, &a);
+  auto as = ParBilinearForm(&fes, &a);
   as.AddDomainIntegrator(new MassIntegrator(eps));
   as.Assemble();
 
   // Set up the multipole operator.
-  auto c = PoissonLinearisedMultipoleOperator(&vfes, &fes, degree);
+  auto c =
+      PoissonLinearisedMultipoleOperator(MPI_COMM_WORLD, &vfes, &fes, degree);
   c.AddMult(u, b, -1);
 
-  // Scale the rhs form.
+  // Scale the rhs.
   b *= -4 * pi;
 
   // Set up the linear system
-  auto x = GridFunction(&fes);
+  auto x = ParGridFunction(&fes);
   x = 0.0;
   Array<int> ess_tdof_list{};
-  SparseMatrix A;
+  HypreParMatrix A;
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
-  // Set up the preconditioner.
-  SparseMatrix As;
+  // Form the preconditioner, using the mass-matrix to make it
+  // positive-definite.
+  HypreParMatrix As;
   as.FormSystemMatrix(ess_tdof_list, As);
-  auto P = GSSmoother(As);
+  auto P = HypreBoomerAMG(As);
 
   // Set up the solver.
-  auto solver = CGSolver();
+  auto solver = CGSolver(MPI_COMM_WORLD);
   solver.SetOperator(A);
   solver.SetPreconditioner(P);
   solver.SetRelTol(1e-12);
@@ -149,7 +169,8 @@ int main(int argc, char* argv[]) {
   solver.SetPrintLevel(1);
 
   // Sovler the linear system.
-  auto orthoSolver = OrthoSolver();
+
+  auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
   orthoSolver.SetSolver(solver);
   orthoSolver.Mult(B, X);
   a.RecoverFEMSolution(X, b, x);
@@ -157,13 +178,13 @@ int main(int argc, char* argv[]) {
   auto exact = UniformSphereSolution(dim, c1, r1);
   auto exact_coeff = exact.LinearisedCoefficient(uv);
 
-  auto y = GridFunction(&fes);
+  auto y = ParGridFunction(&fes);
   y.ProjectCoefficient(exact_coeff);
 
-  //  Remove mean from solution.
+  //  Remove the mean from the solution.
   {
-    auto l = LinearForm(&fes);
-    auto z = GridFunction(&fes);
+    auto l = ParLinearForm(&fes);
+    auto z = ParGridFunction(&fes);
     z = 1.0;
     auto one = ConstantCoefficient(1);
     l.AddDomainIntegrator(new DomainLFIntegrator(one));
@@ -181,22 +202,27 @@ int main(int argc, char* argv[]) {
   }
 
   // Write to file.
-  ofstream mesh_ofs("refined.mesh");
-  mesh_ofs.precision(8);
-  mesh.Print(mesh_ofs);
+  ostringstream mesh_name, sol_name;
+  mesh_name << "mesh." << setfill('0') << setw(6) << myid;
+  sol_name << "sol." << setfill('0') << setw(6) << myid;
 
-  ofstream sol_ofs("sol.gf");
+  ofstream mesh_ofs(mesh_name.str().c_str());
+  mesh_ofs.precision(8);
+  pmesh.Print(mesh_ofs);
+
+  ofstream sol_ofs(sol_name.str().c_str());
   sol_ofs.precision(8);
-  u.Save(sol_ofs);
+  x.Save(sol_ofs);
 
   // Visualise if glvis is open.
   char vishost[] = "localhost";
   int visport = 19916;
   socketstream sol_sock(vishost, visport);
+  sol_sock << "parallel " << num_procs << " " << myid << "\n";
   sol_sock.precision(8);
-  sol_sock << "solution\n" << mesh << x << flush;
+  sol_sock << "solution\n" << pmesh << x << flush;
   if (dim == 2) {
-    sol_sock << "keys Rjlcb\n" << flush;
+    sol_sock << "keys Rjlbc\n" << flush;
   } else {
     sol_sock << "keys RRRilmc\n" << flush;
   }
