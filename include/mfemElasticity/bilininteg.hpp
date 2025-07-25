@@ -772,4 +772,79 @@ class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
                               mfem::DenseMatrix& elmat) override;
 };
 
+/*
+BilinearFormIntegrator for the transformed diffusion integrator
+*/
+class TransformedLaplaceIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* Q = nullptr;
+  mfem::VectorCoefficient* QV = nullptr;
+  mfem::MatrixCoefficient* QM = nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix trial_dshape, test_dshape, xi, F, A, B;
+#endif
+
+ public:
+  /*
+     Constructor for the identity transformation.
+  */
+  TransformedLaplaceIntegrator(const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir) {}
+
+  /*
+    Radial transformation specified by a radial function.
+  */
+  TransformedLaplaceIntegrator(mfem::Coefficient& q,
+                               const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /*
+    General transformation specified by a VectorCoefficient.
+  */
+  TransformedLaplaceIntegrator(mfem::VectorCoefficient& qv,
+                               const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
+
+  /*
+    General transformatoin specified by a MatrixCoefficient.
+  */
+  TransformedLaplaceIntegrator(mfem::MatrixCoefficient& qm,
+                               const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QM{&qm} {}
+
+  /*
+  Set the default integration rule. The orders of the trial space, test space,
+  and element transformation are taken into account Variations in the
+  coefficient are not considered.
+  */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  /*
+    Implementation of the element level assembly.
+  */
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+
+  /*
+  Assembly when the trial and test spaces are equal.
+  */
+  void AssembleElementMatrix(const mfem::FiniteElement& fe,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override {
+    AssembleElementMatrix2(fe, fe, Trans, elmat);
+  }
+
+ protected:
+  const mfem::IntegrationRule* GetDefaultIntegrationRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& trans) const {
+    return &GetRule(trial_fe, test_fe, trans);
+  }
+};
+
 }  // namespace mfemElasticity

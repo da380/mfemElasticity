@@ -17,10 +17,10 @@ gmsh.model.add("circular_offset")
 a = 1
 b = 1.75
 
-x0 = 0.5
-y0 = 0.5
+x0 = 0.0
+y0 = 0.0
 
-x1 = 0.3
+x1 = 0.0
 y1 = 0.0
 
 lc = 0.1
