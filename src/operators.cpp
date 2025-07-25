@@ -1040,7 +1040,7 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
     _p(0) = Pll(0, cos_theta);
 
     const auto ratio = r / _bdr_radius;
-    auto rfac = 1 / std::pow(_bdr_radius, 3);
+    auto rfac = std::pow(_bdr_radius, -3);
 
     auto i = 0;
     for (auto l = 1; l <= _degree; l++) {
@@ -1058,7 +1058,7 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
       std::swap(_p, _pm1);
 
       auto _p_th = _sqrt[l] * _sqrt[l + 1] * _p(1);
-      _c0(i) = l * fac * _p(0);
+      _c0(i) = fac * l * _p(0);
       _c1(i) = fac * _p_th;
       _c2(i++) = 0.0;
 
@@ -1067,23 +1067,23 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
         _p_th = 0.5 * _sqrt[l - m] * _sqrt[l + m + 1] * _p[m + 1] -
                 0.5 * _sqrt[l + m] * _sqrt[l - m + 1] * _p[m - 1];
 
-        _c0(i) = l * fac * _p(m) * _cos(m);
+        _c0(i) = fac * l * _p(m) * _cos(m);
         _c1(i) = fac * _p_th * _cos(m);
-        _c2(i++) = -m * fac * cosec_theta * _p(m) * _sin(m);
+        _c2(i++) = -fac * m * cosec_theta * _p(m) * _sin(m);
 
-        _c0(i) = l * fac * _p(m) * _sin(m);
+        _c0(i) = fac * l * _p(m) * _sin(m);
         _c1(i) = fac * _p_th * _sin(m);
-        _c2(i++) = m * fac * cosec_theta * _p(m) * _cos(m);
+        _c2(i++) = fac * m * cosec_theta * _p(m) * _cos(m);
       }
 
       _p_th = -0.5 * _sqrt[2 * l] * _p(l - 1);
-      _c0(i) = l * fac * _p(l) * _cos(l);
+      _c0(i) = fac * l * _p(l) * _cos(l);
       _c1(i) = fac * _p_th * _cos(l);
-      _c2(i++) = -l * fac * cosec_theta * _p(l) * _sin(l);
+      _c2(i++) = -fac * l * cosec_theta * _p(l) * _sin(l);
 
-      _c0(i) = l * fac * _p(l) * _cos(l);
+      _c0(i) = fac * l * _p(l) * _sin(l);
       _c1(i) = fac * _p_th * _sin(l);
-      _c2(i++) = l * fac * cosec_theta * _p(l) * _cos(l);
+      _c2(i++) = fac * l * cosec_theta * _p(l) * _cos(l);
 
       rfac *= ratio;
     }

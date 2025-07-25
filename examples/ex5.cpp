@@ -87,10 +87,10 @@ int main(int argc, char* argv[]) {
   // Set up the displacement
   auto uv = Vector(dim);
   uv = 0.0;
-  uv[0] = 0;
+  uv[0] = 1;
   uv[1] = 1;
   if (dim == 3) {
-    uv[2] = 0;
+    uv[2] = 1;
   }
 
   auto uCoeff1 = VectorConstantCoefficient(uv);
