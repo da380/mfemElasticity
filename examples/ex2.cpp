@@ -44,8 +44,7 @@ constexpr real_t pi = atan(1) * 4;
 
 int main(int argc, char *argv[]) {
   // Set default options.
-  const char *mesh_file =
-      "/home/david/dev/meshing/examples/circular_offset.msh";
+  const char *mesh_file = "../data/circular_offset.msh";
   int order = 1;
   int refinement = 0;
   int degree = 4;
