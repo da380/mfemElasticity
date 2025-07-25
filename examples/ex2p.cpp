@@ -1,3 +1,39 @@
+/******************************************************************************
+
+Solves the Poisson equation on a whole space through use of a Dirichlet to
+Neumann mapping as implemented in the PoissonDtNOperator class.
+
+This is the parallel version of ex2 that makes use of MPI.
+
+The mesh is required to have a spherical exterior boundary. It must have two
+attributes. Attirbute 1 is an inner domain with spherically boundary on in which
+the density is equal to 1. Attribute 2 is the remainder of the domain, and here
+the density is equal to zero. The boundary between attirbutes 1 and 2 is
+labelled 1, while the exterior boundary is lablled 2. It is on the exterior
+boundary that the DtN mapping acts, this being through the addition of a
+bilinear form to the weak form of the equations.
+
+Note that the calculations are done in units for which G = 1.
+
+[-m, --mesh]: The mesh. Either 2D or 3D, but must have the attributes as
+              described above. Default is circular_offset.msh in the data
+              directory.
+
+[-o, --order]: The polynomial order used in the calculations. Default is 1.
+
+[-sr, --serial_refinement]: The number of times to refine the mesh in serial.
+                            The default it 0.
+
+[-pr, --parallel_refinement]: The number of times to refine the mesh in
+                              parallel. The default it 0.
+
+[-deg, --degree]: The degree used for the DtN mapping. Default is 4.
+
+[-res, --residual]: If equal to 1, the output is the residual between the
+                    numerical solution and an exact one. Default is 0.
+
+*******************************************************************************/
+
 #include <fstream>
 #include <iostream>
 

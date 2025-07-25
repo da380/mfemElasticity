@@ -92,7 +92,7 @@ class PoissonDtNOperator : public mfem::Operator,
 class PoissonMultipoleOperator : public mfem::Operator,
                                  protected LegendreHelper,
                                  protected SphericalMeshHelper {
- protected:
+ private:
   mfem::FiniteElementSpace* _tr_fes;
   mfem::FiniteElementSpace* _te_fes;
   int _dim;
@@ -197,7 +197,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
 class PoissonLinearisedMultipoleOperator : public mfem::Operator,
                                            protected LegendreHelper,
                                            protected SphericalMeshHelper {
- protected:
+ private:
   mfem::FiniteElementSpace* _tr_fes;
   mfem::FiniteElementSpace* _te_fes;
   int _dim;

@@ -1,9 +1,25 @@
+
 /*********************************************************************************
-Solves a static elastic traction problem. This code illustrates the use of the
+
+Solves a static elastic  problem, with a constant boundary traction applied to
+the mesh's external boundary. This code illustrates the use of the
 RigidBodySolver class to project out the null space for the problem.
 
-This is the parallel version of ex1.cpp that requires compilation of the library
-using a parallel build of MFEM.
+This is the parallel version of ex1 that makes use of MPI.
+
+Options:
+
+[-m, --mesh]: The mesh. Either 2D or 3D. Tractions are applied to its external
+              boundary. Default is star.mesh in the data directory.
+
+[-o, --order]: The polynomial order used in the calculations. Default is 1.
+
+[-sr, --serial_refinement]: The number of times to refine the mesh in serial.
+                            The default it 0.
+
+[-pr, --parallel_refinement]: The number of times to refine the mesh in
+                              parallel. The default it 0.
+
 *********************************************************************************/
 
 #include <cmath>
