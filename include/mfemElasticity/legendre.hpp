@@ -15,105 +15,99 @@ namespace mfemElasticity {
  *
  * This struct provides methods and precomputed values to efficiently
  * compute Associated Legendre polynomials. The normalization follows
- * the conventions described in Dahlen & Tromp (1998), specifically
- * equation (C.1) for the general form $P_l^m(\cos\theta)$, and
- * equation (C.2) for the special case $P_l^l(\cos\theta)$.
+ * the conventions described in Dahlen & Tromp (1998) - *Theoretical Global
+ * Seismology*.
  *
- * The polynomials are defined such that:
- * $$ P_l^m(x) = (-1)^m (1-x^2)^{m/2} \frac{d^m}{dx^m} P_l(x) $$
- * and normalized as:
- * $$ \int_{-1}^{1} [P_l^m(x)]^2 dx = \frac{2}{2l+1} \frac{(l+m)!}{(l-m)!} $$
  * The implementation uses recurrence relations for efficiency and precomputes
  * square roots to speed up calculations of recursion coefficients.
  */
 struct LegendreHelper {
-  /** @brief Value of pi, computed as $4 \times \text{atan}(1)$. */
+  /** @brief Value of pi, computed as \f$4 \times \text{atan}(1)\f$. */
   static constexpr mfem::real_t pi = std::atan(1) * 4;
-  /** @brief Value of $\sqrt{\pi}$. */
+  /** @brief Value of \f$\sqrt{\pi}\f$. */
   static constexpr mfem::real_t sqrtPi = std::sqrt(pi);
-  /** @brief Value of $1/\sqrt{4\pi}$. Used in spherical harmonic normalization.
-   */
+  /** @brief Value of \f$1/\sqrt{4\pi}\f$. Used in spherical harmonic
+   * normalization. */
   static constexpr mfem::real_t invSqrtFourPi = 1 / std::sqrt(4 * pi);
-  /** @brief Value of $\log(\sqrt{\pi})$. */
+  /** @brief Value of \f$\log(\sqrt{\pi})\f$. */
   static constexpr mfem::real_t logSqrtPi = std::log(std::sqrt(pi));
-  /** @brief Value of $\log(2)$. */
+  /** @brief Value of \f$\log(2)\f$. */
   static constexpr mfem::real_t log2 = std::log(static_cast<mfem::real_t>(2));
 
   mfem::Vector
       _sqrt; /**< Precomputed square roots of integers: `_sqrt[k] = sqrt(k)`. */
   mfem::Vector _isqrt; /**< Precomputed inverse square roots of integers:
-                          `_isqrt[k] = 1/sqrt(k)`. */
+                            `_isqrt[k] = 1/sqrt(k)`. */
 
   /**
-   * @brief Precomputes integer square roots and inverse square roots up to $2
-   * \times \text{lMax} + 1$.
-   * @param lMax The maximum degree $l$ for which polynomials will be computed.
-   * The precomputation range is determined by the maximum index needed in
-   * recursion.
+   * @brief Precomputes integer square roots and inverse square roots up to \f$2
+   * \times \text{lMax} + 1\f$.
+   * @param lMax The maximum degree \f$l\f$ for which polynomials will be
+   * computed. The precomputation range is determined by the maximum index
+   * needed in recurrence relations.
    */
   void SetSquareRoots(int lMax);
 
   /**
    * @brief Precomputes necessary square roots based on spatial dimension and
-   * polynomial degree. This overload might be used for convenience when the
-   * required maximum index depends on these parameters. Internally calls the
-   * other `SetSquareRoots` with an appropriate `lMax`.
+   * polynomial degree.
+   * This overload is provided for convenience when the required maximum index
+   * depends on these parameters. Internally, it calls the
+   * other `SetSquareRoots` method with an appropriately determined `lMax`.
    * @param dim The spatial dimension (e.g., 2 or 3).
    * @param degree The maximum polynomial degree.
    */
   void SetSquareRoots(int dim, int degree);
 
   /**
-   * @brief Calculates $(-1)^m$.
+   * @brief Calculates \f$(-1)^m\f$.
    * @param m The integer exponent.
-   * @return 1 if $m$ is even, -1 if $m$ is odd.
+   * @return \f$1\f$ if \f$m\f$ is even, \f$-1\f$ if \f$m\f$ is odd.
    */
   int MinusOnePower(int m) const { return m % 2 ? -1 : 1; }
 
   /**
-   * @brief Returns $\log(m!)$ using `std::lgamma` or precomputed values.
+   * @brief Returns \f$\log(m!)\f$ using `std::lgamma` (logarithm of the Gamma
+   * function).
    * @param m The integer for which to compute the logarithm of factorial.
-   * @return The value of $\log(m!)$.
+   * @return The value of \f$\log(m!)\f$.
    */
   mfem::real_t LogFactorial(int m) const;
 
   /**
-   * @brief Returns $\log[(2m-1)!!]$, where $!!$ denotes the double factorial.
+   * @brief Returns \f$\log[(2m-1)!!]\f$, where \f$!!\f$ denotes the double
+   * factorial.
    *
-   * The double factorial $(2m-1)!! = (2m-1)(2m-3)\dots 1$.
-   * Can be expressed as $\frac{(2m)!}{2^m m!}$.
+   * The double factorial \f$(2m-1)!! = (2m-1)(2m-3)\dots 1\f$.
+   * This can also be expressed as \f$\frac{(2m)!}{2^m m!}\f$.
    * @param m The integer for which to compute the logarithm of the double
    * factorial.
-   * @return The value of $\log[(2m-1)!!]$.
+   * @return The value of \f$\log[(2m-1)!!]\f$.
    */
   mfem::real_t LogDoubleFactorial(int m) const;
 
   /**
-   * @brief Computes the Associated Legendre polynomial $P_l^l(x)$.
+   * @brief Computes the Associated Legendre polynomial \f$P_{ll}(x)\f$.
    *
-   * This is the initial value for the recursion relations, specifically derived
-   * from equation (C.2) in Dahlen & Tromp (1998):
-   * $$ P_l^l(x) = (-1)^l (2l-1)!! (1-x^2)^{l/2} $$
-   * where $(2l-1)!! = (2l-1)(2l-3)\dots 1$.
-   * @param l The degree $l$.
-   * @param x The argument $x$ (typically $\cos\theta$).
-   * @return The value of $P_l^l(x)$.
+   * @param l The degree \f$l\f$.
+   * @param x The argument \f$x\f$ (typically \f$\cos\theta\f$).
+   * @return The value of \f$P_{ll}(x)\f$.
    */
   mfem::real_t Pll(int l, mfem::real_t x) const;
 
   /**
-   * @brief Returns the three-point recursion coefficients for $P_{l+1,m}(x)$.
+   * @brief Returns the three-point recursion coefficients for
+   * \f$P_{l+1,m}(x)\f$.
    *
    * The recurrence relation is given by:
-   * $$ P_{l+1}^m(x) = \alpha \cdot (x \cdot P_l^m(x) - \beta \cdot
-   * P_{l-1}^m(x)) $$ The coefficients $\alpha$ and $\beta$ are derived from
-   * equation (C.4) in Dahlen & Tromp (1998):
-   * $$ \alpha = \sqrt{\frac{(2l+1)(2l-1)}{(l+m)(l-m)}} $$
-   * $$ \beta = \sqrt{\frac{(l-1+m)(l-1-m)}{(2l-1)(2l-3)}} $$
-   * @param l The current degree $l$.
-   * @param m The order $m$.
-   * @return A `std::pair` where the first element is $\alpha$ and the second is
-   * $\beta$.
+   * \f[
+   * P_{l+1 \, m}(x) = \alpha  [x \cdot P_{l\,m}(x) - \beta \cdot P_{l-1\,m}(x)]
+   * \f]
+   *
+   * @param l The current degree \f$l\f$.
+   * @param m The order \f$m\f$.
+   * @return A `std::pair` where the first element is \f$\alpha\f$ and the
+   * second is \f$\beta\f$.
    */
   std::pair<mfem::real_t, mfem::real_t> RecursionCoefficients(int l,
                                                               int m) const;

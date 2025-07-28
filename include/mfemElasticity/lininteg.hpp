@@ -1,3 +1,8 @@
+/**
+ * @file DomainLFDeformationGradientIntegrator.hpp
+ * @brief Defines a LinearFormIntegrator for terms involving the deformation
+ * gradient.
+ */
 #pragma once
 
 #include "mfem.hpp"
@@ -5,25 +10,33 @@
 namespace mfemElasticity {
 
 /**
- * @brief A LinearFormIntegrator that acts on vector fields, $u$.
+ * @brief A LinearFormIntegrator that evaluates an integral involving a matrix
+ * coefficient and the deformation gradient of a vector field.
  *
- * This integrator computes the contribution to a linear form from the integral
- * term $\int_{\Omega} m_{ij} u_{i,j} dx$, where $\Omega$ is the domain,
- * $m_{ij}$ is a matrix coefficient, and $u_{i,j}$ denotes the $j$-th component
- * of the gradient of the $i$-th component of the vector field $u$.
+ * This integrator computes the integral:
+ * \f[
+ * \bvec{u} \mapsto \int_{\Omega} \bvec{m} : \deriv \bvec{u} \dd x =
+ * \int_{\Omega} m_{ij} \frac{\partial u_{i}}{\partial x_{j}} \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the computational domain, \f$\bvec{u}\f$ is a vector
+ * field,
+ * \f$\deriv \bvec{u}\f$ is its deformation gradient with components
+ * \f$\frac{\partial u_{i}}{\partial x_{j}}\f$, and \f$\bvec{m}\f$ is a given
+ * matrix coefficient with components \f$m_{ij}\f$.
  *
- * It is assumed that $u$ is defined on a product of scalar finite element
- * spaces for which the gradient operator is well-defined.
+ * It is assumed that \f$\bvec{u}\f$ is defined on a product of scalar finite
+ * element spaces for which the gradient operator is well-defined.
  *
- * It is also assumed that the matrix coefficient $m$ is square with its
- * dimension equal to the spatial dimension of the finite-element space.
+ * It is also assumed that the matrix coefficient \f$\bvec{m}\f$ is square with
+ * its dimension equal to the spatial dimension of the finite-element space.
  *
  * @note TODO: Extension to allow for delta-function coefficients.
  */
 class DomainLFDeformationGradientIntegrator
     : public mfem::LinearFormIntegrator {
  private:
-  /** @brief The matrix coefficient $m_{ij}$ used in the integral. */
+  /** @brief The matrix coefficient \f$\bvec{m}\f$ (components \f$m_{ij}\f$)
+   * used in the integral. */
   mfem::MatrixCoefficient& _M;
 
 #ifndef MFEM_THREAD_SAFE
@@ -40,7 +53,7 @@ class DomainLFDeformationGradientIntegrator
  public:
   /**
    * @brief Constructs a DomainLFDeformationGradientIntegrator.
-   * @param M The matrix coefficient $m_{ij}$ used in the integral.
+   * @param M The matrix coefficient \f$\bvec{M}\f$ used in the integral.
    * @param ir An optional integration rule. If `nullptr`, a default rule
    * will be chosen based on the element type and order.
    */
@@ -52,8 +65,8 @@ class DomainLFDeformationGradientIntegrator
    * @brief Assembles the element vector for a given finite element.
    *
    * This method calculates the local contribution of the integral
-   * $\int_T m_{ij} u_{i,j} dx$ over an element $T$ to the right-hand side
-   * vector.
+   * \f$\int_T m_{ij} \frac{\partial u_{i}}{\partial x_{j}} dx\f$ over an
+   * element \f$T\f$ to the right-hand side vector.
    *
    * @param el The finite element for which to assemble the element vector.
    * @param Trans The element transformation mapping reference coordinates to

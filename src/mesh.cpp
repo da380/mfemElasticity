@@ -24,7 +24,7 @@ mfem::Array<int> AllBoundariesMarker(mfem::Mesh* mesh) {
   return bdr_marker;
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker,
     const mfem::Vector& x0) {
   using namespace mfem;
@@ -65,35 +65,34 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
   return {found, same, radius};
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::Mesh* mesh,
-                                                  mfem::Array<int>&& bdr_marker,
-                                                  const mfem::Vector& x0) {
-  return BoundaryRadius(mesh, bdr_marker, x0);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker, const mfem::Vector& x0) {
+  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker) {
   auto x0 = mfem::Vector(mesh->Dimension());
   x0 = 0.0;
-  return BoundaryRadius(mesh, bdr_marker, x0);
+  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker) {
-  return BoundaryRadius(mesh, bdr_marker);
+  return SphericalBoundaryRadius(mesh, bdr_marker);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::Mesh* mesh,
-                                                  const mfem::Vector& x0) {
-  return BoundaryRadius(mesh, ExternalBoundaryMarker(mesh), x0);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::Mesh* mesh, const mfem::Vector& x0) {
+  return SphericalBoundaryRadius(mesh, ExternalBoundaryMarker(mesh), x0);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::Mesh* mesh) {
-  return BoundaryRadius(mesh, ExternalBoundaryMarker(mesh));
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(mfem::Mesh* mesh) {
+  return SphericalBoundaryRadius(mesh, ExternalBoundaryMarker(mesh));
 }
 
 #ifdef MFEM_USE_MPI
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker,
     const mfem::Vector& x0) {
   using namespace mfem;
@@ -104,7 +103,7 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
   auto size = mesh->GetNRanks();
 
   auto [local_found, local_same, local_radius] =
-      BoundaryRadius(dynamic_cast<Mesh*>(mesh), bdr_marker, x0);
+      SphericalBoundaryRadius(dynamic_cast<Mesh*>(mesh), bdr_marker, x0);
 
   real_t radius;
   auto found = 0;
@@ -151,35 +150,36 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
   return {found, same, radius};
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::ParMesh* mesh,
-                                                  mfem::Array<int>&& bdr_marker,
-                                                  const mfem::Vector& x0) {
-  return BoundaryRadius(mesh, bdr_marker, x0);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker,
+    const mfem::Vector& x0) {
+  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker) {
   auto x0 = mfem::Vector(mesh->Dimension());
   x0 = 0.0;
-  return BoundaryRadius(mesh, bdr_marker, x0);
+  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker) {
   auto x0 = mfem::Vector(mesh->Dimension());
   x0 = 0.0;
-  return BoundaryRadius(mesh, bdr_marker, x0);
+  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::ParMesh* mesh,
-                                                  const mfem::Vector& x0) {
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::ParMesh* mesh, const mfem::Vector& x0) {
   auto bdr_marker = ExternalBoundaryMarker(mesh);
-  return BoundaryRadius(mesh, bdr_marker, x0);
+  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
 }
 
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::ParMesh* mesh) {
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::ParMesh* mesh) {
   auto bdr_marker = ExternalBoundaryMarker(mesh);
-  return BoundaryRadius(mesh, bdr_marker);
+  return SphericalBoundaryRadius(mesh, bdr_marker);
 }
 
 #endif
@@ -270,7 +270,7 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order) {
 void SphericalMeshHelper::SetBoundaryMarker(mfem::Mesh* mesh) {
   _x0 = MeshCentroid(mesh);
   _bdr_marker = ExternalBoundaryMarker(mesh);
-  auto [found, same, radius] = BoundaryRadius(mesh, _bdr_marker, _x0);
+  auto [found, same, radius] = SphericalBoundaryRadius(mesh, _bdr_marker, _x0);
   assert(found == 1 && same == 1);
   _bdr_radius = radius;
 }
@@ -279,7 +279,7 @@ void SphericalMeshHelper::SetBoundaryMarker(mfem::Mesh* mesh) {
 void SphericalMeshHelper::SetBoundaryMarker(mfem::ParMesh* mesh) {
   _x0 = MeshCentroid(mesh);
   _bdr_marker = ExternalBoundaryMarker(mesh);
-  auto [found, same, radius] = BoundaryRadius(mesh, _bdr_marker, _x0);
+  auto [found, same, radius] = SphericalBoundaryRadius(mesh, _bdr_marker, _x0);
   assert(found == 1 && same == 1);
   _bdr_radius = radius;
 }

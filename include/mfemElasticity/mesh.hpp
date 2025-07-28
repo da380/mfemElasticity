@@ -1,3 +1,5 @@
+
+
 #pragma once
 
 #include <optional>
@@ -12,11 +14,12 @@ namespace mfemElasticity {
  *
  * This function creates an `mfem::Array<int>` suitable for marking
  * all boundary elements that are part of the mesh's external boundary.
- * Boundary attributes are marked with 1, non-boundary attributes with 0.
+ * Boundary attributes are marked with \f$1\f$, non-boundary attributes with
+ * \f$0\f$.
  *
- * @param mesh Pointer to the mfem::Mesh object.
+ * @param mesh Pointer to the `mfem::Mesh` object.
  * @return An `mfem::Array<int>` where each entry corresponds to a
- * boundary attribute.
+ * boundary attribute. The size of the array is `mesh->bdr_attributes.Size()`.
  */
 mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh);
 
@@ -24,11 +27,12 @@ mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh);
  * @brief Generates a marker array for all domain attributes of a mesh.
  *
  * This function creates an `mfem::Array<int>` that marks all existing
- * domain attributes in the mesh. Useful for selecting all elements.
+ * domain attributes in the mesh. Useful for selecting all elements in the
+ * domain.
  *
- * @param mesh Pointer to the mfem::Mesh object.
+ * @param mesh Pointer to the `mfem::Mesh` object.
  * @return An `mfem::Array<int>` where each entry corresponds to a
- * domain attribute.
+ * domain attribute. The size of the array is `mesh->attributes.Size()`.
  */
 mfem::Array<int> AllDomainsMarker(mfem::Mesh* mesh);
 
@@ -38,38 +42,35 @@ mfem::Array<int> AllDomainsMarker(mfem::Mesh* mesh);
  * This function creates an `mfem::Array<int>` that marks all existing
  * boundary attributes in the mesh. Useful for selecting all boundary elements.
  *
- * @param mesh Pointer to the mfem::Mesh object.
+ * @param mesh Pointer to the `mfem::Mesh` object.
  * @return An `mfem::Array<int>` where each entry corresponds to a
- * boundary attribute.
+ * boundary attribute. The size of the array is `mesh->bdr_attributes.Size()`.
  */
 mfem::Array<int> AllBoundariesMarker(mfem::Mesh* mesh);
 
 /**
- * @brief Computes the maximum radius of specified boundary elements from a
- * given origin.
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius.
  *
- * This function iterates over the marked boundary elements and finds the
- * maximum Euclidean distance of any boundary face node from the specified
- * origin `x0`.
  *
- * @param mesh Pointer to the mfem::Mesh object.
+ * @param mesh Pointer to the `mfem::Mesh` object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider.
  * @param x0 The origin (center) from which the radius is measured.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The maximum radius found.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The radius found. Meaningful only if the first two
+ *    return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker,
     const mfem::Vector& x0);
 
 /**
- * @brief Computes the maximum radius of specified boundary elements from a
- * given origin (move version).
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius (move version).
  *
  * This overload takes the `bdr_marker` by rvalue reference, allowing for
  * efficient passing of temporary marker arrays.
@@ -79,39 +80,38 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
  * (1 for inclusion, 0 for exclusion) to consider (moved).
  * @param x0 The origin (center) from which the radius is measured.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The maximum radius found.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::Mesh* mesh,
-                                                  mfem::Array<int>&& bdr_marker,
-                                                  const mfem::Vector& x0);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker, const mfem::Vector& x0);
 
 /**
- * @brief Computes the maximum radius of specified boundary elements from the
- * mesh centroid.
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius, using the mesh centroid as the origin.
  *
  * This overload automatically calculates the mesh centroid and uses it as the
- * origin `x0`. It considers boundary elements specified by `bdr_marker`.
+ * origin `x0`.
  *
  * @param mesh Pointer to the mfem::Mesh object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The maximum radius found.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker);
 
 /**
- * @brief Computes the maximum radius of specified boundary elements from the
- * mesh centroid (move version).
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius, using the mesh centroid as the origin (move version).
  *
  * This overload takes `bdr_marker` by rvalue reference and uses the mesh
  * centroid as origin.
@@ -120,18 +120,18 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider (moved).
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The maximum radius found.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker);
 
 /**
- * @brief Computes the maximum radius of all external boundary elements from a
- * given origin.
+ * @brief Determines if the external boundary is spherical and returns its
+ * radius from a given origin.
  *
  * This overload automatically marks the external boundary of the mesh and
  * uses it for the radius computation.
@@ -139,58 +139,60 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
  * @param mesh Pointer to the mfem::Mesh object.
  * @param x0 The origin (center) from which the radius is measured.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The maximum radius found.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::Mesh* mesh,
-                                                  const mfem::Vector& x0);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::Mesh* mesh, const mfem::Vector& x0);
 
 /**
- * @brief Computes the maximum radius of all external boundary elements from the
- * mesh centroid.
+ * @brief Determines if the external boundary is spherical and returns its
+ * radius, using the mesh centroid as the origin.
  *
  * This overload automatically marks the external boundary and calculates the
  * mesh centroid to be used as the origin.
  *
  * @param mesh Pointer to the mfem::Mesh object.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The maximum radius found.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::Mesh* mesh);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(mfem::Mesh* mesh);
 
 #ifdef MFEM_USE_MPI
+
 /**
- * @brief Computes the maximum radius of specified boundary elements from a
- * given origin for a parallel mesh.
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius for a parallel mesh.
  *
- * This function is the parallel counterpart of the serial `BoundaryRadius`
- * function. It considers the maximum radius across all processors.
+ * This function is the parallel counterpart of the serial
+ * `SphericalBoundaryRadius` function. It considers the maximum radius across
+ * all processors.
  *
  * @param mesh Pointer to the mfem::ParMesh object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider.
  * @param x0 The origin (center) from which the radius is measured.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The global maximum radius found across all processors.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The global radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker,
     const mfem::Vector& x0);
 
 /**
- * @brief Computes the maximum radius of specified boundary elements from a
- * given origin for a parallel mesh (move version).
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius for a parallel mesh (move version).
  *
  * This parallel overload takes the `bdr_marker` by rvalue reference.
  *
@@ -199,19 +201,18 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
  * (1 for inclusion, 0 for exclusion) to consider (moved).
  * @param x0 The origin (center) from which the radius is measured.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The global maximum radius found across all processors.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The global radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::ParMesh* mesh,
-                                                  mfem::Array<int>&& bdr_marker,
-                                                  const mfem::Vector& x0);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker, const mfem::Vector& x0);
 
 /**
- * @brief Computes the maximum radius of specified boundary elements from the
- * mesh centroid for a parallel mesh.
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius for a parallel mesh, using the global mesh centroid as the origin.
  *
  * This parallel overload automatically calculates the global mesh centroid and
  * uses it as the origin.
@@ -220,18 +221,18 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::ParMesh* mesh,
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The global maximum radius found across all processors.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The global radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker);
-
 /**
- * @brief Computes the maximum radius of specified boundary elements from the
- * mesh centroid for a parallel mesh (move version).
+ * @brief Determines if an indicated boundary is spherical and returns its
+ * radius for a parallel mesh, using the global mesh centroid as the origin
+ * (move version).
  *
  * This parallel overload takes `bdr_marker` by rvalue reference and uses the
  * global mesh centroid.
@@ -240,18 +241,17 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider (moved).
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The global maximum radius found across all processors.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The global radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker);
-
 /**
- * @brief Computes the maximum radius of all external boundary elements from a
- * given origin for a parallel mesh.
+ * @brief Determines if the external boundary is spherical and returns its
+ * radius from a given origin for a parallel mesh.
  *
  * This parallel overload automatically marks the external boundary globally and
  * uses the provided origin.
@@ -259,31 +259,31 @@ std::tuple<int, int, mfem::real_t> BoundaryRadius(
  * @param mesh Pointer to the mfem::ParMesh object.
  * @param x0 The origin (center) from which the radius is measured.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The global maximum radius found across all processors.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The global radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::ParMesh* mesh,
-                                                  const mfem::Vector& x0);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
+    mfem::ParMesh* mesh, const mfem::Vector& x0);
 
 /**
- * @brief Computes the maximum radius of all external boundary elements from the
- * mesh centroid for a parallel mesh.
+ * @brief Determines if the external boundary is spherical and returns its
+ * radius from the global mesh centroid for a parallel mesh.
  *
  * This parallel overload automatically marks the external boundary globally and
  * calculates the global mesh centroid.
  *
  * @param mesh Pointer to the mfem::ParMesh object.
  * @return A `std::tuple` containing:
- * - `int`: The boundary attribute of the element closest to the maximum radius
- * point.
- * - `int`: The index of the boundary element (face) closest to the maximum
- * radius point.
- * - `mfem::real_t`: The global maximum radius found across all processors.
+ * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
+ * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
+ * equal.
+ * - `mfem::real_t`: The global radius found. Meaningful only if the first two
+ * return values equal 1.
  */
-std::tuple<int, int, mfem::real_t> BoundaryRadius(mfem::ParMesh* mesh);
+std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(mfem::ParMesh* mesh);
 #endif
 
 /**

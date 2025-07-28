@@ -83,12 +83,14 @@ int main(int argc, char *argv[]) {
 
   // Get centroid and radius for inner domain.
   auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
-  auto [found1, same1, r1] = BoundaryRadius(&mesh, Array<int>{1, 0}, c1);
+  auto [found1, same1, r1] =
+      SphericalBoundaryRadius(&mesh, Array<int>{1, 0}, c1);
   assert(found1 == 1 && same1 == 1);
 
   // Get centroid and radius for combined domain.
   auto c2 = MeshCentroid(&mesh, Array<int>{1, 1});
-  auto [found2, same2, r2] = BoundaryRadius(&mesh, Array<int>{0, 1}, c2);
+  auto [found2, same2, r2] =
+      SphericalBoundaryRadius(&mesh, Array<int>{0, 1}, c2);
   assert(found2 == 1 && same2 == 1);
 
   // Set up the finite element space.

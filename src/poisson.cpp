@@ -162,7 +162,7 @@ void PoissonDtNOperator::AssembleElementMatrix2D(
 
     auto i = 0;
     for (auto k = 1; k <= _degree; k++) {
-      const auto fac = sqrtPi * _sqrt(k);
+      const auto fac = _sqrt(k);
       auto sin_k = sin_k_m * cos + cos_k_m * sin;
       auto cos_k = cos_k_m * cos - sin_k_m * sin;
       _c(i++) = fac * cos_k;
@@ -171,7 +171,7 @@ void PoissonDtNOperator::AssembleElementMatrix2D(
       cos_k_m = cos_k;
     }
 
-    auto w = ri * Trans.Weight() * ip.weight / pi;
+    auto w = sqrtPi * ri * Trans.Weight() * ip.weight / pi;
     AddMult_a_VWt(w, shape, _c, elmat);
   }
 }
@@ -1174,6 +1174,95 @@ void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix3D(
     fe.CalcShape(ip, shape);
     auto w = Trans.Weight() * ip.weight;
     AddMult_a_VWt(w, shape, _c0, elmat);
+  }
+}
+
+/*****************************************************************
+******************************************************************
+******************************************************************
+*****************************************************************/
+
+const mfem::IntegrationRule& TransformedLaplaceIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void TransformedLaplaceIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto dim = Trans.GetSpaceDim();
+  auto trial_dof = trial_fe.GetDof();
+  auto test_dof = test_fe.GetDof();
+
+  auto same_spaces = &test_fe == &trial_fe;
+
+  elmat.SetSize(test_dof, trial_dof);
+  elmat = 0.;
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix trial_dshape, test_dshape, xi, F, A, B;
+#endif
+  trial_dshape.SetSize(trial_dof, dim);
+
+  if (same_spaces) {
+    test_dshape.Reset(trial_dshape.GetData(), test_dof, dim);
+  } else {
+    test_dshape.SetSize(test_dof, dim);
+  }
+
+  if (Q || QV || QM) {
+    F.SetSize(dim, dim);
+    A.SetSize(dim, dim);
+    B.SetSize(test_dof, dim);
+  }
+
+  if (Q) {
+    const auto& ir = test_fe.GetNodes();
+  }
+
+  if (QV) {
+    const auto& ir = test_fe.GetNodes();
+    QV->Eval(xi, Trans, ir);
+  }
+
+  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  for (auto i = 0; i < ir->GetNPoints(); i++) {
+    const auto& ip = ir->IntPoint(i);
+    Trans.SetIntPoint(&ip);
+
+    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    if (!same_spaces) {
+      test_fe.CalcPhysDShape(Trans, test_dshape);
+    }
+
+    auto w = Trans.Weight() * ip.weight;
+
+    if (Q) {
+    }
+
+    if (QV) {
+      Mult(xi, test_dshape, F);
+      auto J = F.Det();
+      F.Invert();
+      MultABt(F, F, A);
+      A *= J;
+    }
+
+    if (QM) {
+      QM->Eval(A, Trans, ip);
+    }
+
+    if (Q || QV || QM) {
+      MultABt(test_dshape, A, B);
+      AddMult_a_ABt(w, test_dshape, B, elmat);
+    } else {
+      AddMult_a_ABt(w, test_dshape, trial_dshape, elmat);
+    }
   }
 }
 
