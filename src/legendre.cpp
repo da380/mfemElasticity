@@ -51,4 +51,13 @@ mfem::real_t LegendreHelper::Pll(int l, mfem::real_t x) const {
   return MinusOnePower(l) * invSqrtFourPi * std::exp(logValue);
 }
 
+std::pair<mfem::real_t, mfem::real_t> LegendreHelper::RecursionCoefficients(
+    int l, int m) const {
+  auto alpha =
+      _sqrt[2 * l + 1] * _sqrt[2 * l - 1] * _isqrt[l + m] * _isqrt[l - m];
+  auto beta = _sqrt[l - 1 + m] * _sqrt[l - 1 - m] * _isqrt[2 * (l - 1) + 1] *
+              _isqrt[2 * (l - 1) - 1];
+  return {alpha, beta};
+}
+
 }  // namespace mfemElasticity

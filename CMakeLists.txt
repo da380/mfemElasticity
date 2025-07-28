@@ -128,3 +128,57 @@ export(EXPORT mfemElasticityTargets
 
 
 
+# Find Doxygen
+find_package(Doxygen)
+
+# If Doxygen is found, add a custom target for documentation
+if (DOXYGEN_FOUND)
+    # Define the output directory for Doxygen documentation
+    set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/doc")
+
+     # --- NEW: Define Doxygen PREDEFINED macros based on CMake variables ---
+    set(DOXYGEN_PREDEFINED_MACROS "DOXYGEN_SHOULD_PARSE_THIS") # Always include this if you use it in Doxyfile.in
+    set(DOXYGEN_PREDEFINED_MACROS "${DOXYGEN_PREDEFINED_MACROS} DOXYGEN_ONLY")
+    
+    if(USE_MPI)
+        set(DOXYGEN_PREDEFINED_MACROS "${DOXYGEN_PREDEFINED_MACROS} MFEM_USE_MPI=1")
+    endif()
+
+    # Configure Doxyfile using the template
+    configure_file(
+        "${CMAKE_SOURCE_DIR}/doc/Doxyfile.in"
+        "${CMAKE_BINARY_DIR}/Doxyfile"
+        @ONLY
+    )
+
+    # Add a custom target to run Doxygen
+    add_custom_target(
+        doc
+        ALL                                     # Make it part of the default build
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DOXYGEN_OUTPUT_DIRECTORY}"
+        COMMAND ${DOXYGEN_EXECUTABLE} Doxyfile  # Command to run Doxygen
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}   # Run from the build directory
+        COMMENT "Generating Doxygen documentation..."
+        # Optional: Add dependencies if you want Doxygen to run after building
+        # your libraries/executables. This can be useful if you use certain
+        # Doxygen features that rely on compiled binaries (less common for pure API docs).
+        # DEPENDS my_library_target
+    )
+
+    # Optional: If you want to install the documentation
+    install(DIRECTORY "${DOXYGEN_OUTPUT_DIRECTORY}"
+            DESTINATION "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/html"
+            COMPONENT Development
+    )
+
+    # Optional: Add an option to disable documentation generation
+    option(BUILD_DOCS "Build Doxygen documentation" ON)
+    if (NOT BUILD_DOCS)
+        set_target_properties(doc PROPERTIES EXCLUDE_FROM_ALL TRUE)
+    endif()
+
+else()
+    message(STATUS "Doxygen not found. Documentation will not be generated.")
+endif()
+
+
