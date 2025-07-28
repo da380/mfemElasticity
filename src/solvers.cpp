@@ -23,6 +23,9 @@ RigidRotation::RigidRotation(int dimension, int component)
               "component out of range");
   MFEM_ASSERT(dimension == 3 || component == 2,
               "In two dimensions only z-rotation defined");
+#ifndef MFEM_THREAD_SAFE
+  _x.SetSize(dimension);
+#endif
 }
 
 void RigidRotation::SetComponent(int component) { _component = component; }
@@ -30,7 +33,9 @@ void RigidRotation::SetComponent(int component) { _component = component; }
 void RigidRotation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                          const mfem::IntegrationPoint &ip) {
   V.SetSize(vdim);
-  _x.SetSize(vdim);
+#ifdef MFEM_THREAD_SAFE
+  mfem::Vector _x(dim);
+#endif
   T.Transform(ip, _x);
   if (_component == 0) {
     V[0] = 0;
@@ -173,26 +178,6 @@ void RigidBodySolver::Mult(const mfem::Vector &b, mfem::Vector &x) const {
   _solver->iterative_mode = iterative_mode;
   _solver->Mult(_b, x);
   ProjectOrthogonalToRigidBody(x, x);
-}
-
-void ShiftedPreconditioner::SetSolver(mfem::Solver &solver) {
-  _solver = &solver;
-  height = _solver->Height();
-  width = _solver->Width();
-  MFEM_VERIFY(height == width, "Solver must be a square operator");
-}
-
-void ShiftedPreconditioner::SetOperator(const mfem::Operator &op) {
-  MFEM_VERIFY(_solver, "Solver hasn't been set, call SetSolver() first.");
-  _solver->SetOperator(op);
-  height = _solver->Height();
-  width = _solver->Width();
-  MFEM_VERIFY(height == width, "Solver must be a square Operator!");
-}
-
-void ShiftedPreconditioner::Mult(const mfem::Vector &b, mfem::Vector &x) const {
-  _solver->Mult(b, x);
-  x.Add(_eps, b);
 }
 
 }  // namespace mfemElasticity
