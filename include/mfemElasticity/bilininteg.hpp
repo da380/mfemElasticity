@@ -223,19 +223,21 @@ class TraceFreeSymmetricMatrixIndex : public SymmetricMatrixIndex {
 };
 
 /**
- * @brief BilinearFormIntegrator that acts on a test vector field, $v$, and a
- * trial scalar field, $u$.
- *
- * The integration is defined as:
- * $$ (v,u) \mapsto \int_{\Omega} q_{i} v_{i} u \, dx $$
- * where $\Omega$ is the domain and $q$ is a vector coefficient.
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial scalar field, \f$u\f$ according to:
+ * \f[
+ *   (\mathbf{v},u) \mapsto \int_{\Omega} \mathbf{q}\cdot \mathbf{v} \, u \dd x
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$\bvec{q}\f$ is a vector
+ * coefficient.
  *
  * It is assumed that the vector field is defined on a finite element space
  * formed from the product of a scalar nodal space.
  */
 class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::VectorCoefficient* QV; /**< Pointer to the vector coefficient $q$. */
+  mfem::VectorCoefficient*
+      QV; /**< Pointer to the vector coefficient \f$\bvec{q}\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector trial_shape, test_shape,
@@ -252,7 +254,7 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
    * with an integration rule. The vector coefficient must return values with
    * size equal to the spatial dimension as the finite-element space.
    *
-   * @param qv A reference to the `mfem::VectorCoefficient` $q$.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{q}\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`. If `nullptr`,
    * a default rule will be used.
    */
@@ -305,16 +307,18 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief BilinearFormIntegrator that acts on a test vector field, $v$, and a
- * trial scalar field, $u$.
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial scalar field, \f$u\f$ according to:
  *
- * The integration is defined as:
- * $$ (v,u) \mapsto \int_{\Omega} v_{i} q_{ij} u_{,j} \, dx $$
- * where $\Omega$ is the domain and $q$ is a matrix coefficient.
+ *   \f[
+ *     (\bvec{v},u) \mapsto \int_{\Omega} \bvec{v} \cdot \bvec{q} \cdot \grad u
+ * \dd x,
+ *   \f]
+ * where \f$\Omega\f$ is the domain and \f$\bvec{q}\f$ is a matrix coefficient.
  *
- * The coefficient $q$ can be set as a scalar, in which case the matrix
- * coefficient is proportional to the identity matrix. It can also be set as a
- * vector, this corresponding to the matrix coefficient being diagonal.
+ * The coefficient \f$\bvec{q}\f$ can be set as a scalar, in which case the
+ * matrix coefficient is proportional to the identity matrix. It can also be set
+ * as a vector, this corresponding to the matrix coefficient being diagonal.
  *
  * It is assumed that the vector field is defined on a finite element space
  * formed from the product of a scalar nodal space. The scalar field must be
@@ -323,13 +327,13 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
 class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q = nullptr; /**< Pointer to a scalar coefficient. If not
-                                     null, $q_{ij} = Q \delta_{ij}$. */
-  mfem::VectorCoefficient* QV =
-      nullptr; /**< Pointer to a vector coefficient. If not null, $q_{ij} = QV_i
-                  \delta_{ij}$. */
+                                     null, \f$q_{ij} = Q \delta_{ij}\f$. */
+  mfem::VectorCoefficient* QV = nullptr; /**< Pointer to a vector coefficient.
+                                            If not null, \f$q_{ij} = QV_i
+                                            \delta_{ij}\f$. */
   mfem::MatrixCoefficient* QM =
-      nullptr; /**< Pointer to a matrix coefficient. If not null, $q_{ij}$ is
-                  directly from QM. */
+      nullptr; /**< Pointer to a matrix coefficient. If not null, \f$q_{ij}\f$
+                  is directly from QM. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape, qv; /**< Internal buffers for test shape functions
@@ -353,10 +357,11 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
    * @brief Constructor for DomainVectorGradScalarIntegrator with a scalar
    * coefficient.
    *
-   * The matrix coefficient is proportional to the identity matrix ($q_{ij} = Q
-   * \delta_{ij}$).
+   * The matrix coefficient is proportional to the identity matrix (\f$q_{ij} =
+   * Q
+   * \delta_{ij}\f$).
    *
-   * @param q A reference to the `mfem::Coefficient` $Q$.
+   * @param q A reference to the `mfem::Coefficient`, Q.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainVectorGradScalarIntegrator(mfem::Coefficient& q,
@@ -367,9 +372,9 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
    * @brief Constructor for DomainVectorGradScalarIntegrator with a vector
    * coefficient.
    *
-   * The matrix coefficient is diagonal ($q_{ij} = QV_i \delta_{ij}$).
+   * The matrix coefficient is diagonal (\f$q_{ij} = QV_i \delta_{ij}\f$).
    *
-   * @param qv A reference to the `mfem::VectorCoefficient` $QV$.
+   * @param qv A reference to the `mfem::VectorCoefficient`, QV.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainVectorGradScalarIntegrator(mfem::VectorCoefficient& qv,
@@ -380,7 +385,7 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
    * @brief Constructor for DomainVectorGradScalarIntegrator with a matrix
    * coefficient.
    *
-   * @param qm A reference to the `mfem::MatrixCoefficient` $q$.
+   * @param qm A reference to the `mfem::MatrixCoefficient`, q.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainVectorGradScalarIntegrator(mfem::MatrixCoefficient& qm,
@@ -394,8 +399,8 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
    * taken into account, with one order removed to account for the spatial
    * derivatives. Variations in the matrix coefficient are not considered.
    *
-   * @param trial_fe The trial finite element for the scalar field $u$.
-   * @param test_fe The test finite element for the vector field $v$.
+   * @param trial_fe The trial finite element for the scalar field \f$u\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @return A constant reference to the chosen `mfem::IntegrationRule`.
    */
@@ -433,12 +438,12 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief BilinearFormIntegrator that acts on a test vector field, $v$, and a
- * trial scalar field, $u$.
- *
- * The integration is defined as:
- * $$ (v,u) \mapsto \int_{\Omega} q v_{i,i} u \, dx $$
- * where $\Omega$ is the domain and $q$ is a scalar coefficient.
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial scalar field, \f$u\f$ according to:
+ * \f[
+ *    (\bvec{v},u) \mapsto \int_{\Omega} q \divg \bvec{v}\, u \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$q\f$ is a scalar coefficient.
  *
  * It is assumed that the vector field is defined on a finite element space
  * formed from the product of a scalar nodal space on which the gradient
@@ -446,7 +451,7 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient $q$. */
+  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix test_dshape,
@@ -470,7 +475,7 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
   /**
    * @brief Constructor for DomainDivVectorScalarIntegrator with a scalar
    * coefficient.
-   * @param q A reference to the `mfem::Coefficient` $q$.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainDivVectorScalarIntegrator(mfem::Coefficient& q,
@@ -484,8 +489,8 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
    * taken into account, with one order removed to account for the spatial
    * derivatives. Variations in the coefficient are not considered.
    *
-   * @param trial_fe The trial finite element for the scalar field $u$.
-   * @param test_fe The test finite element for the vector field $v$.
+   * @param trial_fe The trial finite element for the scalar field \f$u\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @return A constant reference to the chosen `mfem::IntegrationRule`.
    */
@@ -523,12 +528,13 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief BilinearFormIntegrator that acts on a test vector field, $v$, and a
- * trial vector field, $u$.
- *
- * The integration is defined as:
- * $$ (v,u) \mapsto \int_{\Omega} q v_{i,i} u_{j,j} \, dx $$
- * where $\Omega$ is the domain and $q$ is a scalar coefficient.
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *    (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \divg \bvec{v}\, \divg
+ * \bvec{u} \dd x
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$q\f$ is a scalar coefficient.
  *
  * It is assumed that both vector fields are defined on finite element spaces
  * formed from the product of scalar nodal spaces on which the gradient operator
@@ -536,7 +542,8 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient $q$. */
+  mfem::Coefficient* Q =
+      nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix trial_dshape,
@@ -559,7 +566,7 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
   /**
    * @brief Constructor for DomainDivVectorDivVectorIntegrator with a scalar
    * coefficient.
-   * @param q A reference to the `mfem::Coefficient` $q$.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainDivVectorDivVectorIntegrator(mfem::Coefficient& q,
@@ -626,22 +633,25 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief BilinearFormIntegrator acting on a test vector field, $v$, and a trial
- * vector field, $u$.
- *
- * The integration is defined as:
- * $$ (v,u) \mapsto \int_{\Omega} q v_{i} (w_{j} u_{j})_{,i} \, dx $$
- * where $q$ is a scalar coefficient and $w$ is a vector coefficient.
+ * @brief BilinearFormIntegrator acting on a test vector field, \f$\bvec{v}\f$,
+ * and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *    (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \bvec{v}\cdot
+ *    \grad(\bvec{w}\cdot \bvec{u}) \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain,  \f$q\f$ is a scalar coefficient and
+ * \f$\bvec{w}\f$ is a vector coefficient.
  *
  * It is assumed that the vector fields are defined on finite element spaces
  * formed from the product of scalar nodal spaces. On the test space, the
- * gradient operator must be defined. The vector coefficient $w$ should return
- * vectors with size equal to the mesh's spatial dimension.
+ * gradient operator must be defined.
  */
 class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient $q$. */
-  mfem::VectorCoefficient* QV;    /**< Pointer to the vector coefficient $w$. */
+  mfem::Coefficient* Q =
+      nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
+  mfem::VectorCoefficient*
+      QV; /**< Pointer to the vector coefficient \f$\bvec{w}\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
@@ -655,7 +665,7 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
   /**
    * @brief Constructor for DomainVectorGradVectorIntegrator with a vector
    * coefficient and default scalar coefficient (1).
-   * @param qv A reference to the `mfem::VectorCoefficient` $w$.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{w}\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainVectorGradVectorIntegrator(mfem::VectorCoefficient& qv,
@@ -665,8 +675,8 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
   /**
    * @brief Constructor for DomainVectorGradVectorIntegrator with both vector
    * and scalar coefficients.
-   * @param qv A reference to the `mfem::VectorCoefficient` $w$.
-   * @param q A reference to the `mfem::Coefficient` $q$.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{w}\f$.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainVectorGradVectorIntegrator(mfem::VectorCoefficient& qv,
@@ -681,8 +691,9 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
    * taken into account, with one order removed to account for the spatial
    * derivative. Variations in the coefficients are not considered.
    *
-   * @param trial_fe The trial finite element for the vector field $u$.
-   * @param test_fe The test finite element for the vector field $v$.
+   * @param trial_fe The trial finite element for the vector field
+   * \f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @return A constant reference to the chosen `mfem::IntegrationRule`.
    */
@@ -732,22 +743,24 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief BilinearFormIntegrator acting on a test vector field, $v$, and a trial
- * vector field, $u$.
+ * @brief BilinearFormIntegrator acting on a test vector field, \f$\bvec{v}\f$,
+ * and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *    (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} \bvec{q} \cdot \bvec{v}\,
+ * \divg\bvec{u} \dd \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$\bvec{q}\f$ is a vector coefficient.
  *
- * The integration is defined as:
- * $$ (v,u) \mapsto \int_{\Omega} q_{i} v_{i} u_{j,j} \, dx $$
- * where $\Omega$ is the domain and $q$ is a vector coefficient.
- *
- * This integrator assumes that the test vector field $v$ is defined on a finite
- * element space formed from the product of a scalar nodal space, and the trial
- * vector field $u$ is defined on a finite element space formed from the product
- * of a scalar nodal space on which the gradient operator is defined.
+ * This integrator assumes that the test vector field \f$\bvec{v}\f$ is defined
+ * on a finite element space formed from the product of a scalar nodal space,
+ * and the trial vector field \f$\bvec{u}\f$ is defined on a finite element
+ * space formed from the product of a scalar nodal space on which the gradient
+ * operator is defined.
  */
 class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::VectorCoefficient* QV =
-      nullptr; /**< Pointer to the vector coefficient $q$. */
+      nullptr; /**< Pointer to the vector coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
@@ -760,7 +773,7 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  public:
   /**
    * @brief Constructor for DomainVectorDivVectorIntegrator.
-   * @param qv A reference to the `mfem::VectorCoefficient` $q$.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$q\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainVectorDivVectorIntegrator(mfem::VectorCoefficient& qv,
@@ -774,8 +787,9 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
    * taken into account, with one order removed to account for the spatial
    * derivative. Variations in the coefficients are not considered.
    *
-   * @param trial_fe The trial finite element for the vector field $u$.
-   * @param test_fe The test finite element for the vector field $v$.
+   * @param trial_fe The trial finite element for the vector field
+\f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @return A constant reference to the chosen `mfem::IntegrationRule`.
    */
@@ -825,11 +839,11 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief BilinearFormIntegrator acting on a test matrix field, $v$, and a trial
- * vector field, $u$.
- *
- * The integration is defined as:
- * $$ (v,u) \mapsto \int_{\Omega} q v_{ij} u_{i,j} \, dx $$
+ * @brief BilinearFormIntegrator acting on a test matrix field, \f$\bf{v}\f$,
+ * and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[ (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \bvec{v}: \deriv \bvec{u} \dd
+ * x,
+ * \f]
  * where $\Omega$ is the domain and $q$ is a scalar coefficient.
  *
  * The matrix field must be defined on a nodal finite element space formed from

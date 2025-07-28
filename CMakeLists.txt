@@ -136,13 +136,30 @@ if (DOXYGEN_FOUND)
     # Define the output directory for Doxygen documentation
     set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/doc")
 
-     # --- NEW: Define Doxygen PREDEFINED macros based on CMake variables ---
-    set(DOXYGEN_PREDEFINED_MACROS "DOXYGEN_SHOULD_PARSE_THIS") # Always include this if you use it in Doxyfile.in
+
+    # Source path for mathjax_config.js (assuming it's in ${CMAKE_SOURCE_DIR}/doc/)
+    set(MATHJAX_CONFIG_JS_SRC "${CMAKE_SOURCE_DIR}/doc/mathjax_config.js")
+
+    # Destination path for mathjax_config.js (inside Doxygen's HTML output)
+    set(MATHJAX_CONFIG_JS_DST "${DOXYGEN_OUTPUT_DIRECTORY}/mathjax_config.js")
+
+    # Ensure the destination directory exists and copy the file
+    add_custom_command(
+        OUTPUT "${MATHJAX_CONFIG_JS_DST}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${DOXYGEN_OUTPUT_DIRECTORY}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${MATHJAX_CONFIG_JS_SRC}" "${MATHJAX_CONFIG_JS_DST}"
+        COMMENT "Copying MathJax configuration file."
+        VERBATIM
+    )    
+
+     # Define Doxygen PREDEFINED macros based on CMake variables
+    set(DOXYGEN_PREDEFINED_MACROS "DOXYGEN_SHOULD_PARSE_THIS") 
     set(DOXYGEN_PREDEFINED_MACROS "${DOXYGEN_PREDEFINED_MACROS} DOXYGEN_ONLY")
     
     if(USE_MPI)
         set(DOXYGEN_PREDEFINED_MACROS "${DOXYGEN_PREDEFINED_MACROS} MFEM_USE_MPI=1")
     endif()
+    
 
     # Configure Doxyfile using the template
     configure_file(
@@ -163,6 +180,8 @@ if (DOXYGEN_FOUND)
         # your libraries/executables. This can be useful if you use certain
         # Doxygen features that rely on compiled binaries (less common for pure API docs).
         # DEPENDS my_library_target
+        # Add dependency on the MathJax config file being copied
+        DEPENDS "${MATHJAX_CONFIG_JS_DST}"
     )
 
     # Optional: If you want to install the documentation
