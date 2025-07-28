@@ -38,7 +38,7 @@ Note that the calculations are done in units for which G = 1.
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
-#include "poisson.hpp"
+#include "uniform_sphere.hpp"
 
 using namespace std;
 using namespace mfem;

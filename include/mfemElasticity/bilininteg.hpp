@@ -841,15 +841,15 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
 /**
  * @brief BilinearFormIntegrator acting on a test matrix field, \f$\bf{v}\f$,
  * and a trial vector field, \f$\bvec{u}\f$ according to:
- * \f[ (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \bvec{v}: \deriv \bvec{u} \dd
- * x,
+ * \f[ (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \,\bvec{v}: \deriv \bvec{u}
+ * \dd x = \int_{\Omega} q\, v_{ij} \frac{\partial u_{i}}{\partial x_{j}} \dd x,
  * \f]
- * where $\Omega$ is the domain and $q$ is a scalar coefficient.
+ * where \f$\Omega\f$ is the domain and $q$ is a scalar coefficient.
  *
  * The matrix field must be defined on a nodal finite element space formed from
  * the product of a scalar space. The ordering of the matrix components
- * corresponds to a dense matrix using column-major storage (i.e., $v_{00}$,
- * $v_{10}$, $v_{20}$, $v_{01}$, ...). The vector field must be defined on a
+ * corresponds to a dense matrix using column-major storage (i.e., \f$v_{00},
+ * v_{10}, v_{20}, v_{01}, \dots)\f$. The vector field must be defined on a
  * nodal finite element space formed from the product of a scalar space for
  * which the gradient operator is defined. The vector and matrix fields need to
  * have compatible dimensions.
@@ -857,7 +857,8 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
 class DomainMatrixDeformationGradientIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient $q$. */
+  mfem::Coefficient* Q =
+      nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape; /**< Internal buffer for test shape functions. */
@@ -882,7 +883,7 @@ class DomainMatrixDeformationGradientIntegrator
   /**
    * @brief Constructor for DomainMatrixDeformationGradientIntegrator with a
    * scalar coefficient.
-   * @param q A reference to the `mfem::Coefficient` $q$.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainMatrixDeformationGradientIntegrator(
@@ -896,8 +897,9 @@ class DomainMatrixDeformationGradientIntegrator
    * taken into account, with one order removed to account for the spatial
    * derivative. Variations in the coefficients are not considered.
    *
-   * @param trial_fe The trial finite element for the vector field $u$.
-   * @param test_fe The test finite element for the matrix field $v$.
+   * @param trial_fe The trial finite element for the vector field
+   * \f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the matrix field \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @return A constant reference to the chosen `mfem::IntegrationRule`.
    */

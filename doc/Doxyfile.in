@@ -15,9 +15,13 @@ MATHJAX_CODEFILE       = doc/mathjax_config.js
 MATHJAX_RELPATH        =
 FORMULA_MACROFILE      = macros.inc 
 
+HAVE_MAINPAGE = YES
+
 # Input settings
 INPUT                  = "@CMAKE_SOURCE_DIR@/include/mfemElasticity" \
-                         "@CMAKE_CURRENT_SOURCE_DIR@/doc"
+                         "@CMAKE_SOURCE_DIR@/doc/mainpage.dox" \
+                         "@CMAKE_SOURCE_DIR@/src" 
+
 FILE_PATTERNS          = *.h \
                          *.hpp \
                          *.cpp \

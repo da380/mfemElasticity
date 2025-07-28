@@ -1,0 +1,96 @@
+/**
+ * @mainpage mfemElasticity Project Documentation
+ *
+ * @section intro Introduction
+ * This library contains extensions to the <a href="https://mfem.org">mfem</a> library
+ * associated with the solution of elastic and viscoelastic problems.
+ *
+ * This documentation provides a comprehensive guide to understanding, using,
+ * and contributing to the mfemElasticity library.
+ *
+ * @section contents Library Contents
+ * The `mfemElasticity` library extends MFEM with specialized components for
+ * elasticity and viscoelasticity problems. Key components include:
+ *
+ * @subsection solvers Solvers
+ * - ### RigidBodySolver
+ * An instance of the `mfem::Solver` class that wraps another solver and
+ * orthogonally projects out rigid body motions. This is primarily used in the
+ * solution of static or quasi-static problems with traction boundary conditions.
+ * See `ex1.cpp` and `ex1p.cpp` for examples of its usage.
+ *
+ * @subsection integrators LinearFormIntegrator and BilinearFormIntegrator Extensions
+ * A number of classes derived from `mfem::LinearFormIntegrator` and
+ * `mfem::BilinearFormIntegrator` are defined. These classes handle the integration
+ * of various forms involving vector and matrix fields defined on finite-element
+ * spaces.
+ *
+ * **For detailed descriptions and mathematical formulations of these integrators,
+ * please refer to their individual class documentation.**
+ *
+ * @subsection interpolators DiscreteInterpolator Extensions
+ * A number of classes derived from `mfem::DiscreteInterpolator` are defined.
+ * These interpolators are designed to work with matrix fields, which are typically
+ * implemented using vector instances of `mfem::GridFunction` following specific
+ * ordering conventions.
+ *
+ * **For detailed descriptions and mathematical formulations of these interpolators,
+ * please refer to their individual class documentation.**
+ *
+ * @section install Installation
+ * The <a href="https://mfem.org">MFEM</a> library must first be installed. This can be either a
+ * serial or parallel version.
+ *
+ * Configuration of a build is done with CMake. The following options can be set:
+ * - **`MFEM_DIR`**: The location of the MFEM installation. If not set, standard locations will be
+ * searched. If multiple versions of `mfem` have been installed (e.g., serial and parallel
+ * versions), it is best to set this explicitly.
+ * - **`USE_MPI`**: Default is `OFF`. If set to `ON` the library will link to the `MPI` library.
+ * This is necessary to use a parallel version of `mfem` and the associated functionality.
+ * - **`MPI_C_COMPILER`**: Path to the MPI C compiler used to build the MFEM Library. Useful to
+ * set if different MPI compilers exist on your system.
+ * - **`MPI_CXX_COMPILER`**: Path to the MPI C++ compiler used to build the MFEM Library. Useful
+ * to set if different MPI compilers exist on your system.
+ * - **`BUILD_EXAMPLES`**: Default is `OFF`. If set to `ON` the example codes will be
+ * configured for compilation.
+ * - **`BUILD_TESTS`**: Default is `OFF`. If set to `ON` the test codes will be configured
+ * for compilation.
+ *
+ * Other standard CMake options can additionally be set (e.g., specifying debug or release builds).
+ *
+ * If either `BUILD_EXAMPLES` or `BUILD_TESTS` is selected, data files will be copied into the
+ * build directory.
+ *
+ * Note that "in source builds" are disabled.
+ *
+ * An example configuration for a parallel build is:
+ * ```bash
+ * cmake -S mfemElasticity -B mfemElasticityBuild \
+ * -DUSE_MPI=ON \
+ * -DMFEM_DIR=[path to mfem build] \
+ * -DMPI_C_COMPILER=[path to mpi c compiler] \
+ * -DMPI_CXX_COMPILER=[path to mpi c++ compiler] \
+ * -DBUILD_EXAMPLES=ON \
+ * -DBUILD_TESTS=ON
+ * ```
+ *
+ * @section proj_structure Project Structure
+ * A high-level overview of the project's directory structure (derived from CMake setup):
+ * - `src/`: Contains the main source code files (`.cpp`, `.cxx`).
+ * - `include/`: Public header files for the library (`.h`, `.hpp`).
+ * - `examples/`: Example usage programs (if `BUILD_EXAMPLES` is ON).
+ * - `tests/`: Unit tests and integration tests (if `BUILD_TESTS` is ON).
+ * - `data/`: Data files copied to the build directory for examples/tests.
+ * - `doc/`: Doxygen configuration and other project documentation files.
+ * - `cmake/`: Custom CMake modules and scripts.
+ *
+ * @section notes Additional Notes
+ * - **Project Version**: `0.0.1` (from CMakeLists.txt)
+ * - **Target Language**: C++ (from CMakeLists.txt)
+ * - **MPI Support**: Configurable via `USE_MPI` CMake option.
+ *
+ * @todo Add sections for Usage Examples, Contributing, License, and Contact if applicable
+ *
+ * @author [Your Name/Organization Name]
+ * @date [Current Date or Project Start Date]
+ */

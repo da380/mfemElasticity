@@ -1,4 +1,4 @@
-#include "mfemElasticity/operators.hpp"
+#include "mfemElasticity/poisson.hpp"
 
 namespace mfemElasticity {
 

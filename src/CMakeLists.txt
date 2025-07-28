@@ -3,5 +3,5 @@ target_sources(${PROJECT_NAME} PRIVATE solvers.cpp
                                        lininteg.cpp                                         
                                        legendre.cpp                                       
                                        mesh.cpp
-                                       operators.cpp
+                                       poisson.cpp
                                        )
