@@ -4,17 +4,14 @@
  * @section intro Introduction
  * This library contains extensions to the <a href="https://mfem.org">mfem</a> library
  * associated with the solution of elastic and viscoelastic problems.
- *
- * This documentation provides a comprehensive guide to understanding, using,
- * and contributing to the mfemElasticity library.
+ * 
  *
  * @section contents Library Contents
  * The `mfemElasticity` library extends MFEM with specialized components for
  * elasticity and viscoelasticity problems. Key components include:
  *
  * @subsection solvers Solvers
- * - ### RigidBodySolver
- * An instance of the `mfem::Solver` class that wraps another solver and
+ * The RigidBodySolver class wraps another mfem::Solver and
  * orthogonally projects out rigid body motions. This is primarily used in the
  * solution of static or quasi-static problems with traction boundary conditions.
  * See `ex1.cpp` and `ex1p.cpp` for examples of its usage.
@@ -29,10 +26,8 @@
  * please refer to their individual class documentation.**
  *
  * @subsection interpolators DiscreteInterpolator Extensions
- * A number of classes derived from `mfem::DiscreteInterpolator` are defined.
- * These interpolators are designed to work with matrix fields, which are typically
- * implemented using vector instances of `mfem::GridFunction` following specific
- * ordering conventions.
+ * A number of classes derived from `mfem::DiscreteInterpolator` are defined that
+ * are useful in  elastic and viscoelastic problems. 
  *
  * **For detailed descriptions and mathematical formulations of these interpolators,
  * please refer to their individual class documentation.**
@@ -75,7 +70,7 @@
  * ```
  *
  * @section proj_structure Project Structure
- * A high-level overview of the project's directory structure (derived from CMake setup):
+ * A high-level overview of the project's directory structure:
  * - `src/`: Contains the main source code files (`.cpp`, `.cxx`).
  * - `include/`: Public header files for the library (`.h`, `.hpp`).
  * - `examples/`: Example usage programs (if `BUILD_EXAMPLES` is ON).
@@ -85,12 +80,10 @@
  * - `cmake/`: Custom CMake modules and scripts.
  *
  * @section notes Additional Notes
- * - **Project Version**: `0.0.1` (from CMakeLists.txt)
- * - **Target Language**: C++ (from CMakeLists.txt)
+ * - **Project Version**: `0.0.1` 
+ * - **Target Language**: C++ 
  * - **MPI Support**: Configurable via `USE_MPI` CMake option.
  *
  * @todo Add sections for Usage Examples, Contributing, License, and Contact if applicable
  *
- * @author [Your Name/Organization Name]
- * @date [Current Date or Project Start Date]
  */

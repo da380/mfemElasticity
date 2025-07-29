@@ -67,6 +67,8 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+
+
 if(BUILD_EXAMPLES OR BUILD_TESTS)
     add_custom_target(CopyData        
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/data
@@ -74,6 +76,7 @@ if(BUILD_EXAMPLES OR BUILD_TESTS)
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             )
     add_dependencies(mfemElasticity CopyData)        
+
 endif()
 
 # Add standard install locations. 
@@ -127,6 +130,9 @@ export(EXPORT mfemElasticityTargets
 )
 
 
+option(BUILD_DOCS "Build documentation" OFF)
+
+if(BUILD_DOCS)
 
 # Find Doxygen
 find_package(Doxygen)
@@ -199,5 +205,9 @@ if (DOXYGEN_FOUND)
 else()
     message(STATUS "Doxygen not found. Documentation will not be generated.")
 endif()
+
+endif()
+
+
 
 

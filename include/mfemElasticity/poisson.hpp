@@ -707,23 +707,35 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
 };
 
 /**
- * @brief BilinearFormIntegrator for a transformed diffusion integrator.
+ * @brief BilinearFormIntegrator for the transformed Laplace integrator.
  *
- * This integrator implements a generalized diffusion term of the form:
+ * The bilinear form acts on a pair of scalar fields through
  * \f[
- * \int_{\Omega} \nabla v : \mathbf{K} \nabla u \, dx
+ *  (v,u) \mapsto \int_{\Omega} \grad v \cdot \bvec{a} \cdot \grad u \dd x,
  * \f]
- * where \f$ \mathbf{K} \f$ is a transformation matrix or tensor that can be
- * specified by a scalar, vector, or matrix coefficient.
+ * with \f$\Omega\f$ the domain and $where the symmetric matrix field,
+ * \f$\bvec{a}\f$, takes the form
+ * \f[
+ * \bvec{a} = J \bvec{C}^{-1}  = J \bvec{F}^{-1} \bvec{F}^{-T},
+ * \f]
+ * with \f$\bvec{F} = \deriv \boldsymbol{\xi}\f$ for a diffeomorphism,
+ * \f$\boldsymbol{\xi}\f$, on
+ * \f$\Omega\f$.
  *
- * The integrator supports:
- * - **Identity transformation**: \f$ \mathbf{K} = \mathbf{I} \f$ (default).
- * - **Radial transformation**: \f$ \mathbf{K} = q(x) \mathbf{I} \f$, where \f$
- * q(x) \f$ is a scalar coefficient.
- * - **General transformation (diagonal)**: \f$ \mathbf{K} = \text{diag}(q_1(x),
- * q_2(x), \dots) \f$, where \f$ q(x) \f$ is a vector coefficient.
- * - **General transformation (full matrix)**: \f$ \mathbf{K} \f$ is a matrix
- * coefficient.
+ *
+ * The diffeomorphism and/or resulting matrix field can be specified in three
+ * ways:
+ *
+ * -# A `mfem::Coefficient` is provided which specifies the scalar part,
+ * \f$f\f$, of a radial mapping \f$\boldsymbol{\xi}(\bvec{x}) = f(\bvec{x})
+ * \bvec{x}\f$. The form of \f$\bvec{a}\f$ is then calculated numerically.
+ * -# A `mfem::VectorCoefficient` which directly specified
+ * \f$\boldsymbol{\xi}\f$ is provided. The form of \f$\bvec{a}\f$ is then
+ * calculated numerically.
+ * -# A `mfem::MatrixCoefficient` specifying \f$\bvec{a}\f$ is given directly.
+ *
+ * There is also a constructor for which no coefficients are provided, this
+ * corresponding to the identity transformation.
  */
 class TransformedLaplaceIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -735,23 +747,23 @@ class TransformedLaplaceIntegrator : public mfem::BilinearFormIntegrator {
       nullptr; /**< Matrix coefficient for general transformation. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix trial_dshape, test_dshape, xi, F, A,
-      B; /**< Internal buffers for shape function derivatives and intermediate
-            matrices during integration. */
+  mfem::Vector fs, df, x;
+  mfem::DenseMatrix trial_dshape, test_dshape, xis, F, a,
+      trial_dshape_trans; /**< Internal buffers for shape function derivatives
+and intermediate matrices during integration. */
 #endif
 
  public:
   /**
-   * @brief Constructor for the identity transformation (\f$ \mathbf{K} =
-   * \mathbf{I} \f$).
+   * @brief Constructor for the idenity mapping.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   TransformedLaplaceIntegrator(const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
 
   /**
-   * @brief Constructor for a radial transformation specified by a scalar
-   * function (\f$ \mathbf{K} = q \mathbf{I} \f$).
+   * @brief Constructor for a radial mapping specified by a scalar
+   * function.
    * @param q A reference to the `mfem::Coefficient` \f$ q \f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
@@ -761,7 +773,7 @@ class TransformedLaplaceIntegrator : public mfem::BilinearFormIntegrator {
 
   /**
    * @brief Constructor for a general transformation specified by a
-   * VectorCoefficient (diagonal \f$ \mathbf{K} \f$).
+   * VectorCoefficient.
    * @param qv A reference to the `mfem::VectorCoefficient` \f$ q \f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
@@ -770,8 +782,8 @@ class TransformedLaplaceIntegrator : public mfem::BilinearFormIntegrator {
       : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
 
   /**
-   * @brief Constructor for a general transformation specified by a
-   * MatrixCoefficient (full \f$ \mathbf{K} \f$).
+   * @brief Constructor for which the matrix \f$\bvec{a}\f$ is provided
+   * directly.
    * @param qm A reference to the `mfem::MatrixCoefficient` \f$ q \f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */

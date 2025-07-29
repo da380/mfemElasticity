@@ -11,6 +11,7 @@ GENERATE_XML           = YES # Useful for other tools that consume Doxygen XML
 HTML_OUTPUT            = html
 
 USE_MATHJAX            = YES
+MATHJAX_EXTENSIONS     = mathjax/extensions/TeX/AMSmath.js, mathjax/extensions/TeX/AMSsymbols.js
 MATHJAX_CODEFILE       = doc/mathjax_config.js
 MATHJAX_RELPATH        =
 FORMULA_MACROFILE      = macros.inc 
