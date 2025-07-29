@@ -1,5 +1,4 @@
 
-
 add_executable(ex1 ex1.cpp)
 target_link_libraries(ex1 mfemElasticity)
 
@@ -17,6 +16,8 @@ target_link_libraries(ex5 mfemElasticity)
 
 add_executable(ex6 ex6.cpp)
 target_link_libraries(ex6 mfemElasticity)
+
+
 
 if(USE_MPI)
         add_executable(ex1p ex1p.cpp)

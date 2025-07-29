@@ -40,6 +40,7 @@ if(USE_MPI)
     endif()
 endif()
 
+
 # Set up the library 
 add_library(${PROJECT_NAME} STATIC)
 
@@ -58,6 +59,12 @@ add_subdirectory(src)
 option(BUILD_EXAMPLES "Build the example programs" OFF)
 if(BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+# Optionally build gmsh programs. 
+option(BUILD_GMSH "Build the gmsh programs" OFF)
+if(BUILD_GMSH)
+    add_subdirectory(meshing)
 endif()
 
 # Optionally build tests

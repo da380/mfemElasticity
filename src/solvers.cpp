@@ -34,7 +34,7 @@ void RigidRotation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                          const mfem::IntegrationPoint &ip) {
   V.SetSize(vdim);
 #ifdef MFEM_THREAD_SAFE
-  mfem::Vector _x(dim);
+  mfem::Vector _x(vdim);
 #endif
   T.Transform(ip, _x);
   if (_component == 0) {

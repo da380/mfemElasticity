@@ -1,4 +1,3 @@
-
 #include "mfemElasticity/bilininteg.hpp"
 
 #include <algorithm>
@@ -262,7 +261,7 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector qv(), test_shape();
-  DenseMatrix left_elmat(), rigth_elmat_trans(), part_elmat();
+  DenseMatrix trial_dshape(), left_elmat(), rigth_elmat_trans(), part_elmat();
 #endif
 
   qv.SetSize(space_dim);
@@ -331,7 +330,7 @@ void DomainVectorDivVectorIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector qv(), test_shape();
-  DenseMatrix part_elmat();
+  DenseMatrix trial_dshape(), part_elmat();
 #endif
 
   qv.SetSize(space_dim);
