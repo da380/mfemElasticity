@@ -6,6 +6,8 @@
 // Include the main Gmsh C++ API header
 #include <gmsh.h>
 
+#include "common.hpp"
+
 // Custom mesh size callback function
 double meshSizeCallback(int dim, int tag, double x, double y, double z,
                         double lc) {
@@ -37,27 +39,6 @@ double meshSizeCallback(int dim, int tag, double x, double y, double z,
   }
 
   return size;
-}
-
-// Helper function to create a circle geometry
-// Returns a pair: first is the curve loop tag, second is a vector of curve tags
-std::pair<int, std::vector<int>> createCircle(double x, double y, double r,
-                                              double lc_val) {
-  int p1 = gmsh::model::geo::addPoint(x, y, 0, lc_val);
-  int p2 = gmsh::model::geo::addPoint(x + r, y, 0, lc_val);
-  int p3 = gmsh::model::geo::addPoint(x, y + r, 0, lc_val);
-  int p4 = gmsh::model::geo::addPoint(x - r, y, 0, lc_val);
-  int p5 = gmsh::model::geo::addPoint(x, y - r, 0, lc_val);
-
-  int c1 = gmsh::model::geo::addCircleArc(p2, p1, p3);
-  int c2 = gmsh::model::geo::addCircleArc(p3, p1, p4);
-  int c3 = gmsh::model::geo::addCircleArc(p4, p1, p5);
-  int c4 = gmsh::model::geo::addCircleArc(p5, p1, p2);
-
-  std::vector<int> curve_tags = {c1, c2, c3, c4};
-  int curve_loop_tag = gmsh::model::geo::addCurveLoop(curve_tags);
-
-  return {curve_loop_tag, curve_tags};
 }
 
 int main(int argc, char **argv) {

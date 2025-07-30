@@ -9,5 +9,5 @@ cmake -S . -B parallel_build \
       -DBUILD_EXAMPLES=ON \
       -DBUILD_GMSH=ON     \
       -DBUILD_TESTS=ON    \
-      -DBUILD_DOCS=ON
+      -DBUILD_DOCS=OFF
       

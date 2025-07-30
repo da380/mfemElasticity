@@ -173,6 +173,7 @@ if (DOXYGEN_FOUND)
         set(DOXYGEN_PREDEFINED_MACROS "${DOXYGEN_PREDEFINED_MACROS} MFEM_USE_MPI=1")
     endif()
     
+    
 
     # Configure Doxyfile using the template
     configure_file(
