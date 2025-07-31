@@ -1,10 +1,13 @@
 
 find_package(gmsh CONFIG REQUIRED)
 
-add_library(common common.cpp)
+add_library(meshing CircularMesh.cpp)
+target_link_libraries(meshing PUBLIC gmsh)
 
-add_executable(common_test common_test.cpp )
-target_link_libraries(common_test common)
+add_executable(meshing_test meshing_test.cpp )
+target_link_libraries(meshing_test meshing)
+
+add_library(common common.cpp)
 
 add_executable(offset_disk offset_disk.cpp )
 target_link_libraries(offset_disk gmsh common)

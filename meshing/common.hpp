@@ -23,43 +23,10 @@ struct Circle {
 
 class Circles {
  private:
-  double _small;
-  double _big;
   std::vector<Circle> _circles;
-
-  void SetDefaultSizes() {
-    _small = std::ranges::min(
-        std::ranges::views::transform(_circles, [](auto c) { return c.r; }));
-    _big = std::ranges::max(
-        std::ranges::views::transform(_circles, [](auto c) { return c.r; }));
-  }
+  std::vector<double> _small;
 
  public:
-  Circles(const std::vector<Circle>& circles) : _circles{circles} {
-    SetDefaultSizes();
-  }
-  Circles(std::vector<Circle>&& circles) : _circles{circles} {
-    SetDefaultSizes();
-  }
-
-  Circles(const std::vector<Circle>& circles, double small, double big)
-      : _circles{circles}, _small{small}, _big{big} {}
-  Circles(std::vector<Circle>&& circles, double small, double big)
-      : _circles{circles}, _small{small}, _big{big} {}
-
-  void SetSmall(double small) { _small = small; }
-  void SetBig(double big) { _big = big; }
-
-  double Small() const { return _small; }
-  double Big() const { return _big; }
-
-  double MeshSize(int dim, int tag, double x, double y, double z,
-                  double size) const {
-    auto distances = std::ranges::views::transform(
-        _circles, [x, y](auto c) { return c.DistanceTo(x, y); });
-
-    return size;
-  }
 };
 
 // Simple stuct for spheres.
@@ -71,6 +38,11 @@ struct Sphere {
 
   Sphere(double x0, double y0, double z0, double r)
       : x0{x0}, y0{y0}, z0{z0}, r{r} {}
+
+  double DistanceTo(double x, double y, double z) const {
+    return std::sqrt((x - x0) * (x - x0) + (y - y0) * (y - y0) +
+                     (z - z0) * (z - z0));
+  }
 };
 
 // Helper function to create a circle geometry
