@@ -2,9 +2,7 @@
 
 #include <cassert>
 #include <cmath>
-#include <cstddef>
-#include <limits>
-#include <vector>
+#include <numbers>
 
 #include "mfem.hpp"
 
@@ -23,7 +21,8 @@ namespace mfemElasticity {
  */
 struct LegendreHelper {
   /** @brief Value of pi, computed as \f$4 \times \text{atan}(1)\f$. */
-  static constexpr mfem::real_t pi = std::atan(1) * 4;
+  // static constexpr mfem::real_t pi = std::atan(1) * 4;
+  static constexpr mfem::real_t pi = std::numbers::pi_v<mfem::real_t>;
   /** @brief Value of \f$\sqrt{\pi}\f$. */
   static constexpr mfem::real_t sqrtPi = std::sqrt(pi);
   /** @brief Value of \f$1/\sqrt{4\pi}\f$. Used in spherical harmonic
