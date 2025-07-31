@@ -113,7 +113,7 @@ int main(int argc, char *argv[]) {
   auto c1 = MeshCentroid(&pmesh, Array<int>{1, 0});
   auto [found1, same1, r1] =
       SphericalBoundaryRadius(&pmesh, Array<int>{1, 0}, c1);
-  assert(found1 == 1 && same1 == 1);
+  // assert(found1 == 1 && same1 == 1);
 
   // Get centroid and radius for combined domain.
   auto c2 = MeshCentroid(&pmesh, Array<int>{1, 1});

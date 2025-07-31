@@ -29,8 +29,11 @@ Note that the calculations are done in units for which G = 1.
 *******************************************************************************/
 
 #include <cassert>
+#include <cstddef>
 #include <fstream>
 #include <iostream>
+#include <memory>
+#include <numbers>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
@@ -40,7 +43,7 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
-constexpr real_t pi = atan(1) * 4;
+constexpr real_t pi = std::numbers::pi_v<mfem::real_t>;
 
 int main(int argc, char *argv[]) {
   // Set default options.
@@ -49,6 +52,7 @@ int main(int argc, char *argv[]) {
   int refinement = 0;
   int degree = 4;
   int residual = 0;
+  int method = 0;
 
   // Deal with options.
   OptionsParser args(argc, argv);
@@ -61,6 +65,8 @@ int main(int argc, char *argv[]) {
   args.AddOption(&degree, "-deg", "--degree", "Order for Fourier exapansion");
   args.AddOption(&residual, "-res", "--residual",
                  "Output the residual from reference solution");
+  args.AddOption(&method, "-mth", "--method",
+                 "Solution method: 0 = Neuman, 1 = DtN, 2 = multipole.");
 
   args.Parse();
   if (!args.Good()) {
@@ -78,24 +84,29 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // Check mesh has two attributes.
-  assert(mesh.attributes.Max() == 2);
+  // If residual from exact solution required, check mesh is appropriate.
+  if (residual) {
+    // Check mesh has two attributes.
+    assert(mesh.attributes.Max() == 2);
 
-  // Get centroid and radius for inner domain.
-  auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
-  auto [found1, same1, r1] =
-      SphericalBoundaryRadius(&mesh, Array<int>{1, 0}, c1);
-  assert(found1 == 1 && same1 == 1);
+    // Get centroid and radius for inner domain.
+    auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
+    auto [found1, same1, r1] =
+        SphericalBoundaryRadius(&mesh, Array<int>{1, 0}, c1);
+    assert(found1 == 1 && same1 == 1);
 
-  // Get centroid and radius for combined domain.
-  auto c2 = MeshCentroid(&mesh, Array<int>{1, 1});
-  auto [found2, same2, r2] =
-      SphericalBoundaryRadius(&mesh, Array<int>{0, 1}, c2);
-  assert(found2 == 1 && same2 == 1);
+    // Get centroid and radius for combined domain.
+    auto c2 = MeshCentroid(&mesh, Array<int>{1, 1});
+    auto [found2, same2, r2] =
+        SphericalBoundaryRadius(&mesh, Array<int>{0, 1}, c2);
+    assert(found2 == 1 && same2 == 1);
+  }
 
   // Set up the finite element space.
-  auto fec = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &fec);
+  auto L2 = L2_FECollection(order - 1, dim);
+  auto H1 = H1_FECollection(order, dim);
+  auto dfes = FiniteElementSpace(&mesh, &L2);
+  auto fes = FiniteElementSpace(&mesh, &H1);
   cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
 
   // Assemble the binlinear form for Poisson's equation.
@@ -105,38 +116,39 @@ int main(int argc, char *argv[]) {
 
   // Assemble mass-shifted binlinear form for preconditioning.
   auto eps = ConstantCoefficient(0.01);
-  auto as = BilinearForm(&fes, &a);
+  auto as = BilinearForm(&fes);
+  as.AddDomainIntegrator(new DiffusionIntegrator());
   as.AddDomainIntegrator(new MassIntegrator(eps));
   as.Assemble();
 
-  // Set up the DtN operator.
-  auto c = PoissonDtNOperator(&fes, degree);
-
   // Set the density coefficient.
   auto rho_coeff1 = ConstantCoefficient(1);
-  auto rho_coeff2 = ConstantCoefficient(0);
-
-  auto attr = Array<int>{1, 2};
-  auto coeffs = Array<Coefficient *>{&rho_coeff1, &rho_coeff2};
-  auto rho_coeff = PWCoefficient(attr, coeffs);
+  auto rho_coeff = PWCoefficient();
+  rho_coeff.UpdateCoefficient(1, rho_coeff1);
 
   // Set the linear form.
   auto b = LinearForm(&fes);
   b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff));
   b.Assemble();
 
-  // If in 2D, add in necessary boundary form.
-  if (dim == 2) {
+  if (method == 1 and dim == 2) {
     auto x = GridFunction(&fes);
     x = 1.0;
     auto mass = b(x);
     auto bb = LinearForm(&fes);
     auto one = ConstantCoefficient(1);
-    auto boundary_marker = Array<int>{0, 1};
+    auto boundary_marker = mfemElasticity::ExternalBoundaryMarker(&mesh);
     bb.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
     bb.Assemble();
     auto length = bb(x);
     b.Add(-mass / length, bb);
+  }
+
+  if (method == 2) {
+    auto c = PoissonMultipoleOperator(&dfes, &fes, degree);
+    auto z = GridFunction(&dfes);
+    z.ProjectCoefficient(rho_coeff);
+    c.AddMult(z, b, -1);
   }
 
   // Scale the linear form.
@@ -149,39 +161,56 @@ int main(int argc, char *argv[]) {
   SparseMatrix A;
   Vector B, X;
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
-  auto D = SumOperator(&A, 1, &c, 1, false, false);
 
   // Set up the preconditioner.
   SparseMatrix As;
   as.FormSystemMatrix(ess_tdof_list, As);
   auto P = GSSmoother(As);
 
-  // Set up the solver.
   auto solver = CGSolver();
-  solver.SetOperator(D);
-  solver.SetPreconditioner(P);
-  solver.SetRelTol(1e-12);
-  solver.SetMaxIter(10000);
-  solver.SetPrintLevel(1);
-
-  // Sovler the linear system.
-  if (dim == 2) {
+  if (method == 1) {
+    auto c = PoissonDtNOperator(&fes, degree);
+    auto D = SumOperator(&A, 1, &c, 1, false, false);
+    solver.SetOperator(D);
+    solver.SetPreconditioner(P);
+    solver.SetRelTol(1e-12);
+    solver.SetMaxIter(10000);
+    solver.SetPrintLevel(1);
+    if (dim == 2) {
+      auto orthoSolver = OrthoSolver();
+      orthoSolver.SetSolver(solver);
+      orthoSolver.Mult(B, X);
+    } else {
+      solver.Mult(B, X);
+    }
+  } else {
+    solver.SetOperator(A);
+    solver.SetPreconditioner(P);
+    solver.SetRelTol(1e-12);
+    solver.SetMaxIter(10000);
+    solver.SetPrintLevel(1);
     auto orthoSolver = OrthoSolver();
     orthoSolver.SetSolver(solver);
     orthoSolver.Mult(B, X);
-  } else {
-    solver.Mult(B, X);
   }
+
   a.RecoverFEMSolution(X, b, x);
 
-  auto exact = UniformSphereSolution(dim, c1, r1);
-  auto exact_coeff = exact.Coefficient();
+  if (residual == 1) {
+    auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
+    auto [found1, same1, r1] =
+        SphericalBoundaryRadius(&mesh, Array<int>{1, 0}, c1);
 
-  auto y = GridFunction(&fes);
-  y.ProjectCoefficient(exact_coeff);
+    auto exact = UniformSphereSolution(dim, c1, r1);
 
-  // In 2D, remove the mean from the solution.
-  if (dim == 2) {
+    auto exact_coeff = exact.Coefficient();
+    auto y = GridFunction(&fes);
+    y.ProjectCoefficient(exact_coeff);
+    x -= y;
+  }
+
+  // Remove mean from the solution.
+  {
     auto l = LinearForm(&fes);
     auto z = GridFunction(&fes);
     z = 1.0;
@@ -192,12 +221,6 @@ int main(int argc, char *argv[]) {
     l /= area;
     auto px = l(x);
     x -= px;
-    auto py = l(y);
-    y -= py;
-  }
-
-  if (residual == 1) {
-    x -= y;
   }
 
   // Write to file.

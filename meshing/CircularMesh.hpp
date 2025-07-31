@@ -14,6 +14,8 @@ class Circle {
   const double r_ = 1;
   std::function<double(double)> f_ = nullptr;
 
+  static const int np_ = 180;
+
  public:
   Circle() = default;
 
@@ -33,15 +35,7 @@ class Circle {
     return std::abs(r - r_);
   }
 
-  double Topo(double theta) const {
-    if (f_) {
-      return f_(theta);
-    } else {
-      return 0;
-    }
-  }
-
-  int AddCurve(int tag = -1, int np = 90) const {
+  int AddCurve(int tag = -1, int np = np_) const {
     if (f_) {
       auto dtheta = 2 * std::numbers::pi / np;
       std::vector<int> points;
@@ -60,14 +54,45 @@ class Circle {
     }
   }
 
-  int AddCurveLoop(int tag = -1, int np = 90) const {
+  int AddCurveLoop(int tag = -1, int np = np_) const {
     return gmsh::model::occ::addCurveLoop({AddCurve(tag, np)});
   }
 
-  std::pair<int, int> AddSurface(int tag = -1, int np = 90) const {
+  std::pair<int, int> AddSurface(int tag = -1, int np = np_) const {
     auto c = AddCurve(-1, np);
     auto cl = gmsh::model::occ::addCurveLoop({c});
     auto s = gmsh::model::occ::addPlaneSurface({cl}, tag);
     return {cl, s};
+  }
+};
+
+class Circles {
+ private:
+  std::vector<Circle> circles_;
+
+ public:
+  Circles() = default;
+
+  Circles(std::vector<Circle> circles) : circles_{circles} {}
+
+  void AddCircle(Circle circle) { circles_.push_back(circle); }
+
+  std::pair<std::vector<int>, std::vector<int>> AddSurface() const {
+    auto bdr = std::vector<int>();
+    auto dom = std::vector<int>();
+
+    for (auto circle : circles_) {
+      auto c = circle.AddCurveLoop();
+      bdr.push_back(c);
+    }
+
+    auto s = gmsh::model::occ::addPlaneSurface({bdr[0]});
+    dom.push_back(s);
+    for (auto i = 1; i < circles_.size(); i++) {
+      auto s = gmsh::model::occ::addPlaneSurface({bdr[i - 1], bdr[i]});
+      dom.push_back(s);
+    }
+
+    return {bdr, dom};
   }
 };
