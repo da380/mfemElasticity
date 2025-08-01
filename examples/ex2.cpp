@@ -53,6 +53,7 @@ int main(int argc, char *argv[]) {
   int degree = 4;
   int residual = 0;
   int method = 0;
+  int submesh = 0;
 
   // Deal with options.
   OptionsParser args(argc, argv);
@@ -67,6 +68,8 @@ int main(int argc, char *argv[]) {
                  "Output the residual from reference solution");
   args.AddOption(&method, "-mth", "--method",
                  "Solution method: 0 = Neuman, 1 = DtN, 2 = multipole.");
+  args.AddOption(&submesh, "-sub", "--submesh",
+                 "If equal to 1, output solution only in attribute 1");
 
   args.Parse();
   if (!args.Good()) {
@@ -223,24 +226,56 @@ int main(int argc, char *argv[]) {
     x -= px;
   }
 
-  // Write to file.
-  ofstream mesh_ofs("refined.mesh");
-  mesh_ofs.precision(8);
-  mesh.Print(mesh_ofs);
+  if (submesh) {
+    auto domain_marker = Array<int>(mesh.attributes.Max());
+    domain_marker = 0;
+    domain_marker[0] = 1;
+    auto sMesh = SubMesh::CreateFromDomain(mesh, domain_marker);
+    auto sFes = FiniteElementSpace(&sMesh, &H1);
+    auto z = GridFunction(&sFes);
+    sMesh.Transfer(x, z);
 
-  ofstream sol_ofs("sol.gf");
-  sol_ofs.precision(8);
-  x.Save(sol_ofs);
+    // Write to file.
+    ofstream mesh_ofs("refined.mesh");
+    mesh_ofs.precision(8);
+    sMesh.Print(mesh_ofs);
 
-  // Visualise if glvis is open.
-  char vishost[] = "localhost";
-  int visport = 19916;
-  socketstream sol_sock(vishost, visport);
-  sol_sock.precision(8);
-  sol_sock << "solution\n" << mesh << x << flush;
-  if (dim == 2) {
-    sol_sock << "keys Rjlbc\n" << flush;
+    ofstream sol_ofs("sol.gf");
+    sol_ofs.precision(8);
+    z.Save(sol_ofs);
+
+    // Visualise if glvis is open.
+    char vishost[] = "localhost";
+    int visport = 19916;
+    socketstream sol_sock(vishost, visport);
+    sol_sock.precision(8);
+    sol_sock << "solution\n" << sMesh << z << flush;
+    if (dim == 2) {
+      sol_sock << "keys Rjlbc\n" << flush;
+    } else {
+      sol_sock << "keys RRRilmc\n" << flush;
+    }
+
   } else {
-    sol_sock << "keys RRRilmc\n" << flush;
+    // Write to file.
+    ofstream mesh_ofs("refined.mesh");
+    mesh_ofs.precision(8);
+    mesh.Print(mesh_ofs);
+
+    ofstream sol_ofs("sol.gf");
+    sol_ofs.precision(8);
+    x.Save(sol_ofs);
+
+    // Visualise if glvis is open.
+    char vishost[] = "localhost";
+    int visport = 19916;
+    socketstream sol_sock(vishost, visport);
+    sol_sock.precision(8);
+    sol_sock << "solution\n" << mesh << x << flush;
+    if (dim == 2) {
+      sol_sock << "keys Rjlbc\n" << flush;
+    } else {
+      sol_sock << "keys RRRilmc\n" << flush;
+    }
   }
 }

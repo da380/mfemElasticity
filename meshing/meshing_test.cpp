@@ -20,20 +20,12 @@ int main(int argc, char **argv) {
   gmsh::option::setNumber("Mesh.VolumeFaces", 1);
   gmsh::option::setNumber("Mesh.CharacteristicLengthExtendFromBoundary", 0);
 
-  /*
   auto circle1 =
       Circle(1, [](auto theta) { return 0.3 * std::sin(6 * theta); });
   auto circle2 = Circle(2);
   auto circle3 = Circle(4);
   auto circle4 = Circle(5);
-  */
-
-  auto circles = Circles();
-
-  auto circle1 = Circle(1);
-  circles.AddCircle(circle1);
-  auto circle2 = Circle(20);
-  circles.AddCircle(circle2);
+  auto circles = Circles({circle1, circle2, circle3, circle4});
 
   auto [bdr, dom] = circles.AddSurface();
 
