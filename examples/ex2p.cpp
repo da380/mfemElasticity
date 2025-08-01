@@ -38,7 +38,7 @@ This is the parallel version of ex2.
 [-o, --order]:      Finite element polynomial order. Default is 1.
 [-r, --refinement]: Number of uniform mesh refinements. Default is 0.
 [-deg, --degree]:   Expansion degree for DtN/Multipole methods. Default is 8.
-[-res, --residual]: Set to 1 to output the L2 error against an exact
+[-res, --residual]: Set to 1 to output the pointwise error against an exact
                     solution (requires a spherical source). Default is 0.
 [-mth, --method]:   Solution method: 0=Neumann, 1=DtN, 2=Multipole.
                     Default is 0.
