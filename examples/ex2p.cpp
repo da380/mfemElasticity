@@ -1,97 +1,48 @@
 /******************************************************************************
+## Poisson Solver for Whole-Space Problems
 
-Solves the Poisson equation on a whole space using one of the folowing methods:
-
-1. A homogeneous Neumann condition is applied on the meshes exterior boundary.
-This approach does not require the exterior boundary to take a specific form,
-but it will only be accurate if the boundary is sufficiently far from regions
-with non-zero density.
-
-2. A Dirichlet-to-Neumann mapping is applied on the exterior boundary. This
-results in an additional bilinear form being added to the weak form of the
-equations along, for 2D problems, with a modification to the force term. This
-method requires that the exterior boundary is spherical relative to the mesh's
-centroid.
-
-3. A multipole expansion is used to relate the density to the Neumann condition
-on the exterior boundary. The result is a modification to the rhs. This method
-again requires that the exterior boundary is spherical relative to the mesh's
-centroid.
-
-The force term for the equations can take one of two forms:
-
-1. A uniform density (with units chosen such that it equals one) within the
-meshes first attribute, and zero density in the rest of the mesh.
-2. The density perturbation associated with a rigid translation of the density
-structure in option 1.
-
-For solution methods 1 and 2 there is no additional change needed to handle the
-linearised problem, while for method 3 a modified form of the multipole
-expansion is required.
-
-The residual between the computed solution and an analytical solution can be
-output, but in this case it is necessary for the mesh to comprise two
-attributes, with attribute 1 being spherical about its centroid.
-
-Note that the calculations are done in units for which G = 1.
+Solves the Poisson equation (∇²ϕ = -4πGρ, with G=1) on a whole space
+by using a finite computational domain with transparent boundary conditions.
 
 This is the parallel version of ex2.
 
-[-m, --mesh]: The mesh. Either 2D or 3D, but must have the attributes as
-              described above. Default is circular_offset.msh in the data
-              directory.
+---
+### Boundary Condition Methods
 
-[-o, --order]: The polynomial order used in the calculations. Default is 1.
+1.  **Homogeneous Neumann:** A `∂ϕ/∂n = 0` condition is applied on the
+    mesh's exterior boundary. This approach is general but is only
+    accurate if the boundary is far from the source density.
 
-[-sr, --serial_refinement]: The number of times to refine the mesh in serial.
-                            The default it 0.
+2.  **Dirichlet-to-Neumann (DtN):** An exact DtN operator is added to the
+    system matrix. For 2D problems, an additional correction is also
+    applied to the right-hand-side vector. This method requires a
+    spherical exterior boundary.
 
-[-pr, --parallel_refinement]: The number of times to refine the mesh in
-                              parallel. The default it 0.
+3.  **Multipole Expansion:** The right-hand-side vector is modified based
+    on a multipole expansion of the interior density. This method also
+    requires a spherical exterior boundary.
 
-[-deg, --degree]: The degree used for the DtN mapping. Default is 8.
+---
+### Source Terms
 
-[-res, --residual]: If equal to 1, the output is the residual between the
-                    numerical solution and an exact one. Default is 0.
+1.  **Reference Problem:** A uniform density (ρ=1) within the mesh's
+    first attribute and zero elsewhere.
 
-[-mth, --method]: The solution method. 0 = homogeneous Neumann, 1 = DtN,
-                  2 = Multipole. Default is 0.
+2.  **Linearised Problem:** The density perturbation caused by a rigid
+    translation of the reference density distribution.
 
-[-lin, --linearised ]: Choice of force term. 0 = reference problem with uniform
-                       density, 1 = linearised problem with rigid translation.
-                       Default is 0.
+---
+### Command-Line Options
 
-*******************************************************************************/
-
-/******************************************************************************
-
-Solves the Poisson equation on a whole space through use of a Dirichlet to
-Neumann mapping as implemented in the PoissonDtNOperator class.
-
-This is the parallel version of ex2 that makes use of MPI.
-
-The mesh is required to have a spherical exterior boundary. It must have two
-attributes. Attirbute 1 is an inner domain with spherically boundary on in which
-the density is equal to 1. Attribute 2 is the remainder of the domain, and here
-the density is equal to zero. The boundary between attirbutes 1 and 2 is
-labelled 1, while the exterior boundary is lablled 2. It is on the exterior
-boundary that the DtN mapping acts, this being through the addition of a
-bilinear form to the weak form of the equations.
-
-Note that the calculations are done in units for which G = 1.
-
-[-m, --mesh]: The mesh. Either 2D or 3D, but must have the attributes as
-              described above. Default is circular_offset.msh in the data
-              directory.
-
-[-o, --order]: The polynomial order used in the calculations. Default is 1.
-
-
-
-[-deg, --degree]: The degree used for the DtN mapping. Default is 4.
-
-[-res, --residual]: If equal to 1, the output is the residual between the
-                    numerical solution and an exact one. Default is 0.
+[-m, --mesh]:       Mesh file. Must have attributes as described above.
+[-o, --order]:      Finite element polynomial order. Default is 1.
+[-r, --refinement]: Number of uniform mesh refinements. Default is 0.
+[-deg, --degree]:   Expansion degree for DtN/Multipole methods. Default is 8.
+[-res, --residual]: Set to 1 to output the L2 error against an exact
+                    solution (requires a spherical source). Default is 0.
+[-mth, --method]:   Solution method: 0=Neumann, 1=DtN, 2=Multipole.
+                    Default is 0.
+[-lin, --linearised]: Problem type: 0=Reference, 1=Linearised. Default is 0.
 
 *******************************************************************************/
 
