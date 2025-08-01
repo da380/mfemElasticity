@@ -1,15 +1,37 @@
 /******************************************************************************
 
-Solves the Poisson equation on a whole space through use of a Dirichlet to
-Neumann mapping as implemented in the PoissonDtNOperator class.
+Solves the Poisson equation on a whole space using one of the folowing methods:
 
-The mesh is required to have a spherical exterior boundary. It must have two
-attributes. Attirbute 1 is an inner domain with spherically boundary on in which
-the density is equal to 1. Attribute 2 is the remainder of the domain, and here
-the density is equal to zero. The boundary between attirbutes 1 and 2 is
-labelled 1, while the exterior boundary is lablled 2. It is on the exterior
-boundary that the DtN mapping acts, this being through the addition of a
-bilinear form to the weak form of the equations.
+1. A homogeneous Neumann condition is applied on the meshes exterior boundary.
+This approach does not require the exterior boundary to take a specific form,
+but it will only be accurate if the boundary is sufficiently far from regions
+with non-zero density.
+
+2. A Dirichlet-to-Neumann mapping is applied on the exterior boundary. This
+results in an additional bilinear form being added to the weak form of the
+equations along, for 2D problems, with a modification to the force term. This
+method requires that the exterior boundary is spherical relative to the mesh's
+centroid.
+
+3. A multipole expansion is used to relate the density to the Neumann condition
+on the exterior boundary. The result is a modification to the rhs. This method
+again requires that the exterior boundary is spherical relative to the mesh's
+centroid.
+
+The force term for the equations can take one of two forms:
+
+1. A uniform density (with units chosen such that it equals one) within the
+meshes first attribute, and zero density in the rest of the mesh.
+2. The density perturbation associated with a rigid translation of the density
+structure in option 1.
+
+For solution methods 1 and 2 there is no additional change needed to handle the
+linearised problem, while for method 3 a modified form of the multipole
+expansion is required.
+
+The residual between the computed solution and an analytical solution can be
+output, but in this case it is necessary for the mesh to comprise two
+attributes, with attribute 1 being spherical about its centroid.
 
 Note that the calculations are done in units for which G = 1.
 
@@ -21,10 +43,17 @@ Note that the calculations are done in units for which G = 1.
 
 [-r, --refinement]: The number of times to refine the mesh. Default it 0.
 
-[-deg, --degree]: The degree used for the DtN mapping. Default is 4.
+[-deg, --degree]: The degree used for the DtN mapping. Default is 8.
 
 [-res, --residual]: If equal to 1, the output is the residual between the
                     numerical solution and an exact one. Default is 0.
+
+[-mth, --method]: The solution method. 0 = homogeneous Neumann, 1 = DtN,
+                  2 = Multipole. Default is 0.
+
+[-lin, --linearised ]: Choice of force term. 0 = reference problem with uniform
+                       density, 1 = linearised problem with rigid translation.
+                       Default is 0.
 
 *******************************************************************************/
 
@@ -50,10 +79,10 @@ int main(int argc, char *argv[]) {
   const char *mesh_file = "../data/circular_offset.msh";
   int order = 1;
   int refinement = 0;
-  int degree = 4;
+  int degree = 8;
   int residual = 0;
   int method = 0;
-  int submesh = 0;
+  int linearised = 0;
 
   // Deal with options.
   OptionsParser args(argc, argv);
@@ -68,8 +97,8 @@ int main(int argc, char *argv[]) {
                  "Output the residual from reference solution");
   args.AddOption(&method, "-mth", "--method",
                  "Solution method: 0 = Neuman, 1 = DtN, 2 = multipole.");
-  args.AddOption(&submesh, "-sub", "--submesh",
-                 "If equal to 1, output solution only in attribute 1");
+  args.AddOption(&linearised, "-lin", "--linearised",
+                 "Solve reference (0) or linearised (1) problem.");
 
   args.Parse();
   if (!args.Good()) {
@@ -87,30 +116,44 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  // Properties of the first attribute.
+  auto dom_marker = Array<int>(mesh.attributes.Max());
+  dom_marker = 0;
+  dom_marker[0] = 1;
+  auto bdr_marker = Array<int>(mesh.bdr_attributes.Max());
+  bdr_marker = 0;
+  bdr_marker[0] = 1;
+  auto c1 = MeshCentroid(&mesh, dom_marker);
+  auto [found1, same1, r1] = SphericalBoundaryRadius(&mesh, bdr_marker, c1);
+
+  // Properties of the full mesh.
+  auto c2 = MeshCentroid(&mesh);
+  auto [found2, same2, r2] = SphericalBoundaryRadius(&mesh, c2);
+
   // If residual from exact solution required, check mesh is appropriate.
   if (residual) {
-    // Check mesh has two attributes.
-    assert(mesh.attributes.Max() == 2);
-
-    // Get centroid and radius for inner domain.
-    auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
-    auto [found1, same1, r1] =
-        SphericalBoundaryRadius(&mesh, Array<int>{1, 0}, c1);
     assert(found1 == 1 && same1 == 1);
-
-    // Get centroid and radius for combined domain.
-    auto c2 = MeshCentroid(&mesh, Array<int>{1, 1});
-    auto [found2, same2, r2] =
-        SphericalBoundaryRadius(&mesh, Array<int>{0, 1}, c2);
-    assert(found2 == 1 && same2 == 1);
   }
 
-  // Set up the finite element space.
+  // Set up the finite element spaces.
   auto L2 = L2_FECollection(order - 1, dim);
   auto H1 = H1_FECollection(order, dim);
-  auto dfes = FiniteElementSpace(&mesh, &L2);
+
+  // Space for the potential.
   auto fes = FiniteElementSpace(&mesh, &H1);
   cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
+
+  // For multipole method we need a discontinuous L2 space.
+  std::unique_ptr<FiniteElementSpace> dfes;
+  if (method == 2) {
+    dfes = std::make_unique<FiniteElementSpace>(&mesh, &L2);
+  }
+
+  // For the linearised problem, we need a discontinous vector L2 space.
+  std::unique_ptr<FiniteElementSpace> vfes;
+  if (linearised == 1) {
+    vfes = std::make_unique<FiniteElementSpace>(&mesh, &L2, dim);
+  }
 
   // Assemble the binlinear form for Poisson's equation.
   auto a = BilinearForm(&fes);
@@ -129,36 +172,69 @@ int main(int argc, char *argv[]) {
   auto rho_coeff = PWCoefficient();
   rho_coeff.UpdateCoefficient(1, rho_coeff1);
 
-  // Set the linear form.
-  auto b = LinearForm(&fes);
-  b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff));
-  b.Assemble();
+  // Set gridfunction for the potential.
+  auto x = GridFunction(&fes);
 
-  if (method == 1 and dim == 2) {
-    auto x = GridFunction(&fes);
-    x = 1.0;
-    auto mass = b(x);
-    auto bb = LinearForm(&fes);
-    auto one = ConstantCoefficient(1);
-    auto boundary_marker = mfemElasticity::ExternalBoundaryMarker(&mesh);
-    bb.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
-    bb.Assemble();
-    auto length = bb(x);
-    b.Add(-mass / length, bb);
+  // Set up the linear form for the rhs.
+  auto b = LinearForm(&fes);
+
+  // Set the constant displacement vector for the linearised problem.
+  auto uv = Vector(dim);
+  uv = 1.0;
+
+  // Project displacement to a gridfunction if necessary.
+  std::unique_ptr<GridFunction> u;
+  if (linearised == 1) {
+    auto uCoeff1 = VectorConstantCoefficient(uv);
+    auto uCoeff = PWVectorCoefficient(dim);
+    uCoeff.UpdateCoefficient(1, uCoeff1);
+    u = std::make_unique<GridFunction>(vfes.get());
+    u->ProjectCoefficient(uCoeff);
   }
 
+  if (linearised == 0) {
+    // For reference problem set up the linear form.
+    b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff));
+    b.Assemble();
+
+    // For the DtN method in 2D add the additoinal term to the rhs.
+    if (method == 1 and dim == 2) {
+      x = 1.0;
+      auto mass = b(x);
+      auto l = LinearForm(&fes);
+      auto one = ConstantCoefficient(1);
+      auto boundary_marker = ExternalBoundaryMarker(&mesh);
+      l.AddBoundaryIntegrator(new BoundaryLFIntegrator(one), boundary_marker);
+      l.Assemble();
+      auto length = l(x);
+      b.Add(-mass / length, l);
+    }
+  } else {
+    // For the linearised problem, form the mixed bilinear form and map the
+    // displacement to the rhs.
+    auto d = MixedBilinearForm(&fes, vfes.get());
+    d.AddDomainIntegrator(new DomainVectorGradScalarIntegrator(rho_coeff));
+    d.Assemble();
+    d.MultTranspose(*u, b);
+  }
+
+  // If using the multipole method, modify the rhs.
   if (method == 2) {
-    auto c = PoissonMultipoleOperator(&dfes, &fes, degree);
-    auto z = GridFunction(&dfes);
-    z.ProjectCoefficient(rho_coeff);
-    c.AddMult(z, b, -1);
+    if (linearised == 0) {
+      auto c = PoissonMultipoleOperator(dfes.get(), &fes, degree);
+      auto rhof = GridFunction(dfes.get());
+      rhof.ProjectCoefficient(rho_coeff);
+      c.AddMult(rhof, b, -1);
+    } else {
+      auto c = PoissonLinearisedMultipoleOperator(vfes.get(), &fes, degree);
+      c.AddMult(*u, b, -1);
+    }
   }
 
   // Scale the linear form.
   b *= -4 * pi;
 
   // Set up the linear system
-  auto x = GridFunction(&fes);
   x = 0.0;
   Array<int> ess_tdof_list{};
   SparseMatrix A;
@@ -171,14 +247,15 @@ int main(int argc, char *argv[]) {
   auto P = GSSmoother(As);
 
   auto solver = CGSolver();
+  solver.SetRelTol(1e-12);
+  solver.SetMaxIter(10000);
+  solver.SetPrintLevel(1);
+
   if (method == 1) {
     auto c = PoissonDtNOperator(&fes, degree);
     auto D = SumOperator(&A, 1, &c, 1, false, false);
     solver.SetOperator(D);
     solver.SetPreconditioner(P);
-    solver.SetRelTol(1e-12);
-    solver.SetMaxIter(10000);
-    solver.SetPrintLevel(1);
     if (dim == 2) {
       auto orthoSolver = OrthoSolver();
       orthoSolver.SetSolver(solver);
@@ -189,25 +266,17 @@ int main(int argc, char *argv[]) {
   } else {
     solver.SetOperator(A);
     solver.SetPreconditioner(P);
-    solver.SetRelTol(1e-12);
-    solver.SetMaxIter(10000);
-    solver.SetPrintLevel(1);
     auto orthoSolver = OrthoSolver();
     orthoSolver.SetSolver(solver);
     orthoSolver.Mult(B, X);
   }
 
-  a.RecoverFEMSolution(X, b, x);
-
   if (residual == 1) {
-    auto c1 = MeshCentroid(&mesh, Array<int>{1, 0});
-    auto [found1, same1, r1] =
-        SphericalBoundaryRadius(&mesh, Array<int>{1, 0}, c1);
-
-    auto exact = UniformSphereSolution(dim, c1, r1);
-
-    auto exact_coeff = exact.Coefficient();
+    // Subtract exact solution.
     auto y = GridFunction(&fes);
+    auto exact = UniformSphereSolution(dim, c1, r1);
+    auto exact_coeff =
+        linearised == 0 ? exact.Coefficient() : exact.LinearisedCoefficient(uv);
     y.ProjectCoefficient(exact_coeff);
     x -= y;
   }
@@ -226,56 +295,24 @@ int main(int argc, char *argv[]) {
     x -= px;
   }
 
-  if (submesh) {
-    auto domain_marker = Array<int>(mesh.attributes.Max());
-    domain_marker = 0;
-    domain_marker[0] = 1;
-    auto sMesh = SubMesh::CreateFromDomain(mesh, domain_marker);
-    auto sFes = FiniteElementSpace(&sMesh, &H1);
-    auto z = GridFunction(&sFes);
-    sMesh.Transfer(x, z);
+  // Write to file.
+  ofstream mesh_ofs("refined.mesh");
+  mesh_ofs.precision(8);
+  mesh.Print(mesh_ofs);
 
-    // Write to file.
-    ofstream mesh_ofs("refined.mesh");
-    mesh_ofs.precision(8);
-    sMesh.Print(mesh_ofs);
+  ofstream sol_ofs("sol.gf");
+  sol_ofs.precision(8);
+  x.Save(sol_ofs);
 
-    ofstream sol_ofs("sol.gf");
-    sol_ofs.precision(8);
-    z.Save(sol_ofs);
-
-    // Visualise if glvis is open.
-    char vishost[] = "localhost";
-    int visport = 19916;
-    socketstream sol_sock(vishost, visport);
-    sol_sock.precision(8);
-    sol_sock << "solution\n" << sMesh << z << flush;
-    if (dim == 2) {
-      sol_sock << "keys Rjlbc\n" << flush;
-    } else {
-      sol_sock << "keys RRRilmc\n" << flush;
-    }
-
+  // Visualise if glvis is open.
+  char vishost[] = "localhost";
+  int visport = 19916;
+  socketstream sol_sock(vishost, visport);
+  sol_sock.precision(8);
+  sol_sock << "solution\n" << mesh << x << flush;
+  if (dim == 2) {
+    sol_sock << "keys Rjlbc\n" << flush;
   } else {
-    // Write to file.
-    ofstream mesh_ofs("refined.mesh");
-    mesh_ofs.precision(8);
-    mesh.Print(mesh_ofs);
-
-    ofstream sol_ofs("sol.gf");
-    sol_ofs.precision(8);
-    x.Save(sol_ofs);
-
-    // Visualise if glvis is open.
-    char vishost[] = "localhost";
-    int visport = 19916;
-    socketstream sol_sock(vishost, visport);
-    sol_sock.precision(8);
-    sol_sock << "solution\n" << mesh << x << flush;
-    if (dim == 2) {
-      sol_sock << "keys Rjlbc\n" << flush;
-    } else {
-      sol_sock << "keys RRRilmc\n" << flush;
-    }
+    sol_sock << "keys RRRilmc\n" << flush;
   }
 }
