@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
   int order = 1;
   int serial_refinement = 0;
   int parallel_refinement = 0;
-  int degree = 4;
+  int degree = 8;
   int residual = 0;
   int method = 0;
   int linearised = 0;
@@ -92,7 +92,7 @@ int main(int argc, char *argv[]) {
   args.AddOption(&residual, "-res", "--residual",
                  "Output the residual from reference solution");
   args.AddOption(&method, "-mth", "--method",
-                 "Solution method: 0 = Neuman, 1 = DtN, 2 = multipole.");
+                 "Solution method: 0 = Neumann, 1 = DtN, 2 = multipole.");
   args.AddOption(&linearised, "-lin", "--linearised",
                  "Solve reference (0) or linearised (1) problem.");
 
@@ -264,6 +264,12 @@ int main(int argc, char *argv[]) {
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
+  double start_time, end_time;
+
+  if (myid == 0) {
+    start_time = MPI_Wtime();
+  }
+
   if (method == 1) {
     auto c = PoissonDtNOperator(MPI_COMM_WORLD, &fes, degree);
     auto C = c.RAP();
@@ -286,14 +292,22 @@ int main(int argc, char *argv[]) {
     orthoSolver.Mult(B, X);
   }
 
+  if (myid == 0) {
+    end_time = MPI_Wtime();
+
+    double elapsed_time = (end_time - start_time) * 1000.0;
+    std::cout << "Elapsed time: " << elapsed_time << " s" << std::endl;
+  }
+
   a.RecoverFEMSolution(X, b, x);
+
+  auto exact = UniformSphereSolution(dim, c1, r1);
+  auto exact_coeff =
+      linearised == 0 ? exact.Coefficient() : exact.LinearisedCoefficient(uv);
 
   if (residual == 1) {
     // Subtract exact solution.
     auto y = ParGridFunction(&fes);
-    auto exact = UniformSphereSolution(dim, c1, r1);
-    auto exact_coeff =
-        linearised == 0 ? exact.Coefficient() : exact.LinearisedCoefficient(uv);
     y.ProjectCoefficient(exact_coeff);
     x -= y;
   }
@@ -310,6 +324,25 @@ int main(int argc, char *argv[]) {
     l /= area;
     auto px = l(x);
     x -= px;
+  }
+
+  if (residual == 1) {
+    auto dom_marker = Array<int>(pmesh.attributes.Max());
+    dom_marker = 0;
+    dom_marker[0] = 1;
+    auto submesh = ParSubMesh::CreateFromDomain(pmesh, dom_marker);
+    auto subfes = ParFiniteElementSpace(&submesh, &H1);
+    auto subx = ParGridFunction(&subfes);
+    submesh.Transfer(x, subx);
+    auto zero = ConstantCoefficient(0);
+    auto error = subx.ComputeL2Error(zero);
+    subx.ProjectCoefficient(exact_coeff);
+    auto norm = subx.ComputeL2Error(zero);
+    error /= norm;
+
+    if (myid == 0) {
+      cout << "L2 error: " << error << endl;
+    }
   }
 
   // Write to file.

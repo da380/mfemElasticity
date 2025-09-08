@@ -171,7 +171,7 @@ void PoissonDtNOperator::AssembleElementMatrix2D(
       cos_k_m = cos_k;
     }
 
-    auto w = sqrtPi * ri * Trans.Weight() * ip.weight / pi;
+    auto w = ri * Trans.Weight() * ip.weight / sqrtPi;
     AddMult_a_VWt(w, shape, _c, elmat);
   }
 }

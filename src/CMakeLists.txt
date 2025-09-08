@@ -4,4 +4,5 @@ target_sources(${PROJECT_NAME} PRIVATE solvers.cpp
                                        legendre.cpp                                       
                                        mesh.cpp
                                        poisson.cpp
+                                       radial_model.cpp
                                        )

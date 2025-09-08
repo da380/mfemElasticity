@@ -13,7 +13,7 @@ double meshSizeCallback(int dim, int tag, double x, double y, double z,
                         double lc) {
   // Parameters from the Python script
   const double a = 1.0;
-  const double b = 1.75;
+  const double b = 1.71;
   const double x0 = 0.5;
   const double y0 = 0.5;
   const double x1 = 0.3;
