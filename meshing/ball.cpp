@@ -15,7 +15,7 @@
 const double G_x0 = 0.0;
 const double G_y0 = 0.25;
 const double G_z0 = 0.0;
-const double G_a = 0.5;
+const double G_a = 0.7;
 const double G_b = 1.0;
 const double G_small = 0.025;
 const double G_big = 0.05;
@@ -39,9 +39,6 @@ double meshSizeCallback(int dim, int tag, double x, double y, double z,
   }
 
   if (d1 < G_fac * G_b) {
-    // This line directly translates the Python: size = 2 * big - big * d1 /
-    // (fac * b) If the original Python had `min(size, ...)` uncommented, use
-    // std::min here.
     size = std::min(size, 2 * G_big - G_big * d1 / (G_fac * G_b));
   }
 

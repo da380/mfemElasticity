@@ -77,6 +77,7 @@ int main(int argc, char *argv[]) {
   int residual = 0;
   int method = 0;
   int linearised = 0;
+  double start_time, end_time, assembly_time, solver_time;
 
   // Deal with options.
   OptionsParser args(argc, argv);
@@ -230,8 +231,15 @@ int main(int argc, char *argv[]) {
   // If using the multipole method, modify the rhs.
   if (method == 2) {
     if (linearised == 0) {
+      if (myid == 0) {
+        start_time = MPI_Wtime();
+      }
       auto c =
           PoissonMultipoleOperator(MPI_COMM_WORLD, dfes.get(), &fes, degree);
+      if (myid == 0) {
+        end_time = MPI_Wtime();
+        assembly_time = (end_time - start_time);
+      }
       auto rhof = GridFunction(dfes.get());
       rhof.ProjectCoefficient(rho_coeff);
       c.AddMult(rhof, b, -1);
@@ -264,19 +272,23 @@ int main(int argc, char *argv[]) {
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
-  double start_time, end_time;
-
-  if (myid == 0) {
-    start_time = MPI_Wtime();
-  }
-
   if (method == 1) {
+    if (myid == 0) {
+      start_time = MPI_Wtime();
+    }
     auto c = PoissonDtNOperator(MPI_COMM_WORLD, &fes, degree);
+    if (myid == 0) {
+      end_time = MPI_Wtime();
+      assembly_time = (end_time - start_time);
+    }
     auto C = c.RAP();
     auto D = SumOperator(&A, 1, &C, 1, false, false);
     solver.SetOperator(D);
     solver.SetPreconditioner(P);
 
+    if (myid == 0) {
+      start_time = MPI_Wtime();
+    }
     if (dim == 2) {
       auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
       orthoSolver.SetSolver(solver);
@@ -284,19 +296,29 @@ int main(int argc, char *argv[]) {
     } else {
       solver.Mult(B, X);
     }
+    if (myid == 0) {
+      end_time = MPI_Wtime();
+      solver_time = (end_time - start_time);
+    }
+
   } else {
+    if (myid == 0) {
+      start_time = MPI_Wtime();
+    }
     solver.SetOperator(A);
     solver.SetPreconditioner(P);
     auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
     orthoSolver.SetSolver(solver);
     orthoSolver.Mult(B, X);
+    if (myid == 0) {
+      end_time = MPI_Wtime();
+      solver_time = (end_time - start_time);
+    }
   }
 
   if (myid == 0) {
-    end_time = MPI_Wtime();
-
-    double elapsed_time = (end_time - start_time) * 1000.0;
-    std::cout << "Elapsed time: " << elapsed_time << " s" << std::endl;
+    std::cout << "Assembly time: " << assembly_time << " s" << std::endl;
+    std::cout << "Solver time: " << solver_time << " s" << std::endl;
   }
 
   a.RecoverFEMSolution(X, b, x);
