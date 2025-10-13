@@ -1,67 +1,103 @@
 # mfemElasticity
 
-This library contains extensions to the mfem library associated with the solution of elastic and viscoelastic problems. The particular focus is on geophysical applications. 
+This library provides extensions to the [mfem library](https://mfem.org) for solving elastic and viscoelastic problems.
 
-# Installation
+## Installation
 
-The ```mfem``` library must first be installed. This can be either a serial or parallel version. 
+The `mfem` library must be installed first. This project uses CMake for configuration and building.
 
+There are two ways to configure the project: using the provided configure scripts or by calling `cmake` directly.
 
-Configuration of a build is done with CMake. The following options can be set:
+### Using the configure scripts (recommended)
 
-- ```MFEM_DIR``` - The location on the mfem installation. If not set, standard locations will be search. If multiple versions of ```mfem``` have been installed (e.g., serial and parallel version) it is best to set this explicitly. 
-- ```USE_MPI``` - Default is ```OFF```. If set to ```ON``` the library will link to the ```MPI``` library. This is necessary to use a parallel version of ```mfem``` and the associated functionality. 
-- ```MPI_C_COMPILER``` - Path to the MPI c compiler used to build the MFEM Library. Useful to set if differention MPI compilers exists on your system. 
-- ```MPI_CXX_COMPILER``` - Path to the MPI c++ compiler used to build the MFEM Library. Useful to set if differention MPI compilers exists on your system. 
-- ```BUILD_EXAMPLES``` - Default is ```OFF```. If set to ```ON``` the example codes will be configured for compilation. 
-- ```BUILD_TESTS``` - Default is ```OFF```. If set to ```ON``` the test codes will be configured for compilation. 
+The project includes two scripts to simplify the configuration process: `configure_serial.sh` and `configure_parallel.sh`. These scripts will create `serial_build` and `parallel_build` directories respectively.
 
-Other standard CMAKE options can additionally be set (e.g., specifying debug or release builds).
+Before running these scripts, you may need to set some environment variables to point to your dependencies.
 
-If either ```BUILD_EXAMPLES``` or ```BUILD_TESTS``` is selected, data files will be copied into the build directory. 
+**Serial Configuration:**
 
-Note that "in source builds" are disabled. 
-
-An example configuration for a parallel build is:
-
-```
-cmake -S mfemElasticity -B mfemElasticityBuild \
-      -DUSE_MPI=ON \
-      -DMFEM_DIR=[path to mfem build]  \
-      -DMPI_C_COMPILER=[path to mpi c compiler] \
-      -DMPI_CXX_COMPILER=[path to mpi c++ compiler] \
-      -DBUILD_EXAMPLES=ON \
-      -DBUILD_TESTS=ON
+Set the `CMAKE_PREFIX_PATH` to the location of your serial MFEM installation.
+```bash
+export CMAKE_PREFIX_PATH=/path/to/your/mfem_serial_build
+./configure_serial.sh
 ```
 
-# Contents of the library
+**Parallel Configuration:**
 
-## Solvers
+Set the `CMAKE_PREFIX_PATH` to your parallel MFEM installation. You also need to make sure CMake can find your MPI compilers. You can do this by adding the compiler's location to your `PATH`, or by setting the `MPI_C_COMPILER` and `MPI_CXX_COMPILER` environment variables.
 
-### RigidBodySolver
+Using `PATH`:
+```bash
+export CMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build
+export PATH=/path/to/your/mpi/bin:$PATH
+./configure_parallel.sh
+```
 
-A custom ```mfem::Solver``` is defined for the solution of static linearised elastic boundary value problems subject to pure traction conditions. In such cases, a solution only exists if the forces and tractions apply no net torque or net force to the body. And the solution is only defined up to the addition of a linearised rigid body motion. 
+Using `MPI_C_COMPILER` and `MPI_CXX_COMPILER`:
+```bash
+export CMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build
+export MPI_C_COMPILER=/path/to/your/mpicc
+export MPI_CXX_COMPILER=/path/to/your/mpic++
+./configure_parallel.sh
+```
 
-The solver ```mfemElasticity::RigidBodySolver``` is formed by wrapping another solver for the problem. Its action on a right hand side vector proceeds by:
+After running the configure script, you can build the project:
+```bash
+cmake --build serial_build # for serial
+# or
+cmake --build parallel_build # for parallel
+```
 
-- Projecting orthogonally to the space of linearised rigidbody motions,
-- Calling the underlying solver,
-- Projecting the result orthogonally   to the space of linearised rigidbody motions. 
+### Manual CMake configuration
 
-The first projection insures that the effective right hand side lies in the range of the linear equations and hence that a solution exists. The final projection removes any component in the kernel of the linear operator that might have been generated during the solution process. Doing so selects on particular solution to the problem. 
+You can also configure the project by calling `cmake` directly.
 
-If the right hand side satisfies the existence conditions, then the first projection does nothing. If the existence condition is not met, then an exact solution to the equations is not produced. Instead, a minimum residual solution is found. 
+**Serial Configuration:**
+```bash
+mkdir build
+cd build
+cmake .. -DCMAKE_PREFIX_PATH=/path/to/your/mfem_serial_build
+cmake --build .
+```
 
-## LinearFormsIntegrations
+**Parallel Configuration:**
+```bash
+mkdir build
+cd build
+cmake .. -DUSE_MPI=ON \
+         -DCMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build \
+         -DMPI_C_COMPILER=/path/to/your/mpicc \
+         -DMPI_CXX_COMPILER=/path/to/your/mpic++
+cmake --build .
+```
 
-### DomainLFMatrixDeformationGradientIntegrator
+### Build Options
 
-An ```mfem::LinearFormIntegrator``` is defined the form:
+You can control which optional parts of the project are built by passing CMake options to the configure scripts or to `cmake` directly.
 
-$$
-\mathbf{u} \mapsto \int_{\Omega} m_{ij} u_{i,j} \,\mathrm{d} x, 
-$$
+The configure scripts enable some options by default, but you can override them. For example, to turn an option off, you would use `-D<OPTION_NAME>=OFF`.
 
-where $\mathbf{m}$ is a matrix-valued function and $\Omega$ is the domain. The matrix is specified as an ```mfem::MatrixCoefficient``` while the form acts on elements of a nodal finite element space that is formed from the product of scalar spaces. 
+The following options are available:
 
-## BilinearFormIntegrators
+*   `BUILD_EXAMPLES`: Build the example programs in the `examples` directory. (Default: `ON` in configure scripts)
+*   `BUILD_TESTS`: Build the test suite in the `tests` directory. (Default: `ON` in configure scripts)
+*   `BUILD_GMSH`: Build the meshing utilities in the `meshing` directory. (Default: `ON` in configure scripts)
+    *   **Requires Gmsh:** You must have Gmsh installed. You may need to set `CMAKE_PREFIX_PATH` to point to your Gmsh installation if it's in a non-standard location.
+*   `BUILD_DOCS`: Generate the API documentation using Doxygen. (Default: `OFF` in configure scripts)
+    *   **Requires Doxygen:** You must have Doxygen installed.
+
+**Example:**
+
+To configure a serial build without the Gmsh-based meshing utilities, you can run:
+
+```bash
+export CMAKE_PREFIX_PATH=/path/to/your/mfem_serial_build
+./configure_serial.sh -DBUILD_GMSH=OFF
+```
+
+To enable documentation generation with the parallel script:
+```bash
+export CMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build
+export PATH=/path/to/your/mpi/bin:$PATH
+./configure_parallel.sh -DBUILD_DOCS=ON
+```

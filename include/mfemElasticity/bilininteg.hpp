@@ -6,65 +6,177 @@
 
 namespace mfemElasticity {
 
-// Base class for indexing vector, matrix and tensor fields.
+/**
+ * @brief Base class for indexing vector, matrix, and tensor fields.
+ *
+ * This abstract base class provides common functionalities for indexing
+ * components within vector, matrix, and tensor fields  defined
+ * over a finite element space. It stores the spatial dimension (`_dim`)
+ * and the number of degrees of freedom per component (`_dof`).
+ */
 class Index {
  private:
-  int _dim;
-  int _dof;
+  int _dim; /**< The spatial dimension (e.g., 2 for 2D, 3 for 3D). */
+  int _dof; /**< The number of degrees of freedom per component (e.g., number of
+               nodes in an element). */
 
  public:
+  /**
+   * @brief Constructor for the Index class.
+   * @param dim The spatial dimension of the field.
+   * @param dof The number of degrees of freedom associated with each component.
+   */
   Index(int dim, int dof) : _dim{dim}, _dof{dof} {}
 
-  // Return dimension
+  /**
+   * @brief Returns the spatial dimension of the field.
+   * @return The dimension.
+   */
   int Dim() const { return _dim; }
 
-  // Return degrees of freedom
+  /**
+   * @brief Returns the number of degrees of freedom per component.
+   * @return The degrees of freedom.
+   */
   int Dof() const { return _dof; }
 
-  // Return the number of components
+  /**
+   * @brief Pure virtual method to return the number of components in the field
+   * type.
+   * @return The size of one component (e.g., `Dim()` for a vector,
+   * `Dim()*Dim()` for a matrix).
+   */
   virtual int ComponentSize() const = 0;
 
-  // Return the size of the field.
+  /**
+   * @brief Returns the total size of the field, i.e., `_dof * ComponentSize()`.
+   * @return The total size of the field.
+   */
   int Size() const { return _dof * ComponentSize(); }
 };
 
-// Class for indexing vector fields.
+/**
+ * @brief Class for indexing vector fields.
+ *
+ * This class extends the base `Index` class to provide specific indexing
+ * for vector fields, where components are typically stored contiguously
+ * for each spatial dimension across all degrees of freedom.
+ */
 class VectorIndex : public Index {
  public:
+  /**
+   * @brief Constructor for the VectorIndex class.
+   * @param dim The spatial dimension of the vector.
+   * @param dof The number of degrees of freedom.
+   */
   VectorIndex(int dim, int dof) : Index(dim, dof) {}
 
-  // Returns the offset to the jth block.
+  /**
+   * @brief Returns the offset to the start of the `j`-th component's block of
+   * data.
+   * @param j The component index (0, 1, ..., Dim()-1).
+   * @return The offset.
+   */
   int Offset(int j) const { return j * Dof(); }
 
-  // Returns the index of the jth component and the ith node.
+  /**
+   * @brief Overloaded operator to get the global index for the `i`-th node
+   * and `j`-th component of the vector field.
+   * @param i The node index.
+   * @param j The component index.
+   * @return The global index.
+   */
   int operator()(int i, int j) const { return i + Offset(j); }
 
+  /**
+   * @brief Returns the number of components in a vector field, which is equal
+   * to `Dim()`.
+   * @return The number of components.
+   */
   int ComponentSize() const override { return Dim(); }
 };
 
-// Class for indexing matrix fields
+/**
+ * @brief Class for indexing matrix fields.
+ *
+ * This class extends the base `Index` class to provide specific indexing
+ * for general (dense) matrix fields, assuming a column-major storage
+ * for the components.
+ */
 class MatrixIndex : public Index {
  public:
+  /**
+   * @brief Constructor for the MatrixIndex class.
+   * @param dim The spatial dimension of the matrix (e.g., for a Dim x Dim
+   * matrix).
+   * @param dof The number of degrees of freedom.
+   */
   MatrixIndex(int dim, int dof) : Index(dim, dof) {}
 
+  /**
+   * @brief Returns the offset for the `(j,k)`-th component within the matrix.
+   * This assumes column-major ordering: `j + Dim() * k`.
+   * @param j The row index.
+   * @param k The column index.
+   * @return The component offset.
+   */
   virtual int ComponentOffset(int j, int k) const { return j + Dim() * k; }
 
-  // Offset to (j,k)th block.
+  /**
+   * @brief Returns the offset to the `(j,k)`-th component's block of data.
+   * @param j The row index.
+   * @param k The column index.
+   * @return The offset to the block.
+   */
   int Offset(int j, int k) const { return ComponentOffset(j, k) * Dof(); }
 
-  // Index for (j,k)th componet at ith node.
+  /**
+   * @brief Overloaded operator to get the global index for the `i`-th node
+   * and `(j,k)`-th component of the matrix field.
+   * @param i The node index.
+   * @param j The row index.
+   * @param k The column index.
+   * @return The global index.
+   */
   int operator()(int i, int j, int k) const { return i + Offset(j, k); }
 
-  // Return the component size.
+  /**
+   * @brief Returns the number of components in a full matrix field, which is
+   * `Dim() * Dim()`.
+   * @return The number of components.
+   */
   int ComponentSize() const override { return Dim() * Dim(); }
 };
 
-// Class for indexing symmetric matrix fields.
+/**
+ * @brief Class for indexing symmetric matrix fields.
+ *
+ * This class extends `MatrixIndex` to provide indexing specifically for
+ * symmetric matrix fields. It stores only the unique components, typically
+ * the lower triangle in a column-major fashion.
+ */
 class SymmetricMatrixIndex : public MatrixIndex {
  public:
+  /**
+   * @brief Constructor for the SymmetricMatrixIndex class.
+   * @param dim The spatial dimension of the symmetric matrix.
+   * @param dof The number of degrees of freedom.
+   */
   SymmetricMatrixIndex(int dim, int dof) : MatrixIndex(dim, dof) {}
 
-  // Returns the offset for the (j,k)th block.
+  /**
+   * @brief Returns the offset for the `(j,k)`-th component within the symmetric
+   * matrix.
+   *
+   * This method handles symmetry, ensuring that `ComponentOffset(j,k)` is the
+   * same as `ComponentOffset(k,j)`. It calculates the offset assuming a storage
+   * order that keeps only the unique elements (e.g., lower triangle in
+   * column-major).
+   *
+   * @param j The row index.
+   * @param k The column index.
+   * @return The component offset.
+   */
   int ComponentOffset(int j, int k) const override {
     if (j < k) {
       return ComponentOffset(k, j);
@@ -73,74 +185,120 @@ class SymmetricMatrixIndex : public MatrixIndex {
     }
   }
 
-  // Return size of the matrix field.
+  /**
+   * @brief Returns the number of unique components in a symmetric matrix, which
+   * is `Dim() * (Dim() + 1) / 2`.
+   * @return The number of components.
+   */
   int ComponentSize() const override { return Dim() * (Dim() + 1) / 2; }
 };
 
-// Class for indexing trace-free symmetric matrices. Note that the indexing
-// here is identical to that for symmetric matrices except for the final
-// diagonal element being removed. This is not checked for in calls
-// to the indexing or offset functions.
+/**
+ * @brief Class for indexing trace-free symmetric matrices.
+ *
+ * This class extends `SymmetricMatrixIndex`. The indexing is identical
+ * to that for symmetric matrices, with the implicit understanding that
+ * the final diagonal element (e.g., `v_{22}` in 3D) is removed from the
+ * basis to enforce the trace-free condition. This removal is not
+ * explicitly checked in calls to the indexing or offset functions.
+ */
 class TraceFreeSymmetricMatrixIndex : public SymmetricMatrixIndex {
  public:
+  /**
+   * @brief Constructor for the TraceFreeSymmetricMatrixIndex class.
+   * @param dim The spatial dimension.
+   * @param dof The number of degrees of freedom.
+   */
   TraceFreeSymmetricMatrixIndex(int dim, int dof)
       : SymmetricMatrixIndex(dim, dof) {}
 
-  // Return size of the matrix field.
+  /**
+   * @brief Returns the number of components in a trace-free symmetric matrix.
+   * This is one less than a full symmetric matrix.
+   * @return The number of components.
+   */
   int ComponentSize() const override {
     return SymmetricMatrixIndex::ComponentSize() - 1;
   }
 };
 
-/*
-BilinearformIntegrator that acts on a test vector field, v, and a trial
-scalar field, u, according to:
-
-(v,u) \mapsto \int_{\Omega} q_{i} v_{i} u dx
-
-where \Omega is the domain and q a vector coefficient.
-
-It is assumed that the vector field is defined on a finite element space formed
-from the product of a scalar nodal space.
-
-*/
+/**
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial scalar field, \f$u\f$ according to:
+ * \f[
+ *   (\mathbf{v},u) \mapsto \int_{\Omega} \mathbf{q}\cdot \mathbf{v} \, u \dd x
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$\bvec{q}\f$ is a vector
+ * coefficient.
+ *
+ * It is assumed that the vector field is defined on a finite element space
+ * formed from the product of a scalar nodal space.
+ */
 class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::VectorCoefficient* QV;
+  mfem::VectorCoefficient*
+      QV; /**< Pointer to the vector coefficient \f$\bvec{q}\f$. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector trial_shape, test_shape, qv;
-  mfem::DenseMatrix partElmat;
+  mfem::Vector trial_shape, test_shape,
+      qv; /**< Internal buffers for shape functions and coefficient values. */
+  mfem::DenseMatrix
+      part_elmat; /**< Internal buffer for partial element matrix. */
 #endif
 
  public:
-  /*
-    To define an instance a vector coefficient is provided along, optionally,
-    with an integration rule. The vector coefficient must return values with
-    size equal to the spatial dimension as the finite-element space.
-  */
+  /**
+   * @brief Constructor for DomainVectorScalarIntegrator.
+   *
+   * To define an instance, a vector coefficient is provided along, optionally,
+   * with an integration rule. The vector coefficient must return values with
+   * size equal to the spatial dimension as the finite-element space.
+   *
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{q}\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`. If `nullptr`,
+   * a default rule will be used.
+   */
   DomainVectorScalarIntegrator(mfem::VectorCoefficient& qv,
                                const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account Variations in the
-  coefficient are not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account. Variations in the coefficient are not considered.
+   *
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-    Implementation of the element level assembly.
-  */
+  /**
+   * @brief Implementation of the element level assembly for the bilinear form.
+   *
+   * @param trial_fe The trial finite element for the scalar field $u$.
+   * @param test_fe The test finite element for the vector field $v$.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const {
@@ -148,86 +306,130 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
   }
 };
 
-/*
-BilinearFormIntegrator that acts on a test vector field, v, and a trial scalar
-field, u, according to:
-
-(v,u) \mapsto \int_{\Omega}  v_{i} q_{ij} u_{,j} dx
-
-where \Omega is the domain and q a matrix coefficient.
-
-The coefficient can be set as a scalar, q, in which case the matrix coefficient
-is proportional to the identity matrix. It can also be set as a vector, this
-corresponding to the matrix coefficient being diagonal.
-
-It is assumed that the vector field is defined on a finite element space formed
-from the product of a scalar nodal space. The scalar field must be defined on a
-nodel space on which the gradient operator is defined.
-*/
+/**
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial scalar field, \f$u\f$ according to:
+ *
+ *   \f[
+ *     (\bvec{v},u) \mapsto \int_{\Omega} \bvec{v} \cdot \bvec{q} \cdot \grad u
+ * \dd x,
+ *   \f]
+ * where \f$\Omega\f$ is the domain and \f$\bvec{q}\f$ is a matrix coefficient.
+ *
+ * The coefficient \f$\bvec{q}\f$ can be set as a scalar, in which case the
+ * matrix coefficient is proportional to the identity matrix. It can also be set
+ * as a vector, this corresponding to the matrix coefficient being diagonal.
+ *
+ * It is assumed that the vector field is defined on a finite element space
+ * formed from the product of a scalar nodal space. The scalar field must be
+ * defined on a nodal space on which the gradient operator is defined.
+ */
 class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q = nullptr;
-  mfem::VectorCoefficient* QV = nullptr;
-  mfem::MatrixCoefficient* QM = nullptr;
+  mfem::Coefficient* Q = nullptr; /**< Pointer to a scalar coefficient. If not
+                                     null, \f$q_{ij} = Q \delta_{ij}\f$. */
+  mfem::VectorCoefficient* QV = nullptr; /**< Pointer to a vector coefficient.
+                                            If not null, \f$q_{ij} = QV_i
+                                            \delta_{ij}\f$. */
+  mfem::MatrixCoefficient* QM =
+      nullptr; /**< Pointer to a matrix coefficient. If not null, \f$q_{ij}\f$
+                  is directly from QM. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector test_shape, qv;
-  mfem::DenseMatrix trial_dshape, partElmat, qm, tm;
+  mfem::Vector test_shape, qv; /**< Internal buffers for test shape functions
+                                  and vector coefficient values. */
+  mfem::DenseMatrix trial_dshape, part_elmat, qm,
+      tm; /**< Internal buffers for trial derivative shape functions, partial
+             element matrix, and matrix coefficient values. */
 #endif
 
  public:
-  /*
-  Construct the bilinearform integrator from, optionally, an integration rule.
-  In this case, the matrix coefficient is the identity matrix.
-  */
+  /**
+   * @brief Constructor for DomainVectorGradScalarIntegrator with an identity
+   * matrix coefficient.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`. If `nullptr`,
+   * a default rule will be used.
+   */
   DomainVectorGradScalarIntegrator(const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
 
-  /*
-  Construct the bilinearform integrator from a scalar coefficient and,
-  optionally, an integration rule. In this case, the matrix coefficient is
-  proportional to the identity matrix.
-  */
+  /**
+   * @brief Constructor for DomainVectorGradScalarIntegrator with a scalar
+   * coefficient.
+   *
+   * The matrix coefficient is proportional to the identity matrix (\f$q_{ij} =
+   * Q
+   * \delta_{ij}\f$).
+   *
+   * @param q A reference to the `mfem::Coefficient`, Q.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainVectorGradScalarIntegrator(mfem::Coefficient& q,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
-  /*
-  Construct the bilinearform integrator from a vector coefficient and,
-  optionally, and integration rule. In this case, the matrix coefficient is
-  diagonal.
-  */
+  /**
+   * @brief Constructor for DomainVectorGradScalarIntegrator with a vector
+   * coefficient.
+   *
+   * The matrix coefficient is diagonal (\f$q_{ij} = QV_i \delta_{ij}\f$).
+   *
+   * @param qv A reference to the `mfem::VectorCoefficient`, QV.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainVectorGradScalarIntegrator(mfem::VectorCoefficient& qv,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
 
-  /*
-  Construct the bilinearform integrator from a matrix coefficient and,
-  optionally, an integration rule.
-  */
+  /**
+   * @brief Constructor for DomainVectorGradScalarIntegrator with a matrix
+   * coefficient.
+   *
+   * @param qm A reference to the `mfem::MatrixCoefficient`, q.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainVectorGradScalarIntegrator(mfem::MatrixCoefficient& qm,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QM{&qm} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account, with one order removed to
-  account for the spatial derivatives. Variations in the matrix coefficient are
-  not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with one order removed to account for the spatial
+   * derivatives. Variations in the matrix coefficient are not considered.
+   *
+   * @param trial_fe The trial finite element for the scalar field \f$u\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-  Implementation of the element level calculations.
-  */
+  /**
+   * @brief Implementation of the element level assembly for the bilinear form.
+   *
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
@@ -235,63 +437,89 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
   }
 };
 
-/*
-BilinearFormIntegrator that acts on a test vector field, v, and a trial scalar
-field, u, according to:
-
-(v,u) \mapsto \int_{\Omega} q v_{i,i} u dx
-
-where \Omega is the domain and q a scalar coefficient.
-
-It is assumed that the vector field is defined on a finite element space formed
-from the product of a scalar nodal space on which the gradient operator is
-defined.
-
-*/
+/**
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial scalar field, \f$u\f$ according to:
+ * \f[
+ *    (\bvec{v},u) \mapsto \int_{\Omega} q \divg \bvec{v}\, u \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$q\f$ is a scalar coefficient.
+ *
+ * It is assumed that the vector field is defined on a finite element space
+ * formed from the product of a scalar nodal space on which the gradient
+ * operator is defined.
+ */
 class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q;
+  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix test_dshape, partElmat;
-  mfem::Vector trial_shape;
+  mfem::DenseMatrix test_dshape,
+      part_elmat; /**< Internal buffers for test derivative shape functions and
+                     partial element matrix. */
+  mfem::Vector trial_shape; /**< Internal buffer for trial shape functions. */
 #endif
 
  public:
-  /*
-  Construct the bilinearform integrator from, optionally, an integration rule.
-  In this case the scalar coefficient is taken equal to the constant 1.
-  */
+  /**
+   * @brief Constructor for DomainDivVectorScalarIntegrator.
+   *
+   * The scalar coefficient is taken equal to the constant 1 if no coefficient
+   * is provided.
+   *
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainDivVectorScalarIntegrator(const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{nullptr} {}
 
-  /*
-  Construct the bilinearform integrator from a scalar coefficient and,
-  optionally, an integration rule.
-  */
+  /**
+   * @brief Constructor for DomainDivVectorScalarIntegrator with a scalar
+   * coefficient.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainDivVectorScalarIntegrator(mfem::Coefficient& q,
                                   const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account, with one order removed to
-  account for the spatial derivatives. Variations in the coefficient are
-  not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with one order removed to account for the spatial
+   * derivatives. Variations in the coefficient are not considered.
+   *
+   * @param trial_fe The trial finite element for the scalar field \f$u\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-  Implementation of element level calculations.
-  */
+  /**
+   * @brief Implementation of element level calculations for the bilinear form.
+   *
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
@@ -299,64 +527,90 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
   }
 };
 
-/*
-BilinearFormIntegrator that acts on a test vector field, v, and a trial vector
-field, u, according to:
-
-(v,u) \mapsto \int_{\Omega} q v_{i,i} u_{i,i} dx
-
-where \Omega is the domain and q a scalar coefficient.
-
-It is assumed that the vector fields are defined on finite element spaces
-formed from the product of  scalar nodal spaces on which the gradient operator
-are defined.
-
-*/
+/**
+ * @brief BilinearFormIntegrator that acts on a test vector field,
+ * \f$\bvec{v}\f$, and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *    (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \divg \bvec{v}\, \divg
+ * \bvec{u} \dd x
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$q\f$ is a scalar coefficient.
+ *
+ * It is assumed that both vector fields are defined on finite element spaces
+ * formed from the product of scalar nodal spaces on which the gradient operator
+ * is defined.
+ */
 class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q = nullptr;
+  mfem::Coefficient* Q =
+      nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix trial_dshape, test_dshape;
+  mfem::DenseMatrix trial_dshape,
+      test_dshape; /**< Internal buffers for trial and test derivative shape
+                      functions. */
 #endif
 
  public:
-  /*
-  Construct bilinearform integrator from, optionally, an integration rule. In
-  this case the coefficient is taken to be the constant 1.
-  */
+  /**
+   * @brief Constructor for DomainDivVectorDivVectorIntegrator.
+   *
+   * The coefficient is taken to be the constant 1 if no coefficient is
+   * provided.
+   *
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainDivVectorDivVectorIntegrator(const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
 
-  /*
-  Construct the bilinear form integrator from a scalar coefficient and,
-  optionally, and integration rule.
-  */
+  /**
+   * @brief Constructor for DomainDivVectorDivVectorIntegrator with a scalar
+   * coefficient.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainDivVectorDivVectorIntegrator(mfem::Coefficient& q,
                                      const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account, with two order removed to
-  account for the spatial derivatives. Variations in the coefficient are
-  not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with two orders removed to account for the spatial
+   * derivatives. Variations in the coefficient are not considered.
+   *
+   * @param trial_fe The trial finite element for the vector field $u$.
+   * @param test_fe The test finite element for the vector field $v$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-  Implementation of the element level calculations.
-  */
+  /**
+   * @brief Implementation of the element level calculations for the bilinear
+   * form.
+   *
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat);
 
-  /*
-  Assembly when the trial and test spaces are equal.
-  */
+  /**
+   * @brief Assembly method when the trial and test spaces are equal.
+   * @param fe The finite element for both trial and test spaces.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix(const mfem::FiniteElement& fe,
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat) override {
@@ -364,6 +618,13 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
   }
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
@@ -371,69 +632,95 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
   }
 };
 
-/*
-BilinearFormIntegrator acting on test vector field, v, and trial vector field,
-u, according to:
-
-(v,u) \mapsto  \int_{\Omega} q v_{i} (w_{j} u_{j))_{,i} dx
-
-where q is a scalar coefficient and w a vector coefficient.
-
-It is assumed that the vector fields are defined on finite element spaces
-formed from the product of  scalar nodal spaces. On the test space the gradient
-operator must be defined. The vector coefficient should return vectors with size
-equal to the mesh's spatial dimension.
-*/
+/**
+ * @brief BilinearFormIntegrator acting on a test vector field, \f$\bvec{v}\f$,
+ * and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *    (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \,\bvec{v}\cdot
+ *    \grad(\bvec{w}\cdot \bvec{u}) \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain,  \f$q\f$ is a scalar coefficient and
+ * \f$\bvec{w}\f$ is a vector coefficient.
+ *
+ * It is assumed that the vector fields are defined on finite element spaces
+ * formed from the product of scalar nodal spaces. On the test space, the
+ * gradient operator must be defined.
+ */
 class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q = nullptr;
-  mfem::VectorCoefficient* QV;
+  mfem::Coefficient* Q =
+      nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
+  mfem::VectorCoefficient*
+      QV; /**< Pointer to the vector coefficient \f$\bvec{w}\f$. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector qv, test_shape;
-  mfem::DenseMatrix trial_dshape, leftElmat, rightElmatTrans, partElmat;
+  mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
+                                  values and test shape functions. */
+  mfem::DenseMatrix trial_dshape, left_elmat, rigth_elmat_trans,
+      part_elmat; /**< Internal buffers for trial derivative shape functions and
+                     various intermediate matrices. */
 #endif
 
  public:
-  /*
-  Construct bilinearform integrator from vector coefficient and, optionally, an
-  integration rule. In this case, the scalar coefficient is taken equal to the
-  constant, 1.
-  */
+  /**
+   * @brief Constructor for DomainVectorGradVectorIntegrator with a vector
+   * coefficient and default scalar coefficient (1).
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{w}\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainVectorGradVectorIntegrator(mfem::VectorCoefficient& qv,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
 
-  /*
-  Construct bilinearform integrator from the vector coefficient and scalar
-  coefficient along, optionally, with an integration rule.
-  */
+  /**
+   * @brief Constructor for DomainVectorGradVectorIntegrator with both vector
+   * and scalar coefficients.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{w}\f$.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainVectorGradVectorIntegrator(mfem::VectorCoefficient& qv,
                                    mfem::Coefficient& q,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account, with one order removed to
-  account for the spatial derivative. Variations in the coefficients are
-  not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with one order removed to account for the spatial
+   * derivative. Variations in the coefficients are not considered.
+   *
+   * @param trial_fe The trial finite element for the vector field
+   * \f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-  Implementation of element level calculations.
-  */
+  /**
+   * @brief Implementation of element level calculations for the bilinear form.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 
-  /*
-  Assembly when the trail and test spaces are equal.
-  */
+  /**
+   * @brief Assembly method when the trial and test spaces are equal.
+   * @param el The finite element for both trial and test spaces.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix(const mfem::FiniteElement& el,
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat) override {
@@ -441,6 +728,13 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
   }
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
@@ -448,68 +742,192 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
   }
 };
 
-/*
-BilinearFormIntegrator acting on a test matrix field, v, and a trial
-vector field, u, according to:
+/**
+ * @brief BilinearFormIntegrator acting on a test vector field, \f$\bvec{v}\f$,
+ * and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *    (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} \bvec{q} \cdot \bvec{v}\,
+ * \divg\bvec{u}  \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$\bvec{q}\f$ is a vector coefficient.
+ *
+ * This integrator assumes that the test vector field \f$\bvec{v}\f$ is defined
+ * on a finite element space formed from the product of a scalar nodal space,
+ * and the trial vector field \f$\bvec{u}\f$ is defined on a finite element
+ * space formed from the product of a scalar nodal space on which the gradient
+ * operator is defined.
+ */
+class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::VectorCoefficient* QV =
+      nullptr; /**< Pointer to the vector coefficient \f$q\f$. */
 
-(v,u) \mapsto \int_{\Omega} q v_{ij} u_{i,j} dx,
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
+                                  values and test shape functions. */
+  mfem::DenseMatrix trial_dshape,
+      part_elmat; /**< Internal buffers for trial derivative shape functions and
+                     partial element matrix. */
+#endif
 
-where \Omega is the domain and q a scalar coefficient.
+ public:
+  /**
+   * @brief Constructor for DomainVectorDivVectorIntegrator.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$q\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  DomainVectorDivVectorIntegrator(mfem::VectorCoefficient& qv,
+                                  const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
 
-The matrix field must be defined on a nodal finite element space formed from
-the product of a scalar space. The ordering of the matrix components
-corresponds to a dense matrix using column-major storage (i.e., v_{00},
-v_{10}, v_{20}, v_{01}, ...). The vector field must be defined on a nodel
-finite element space formed from the product of a scalar space for which the
-gradient operator is defined. The vector and matrix fields need to have
-compatible dimensions.
-*/
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with one order removed to account for the spatial
+   * derivative. Variations in the coefficients are not considered.
+   *
+   * @param trial_fe The trial finite element for \f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the vector field \f$\bvec{v}\f$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  /**
+   * @brief Implementation of element level calculations for the bilinear form.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+
+  /**
+   * @brief Assembly method when the trial and test spaces are equal.
+   * @param el The finite element for both trial and test spaces.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override {
+    AssembleElementMatrix2(el, el, Trans, elmat);
+  }
+
+ protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
+  const mfem::IntegrationRule* GetDefaultIntegrationRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& trans) const override {
+    return &GetRule(trial_fe, test_fe, trans);
+  }
+};
+
+/**
+ * @brief BilinearFormIntegrator acting on a test matrix field, \f$\bf{v}\f$,
+ * and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *   (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \,\bvec{v}: \deriv \bvec{u}
+ * \dd x = \int_{\Omega} q\, v_{ij} \frac{\partial u_{i}}{\partial x_{j}} \dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$q\f$ is a scalar coefficient.
+ *
+ * The matrix field must be defined on a nodal finite element space formed from
+ * the product of a scalar space. The ordering of the matrix components
+ * corresponds to a dense matrix using column-major storage (i.e., \f$v_{00},
+ * v_{10}, v_{20}, v_{01}, \dots)\f$. The vector field must be defined on a
+ * nodal finite element space formed from the product of a scalar space for
+ * which the gradient operator is defined. The vector and matrix fields need to
+ * have compatible dimensions.
+ */
 class DomainMatrixDeformationGradientIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q = nullptr;
+  mfem::Coefficient* Q =
+      nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector test_shape;
-  mfem::DenseMatrix trial_dshape, partElmat;
+  mfem::Vector test_shape; /**< Internal buffer for test shape functions. */
+  mfem::DenseMatrix trial_dshape,
+      part_elmat; /**< Internal buffers for trial derivative shape functions and
+                     partial element matrix. */
 #endif
 
  public:
-  /*
-  Construct bilinearform integrator from, optionally, an integration rule. In
-  this case, the scalar coefficient is taken equal to the constant, 1.
-  */
+  /**
+   * @brief Constructor for DomainMatrixDeformationGradientIntegrator.
+   *
+   * The scalar coefficient is taken equal to the constant 1 if no coefficient
+   * is provided.
+   *
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainMatrixDeformationGradientIntegrator(
       const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
 
-  /*
-  Construct the bilinearform integrator from the scalar coefficient and,
-  optionally, an integration rule.
-  */
+  /**
+   * @brief Constructor for DomainMatrixDeformationGradientIntegrator with a
+   * scalar coefficient.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainMatrixDeformationGradientIntegrator(
       mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account, with one order removed to
-  account for the spatial derivative. Variations in the coefficients are
-  not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with one order removed to account for the spatial
+   * derivative. Variations in the coefficients are not considered.
+   *
+   * @param trial_fe The trial finite element for the vector field
+   * \f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the matrix field \f$\bvec{v}\f$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-  Implementation of element-level calculations.
-  */
+  /**
+   * @brief Implementation of element-level calculations for the bilinear form.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
@@ -517,59 +935,99 @@ class DomainMatrixDeformationGradientIntegrator
   }
 };
 
-/*
-BilinearFormIntegrator acting on a test symmetrix matrix field, v, and a trial
-vector field, u, according to:
-
-(v,u) \mapsto \frac{1}{2}\int_{\Omega} q v_{ij} (u_{i,j} + u_{j,i}) dx,
-
-where \Omega is the domain and q a scalar coefficient.
-
-The matrix field must be defined on a nodal finite element space formed from
-the product of a scalar space. The ordering of the matrix components corresponds
-to a dense matrix using column-major storage but storing only the lower
-triangle. The vector field must be defined on a nodel finite element space
-formed from the product of a scalar space for which the gradient operator is
-defined. The vector and matrix fields need to have compatible dimensions.
-*/
+/**
+ * @brief BilinearFormIntegrator acting on a test symmetric matrix field,
+ * \f$\bvec{v}\f$, and a trial vector field, \f$\bvec{u}\f$ according to:
+ * \f[
+ *   (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \,\bvec{v}: \deriv \bvec{u}
+ * \dd x = \frac{1}{2}\int_{\Omega} q\, v_{ij} \left(\frac{\partial
+ *         u_{i}}{\partial x_{j}} + \frac{\partial
+ *         u_{j}}{\partial x_{i}}\right)\dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain and \f$q\f$ is a scalar coefficient.
+ *
+ * The matrix field must be defined on a nodal finite element space formed from
+ * the product of a scalar space. The ordering of the matrix components
+ * corresponds to a dense matrix using column-major storage but storing only the
+ * lower triangle. The vector field must be defined on a nodal finite element
+ * space formed from the product of a scalar space for which the gradient
+ * operator is defined. The vector and matrix fields need to have compatible
+ * dimensions.
+ */
 class DomainSymmetricMatrixStrainIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q;
+  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector test_shape;
-  mfem::DenseMatrix partElmat, trial_dshape;
+  mfem::Vector test_shape; /**< Internal buffer for test shape functions. */
+  mfem::DenseMatrix part_elmat,
+      trial_dshape; /**< Internal buffers for partial element matrix and trial
+                       derivative shape functions. */
 #endif
 
  public:
+  /**
+   * @brief Constructor for DomainSymmetricMatrixStrainIntegrator.
+   *
+   * The scalar coefficient is taken equal to the constant 1 if no coefficient
+   * is provided.
+   *
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainSymmetricMatrixStrainIntegrator(
       const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
 
+  /**
+   * @brief Constructor for DomainSymmetricMatrixStrainIntegrator with a scalar
+   * coefficient.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainSymmetricMatrixStrainIntegrator(
       mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account, with one order removed to
-  account for the spatial derivative. Variations in the coefficients are
-  not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with one order removed to account for the spatial
+   * derivative. Variations in the coefficients are not considered.
+   *
+   * @param trial_fe The trial finite element for the vector field
+   * \f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the symmetric matrix field
+   * \f$\bvec{v}\f$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-  Implementation of element-level calculations.
-  */
+  /**
+   * @brief Implementation of element-level calculations for the bilinear form.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
@@ -577,61 +1035,104 @@ class DomainSymmetricMatrixStrainIntegrator
   }
 };
 
-/*
-BilinearFormIntegrator acting on a test trace-free symmetrix matrix field, v,
-and a trial vector field, u, according to:
-
-(v,u) \mapsto \frac{1}{2}\int_{\Omega} q v_{ij} (u_{i,j} + u_{j,i} - (2/dim)
-u_{k,k}\delta_{ij}) dx,
-
-where \Omega is the domain and q a scalar coefficient.
-
-The matrix field must be defined on a nodal finite element space formed from
-the product of a scalar space. The ordering of the matrix components corresponds
-to a dense matrix using column-major storage but storing only the lower
-triangle and skipping the final elment. The vector field must be defined on a
-nodel finite element space formed from the product of a scalar space for which
-the gradient operator is defined. The vector and matrix fields need to have
-compatible dimensions.
-*/
+/**
+ * @brief BilinearFormIntegrator acting on a test trace-free symmetric matrix
+ * field, \f$\bvec{v}\f$, and a trial vector field, \f$\bvec{u}\f$  according
+ * to:
+ * \f[
+ *   (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \,\bvec{v}: \deriv \bvec{u}
+ * \dd x = \frac{1}{2}\int_{\Omega} q\, v_{ij} \left(
+ *         \frac{\partial u_{i}}{\partial x_{j}}
+ *        + \frac{\partial u_{j}}{\partial x_{i}}
+ *        - \frac{2}{n}\frac{\partial u_{k}}{\partial x_{k}}\delta_{ij}
+ *        \right)\dd x,
+ * \f]
+ * where \f$\Omega\f$ is the domain, \f$q\f$ is a scalar coefficient, and
+ * \f$n\f$ the spatial dimension.
+ *
+ * The matrix field must be defined on a nodal finite element space formed from
+ * the product of a scalar space. The ordering of the matrix components
+ * corresponds to a dense matrix using column-major storage but storing only the
+ * lower triangle and explicitly handling the trace-free nature. The vector
+ * field must be defined on a nodal finite element space formed from the product
+ * of a scalar space for which the gradient operator is defined. The vector and
+ * matrix fields need to have compatible dimensions.
+ */
 class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q;
+  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
-  mfem::Vector test_shape;
-  mfem::DenseMatrix partElmat, trial_dshape;
+  mfem::Vector test_shape; /**< Internal buffer for test shape functions. */
+  mfem::DenseMatrix part_elmat,
+      trial_dshape; /**< Internal buffers for partial element matrix and trial
+                       derivative shape functions. */
 #endif
 
  public:
+  /**
+   * @brief Constructor for
+   * DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator.
+   *
+   * The scalar coefficient is taken equal to the constant 1 if no coefficient
+   * is provided.
+   *
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator(
       const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
 
+  /**
+   * @brief Constructor for
+   * DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator with a scalar
+   * coefficient.
+   * @param q A reference to the `mfem::Coefficient` \f$q\f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
   DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator(
       mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
-  /*
-  Set the default integration rule. The orders of the trial space, test space,
-  and element transformation are taken into account, with one order removed to
-  account for the spatial derivative. Variations in the coefficients are
-  not considered.
-  */
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account, with one order removed to account for the spatial
+   * derivative. Variations in the coefficients are not considered.
+   *
+   * @param trial_fe The trial finite element for the vector field $u$.
+   * @param test_fe The test finite element for the trace-free symmetric matrix
+   * field $v$.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
   static const mfem::IntegrationRule& GetRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& Trans);
 
-  /*
-  Implementation of element-level calculations.
-  */
+  /**
+   * @brief Implementation of element-level calculations for the bilinear form.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
                               const mfem::FiniteElement& test_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 
  protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
   const mfem::IntegrationRule* GetDefaultIntegrationRule(
       const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
       const mfem::ElementTransformation& trans) const override {
@@ -639,121 +1140,160 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
   }
 };
 
-/*
-For ∫Q(∇ ⋅u)(Qv ⋅v), where u and v are trial and test vector funtions, Q a given scalar field and Qv a given vector field.
-*/
-class DivergenceVectorIntegrator : public mfem::BilinearFormIntegrator {
-private:
-    mfem::Coefficient *Q = nullptr;
-    mfem::VectorCoefficient *QV =nullptr;
-
-#ifndef MFEM_THREAD_SAFE
-    mfem::Vector shape, g;
-    mfem::DenseMatrix dshape, pelmat;
-#endif
-
-public:
-    DivergenceVectorIntegrator(const mfem::IntegrationRule* ir = nullptr)
-        : mfem::BilinearFormIntegrator(ir) {}
-
-    DivergenceVectorIntegrator(mfem::Coefficient &q, mfem::VectorCoefficient &qv, const mfem::IntegrationRule* ir = nullptr)
-        : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
-
-    void AssembleElementMatrix(const mfem::FiniteElement& el, mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) override;
-};
-
-/*
-For ∫Q(∇ ⋅v)(Qv ⋅u), where u and v are trial and test vector funtions, Q a given scalar field and Qv a given vector field
-(may not be needed due to using transpose).
-*/
-class ProjectionDivergenceIntegrator : public mfem::BilinearFormIntegrator {
-private:
-    mfem::Coefficient *Q = nullptr;
-    mfem::VectorCoefficient *QV =nullptr;
-
-#ifndef MFEM_THREAD_SAFE
-    mfem::Vector shape, g;
-    mfem::DenseMatrix dshape, pelmat;
-#endif
-
-public:
-    ProjectionDivergenceIntegrator(const mfem::IntegrationRule* ir = nullptr)
-        : mfem::BilinearFormIntegrator(ir) {}
-
-    ProjectionDivergenceIntegrator(mfem::Coefficient &q, mfem::VectorCoefficient &qv, const mfem::IntegrationRule* ir = nullptr)
-        : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
-
-    void AssembleElementMatrix(const mfem::FiniteElement &el, mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) override;
-};
-
-
-
-
-/*
-DiscreteInterpolator that acts on a vector field, u, to return the matrix
-field, v_{ij} = u_{i,j}. The matrix field components are stored using the
-column-major format.
-
-The vector field must be defined on a nodal finite element space formed
-from the product of a scalar space on which the gradient operator is
-defined. The matrix field must be defined on a nodal finite element space
-formed from the product of a scalar space.
-*/
+/**
+ * @brief DiscreteInterpolator that acts on a vector field, \f$\bvec{u}\f$, to
+ * return the matrix field, \f$\deriv \bvec{u}\f$, with components:
+ * \f[
+ * (\deriv \bvec{u})_{ij} = \frac{\partial u_{i}}{\partial x_{j}},
+ * \f]
+ * The resulting matrix field components are stored using the column-major
+ * format.
+ *
+ * The input vector field \f$\bvec{u}\f$ must be defined on a nodal finite
+ * element space formed from the product of a scalar space on which the gradient
+ * operator is defined. The output matrix field \f$\deriv \bvec{u}\f$ must be
+ * defined on a nodal finite element space formed from the product of a scalar
+ * space.
+ */
 class DeformationGradientInterpolator : public mfem::DiscreteInterpolator {
  private:
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix dshape;
+  mfem::DenseMatrix
+      dshape; /**< Internal buffer for derivative shape functions. */
 #endif
 
  public:
+  /**
+   * @brief Constructs a DeformationGradientInterpolator object.
+   * This default constructor initializes the interpolator without specific
+   * parameters.
+   */
   DeformationGradientInterpolator() {}
 
+  /**
+   * @brief Assembles the element matrix for the interpolation of \f$\deriv
+   * \bvec{u}\f$.
+   *
+   * This method computes the local element interpolation matrix that maps
+   * degrees of freedom of the input vector field \f$u\f$ to the degrees of
+   * freedom of the output matrix field \f$v = \deriv u\f$.
+   *
+   * @param in_fe The input finite element for the vector field.
+   * @param out_fe The output finite element for the matrix field.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element interpolation
+   * matrix. Its dimensions will be `out_fe.GetDof()` by `in_fe.GetDof()`.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
                               const mfem::FiniteElement& out_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 };
 
-/*
-DiscreteInterpolator that acts on a vector field, u, to return the symmetric
-matrix field, v_{ij} = (u_{i,j} + u_{j,i})/2. The matrix field components are
-stored in the column-major format but only keeping elements in the lower
-triangle. In 3D spaces this means: the ordering:
-
-v_{00}, v_{10}, v_{20}, v_{11}, v_{21}, v_{22}
-
-while in 2D we have
-
-v_{00}, v_{10}, v_{11}
-*/
+/**
+ * @brief DiscreteInterpolator that acts on a vector displacement field,
+ * \f$\bvec{u}\f$, to return the symmetric strain tensor field,
+ * \f$\bvec{e}\f$, with components:
+ * \f[
+ * e_{ij} = \frac{1}{2}\left(\frac{\partial u_{i}}{\partial x_{j}} +
+ * \frac{\partial u_{j}}{\partial x_{i}}\right).
+ * \f]
+ *
+ * The components of the symmetric matrix field \f$\bvec{e}\f$ are
+ * stored in column-major format, keeping only elements in the lower triangle
+ * due to symmetry.
+ * - In 3D spaces, this implies the ordering: \f$e_{00}\f$,
+ * \f$e_{10}\f$, \f$e_{20}\f$,
+ * \f$e_{11}\f$, \f$e_{21}\f$, \f$e_{22}\f$.
+ * - In 2D spaces, this implies the ordering: \f$e_{00}\f$,
+ * \f$e_{10}\f$, \f$e_{11}\f$.
+ *
+ * The input vector field \f$\bvec{u}\f$ must be defined on a nodal finite
+ * element space formed from the product of a scalar space on which the gradient
+ * operator is defined. The output symmetric matrix field
+ * \f$\bvec{e}\f$ must be defined on a nodal finite element space
+ * formed from the product of a scalar space.
+ */
 class StrainInterpolator : public mfem::DiscreteInterpolator {
  private:
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix dshape;
+  mfem::DenseMatrix
+      dshape; /**< Internal buffer for derivative shape functions. */
 #endif
  public:
+  /**
+   * @brief Constructs a StrainInterpolator object.
+   * This default constructor initializes the interpolator.
+   */
   StrainInterpolator() {}
 
+  /**
+   * @brief Assembles the element matrix for the interpolation of the strain
+   * tensor.
+   *
+   * This method computes the local element interpolation matrix that maps
+   * degrees of freedom of the input displacement field \f$\bvec{u}\f$ to the
+   * degrees of freedom of the output symmetric strain field \f$\bvec{e}\f$.
+   *
+   * @param in_fe The input finite element for the vector field.
+   * @param out_fe The output finite element for the symmetric matrix field.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element interpolation
+   * matrix. Its dimensions will be `out_fe.GetDof()` by `in_fe.GetDof()`.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
                               const mfem::FiniteElement& out_fe,
                               mfem::ElementTransformation& Trans,
                               mfem::DenseMatrix& elmat) override;
 };
 
-/*
-DiscreteInterpolator that maps a vector field, u, into trace-free symmetric
-matrix field, v, with components
-
-v_{ij} = (u_{i,j} + u_{j,i})/2 - (1/dim) * u_{k,k} \delta_ij
-
-*/
+/**
+ * @brief DiscreteInterpolator that maps a vector displacement field,
+ * \f$\bvec{u}\f$, into a trace-free symmetric matrix field, \f$\bvec{v}\f$.
+ *
+ * The components of the output trace-free symmetric matrix \f$\bvec{v}\f$ are
+ * given by:
+ * \f[
+ * v_{ij} = \frac{1}{2}\left(\frac{\partial u_{i}}{\partial x_{j}} +
+ * \frac{\partial u_{j}}{\partial x_{i}}\right) - \frac{1}{n}
+ * \frac{\partial u_{k}}{\partial x_{k}} \delta_{ij}
+ * \f]
+ * where \f$n\f$ is the spatial dimension.
+ *
+ * The input vector field \f$\bvec{u}\f$ must be defined on a nodal finite
+ * element space formed from the product of a scalar space on which the gradient
+ * operator is defined. The output trace-free symmetric matrix field
+ * \f$\bvec{v}\f$ must be defined on a nodal finite element space formed from
+ * the product of a scalar space.
+ */
 class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
+ private:
 #ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix dshape;
+  mfem::DenseMatrix
+      dshape; /**< Internal buffer for derivative shape functions. */
 #endif
  public:
+  /**
+   * @brief Constructs a DeviatoricStrainInterpolator object.
+   * This default constructor initializes the interpolator.
+   */
   DeviatoricStrainInterpolator() {}
 
+  /**
+   * @brief Assembles the element matrix for the interpolation of the deviatoric
+   * strain tensor.
+   *
+   * This method computes the local element interpolation matrix that maps
+   * degrees of freedom of the input displacement field \f$u\f$ to the degrees
+   * of freedom of the output trace-free symmetric matrix field \f$v\f$.
+   *
+   * @param in_fe The input finite element for the vector field.
+   * @param out_fe The output finite element for the trace-free symmetric matrix
+   * field.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element interpolation
+   * matrix. Its dimensions will be `out_fe.GetDof()` by `in_fe.GetDof()`.
+   */
   void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
                               const mfem::FiniteElement& out_fe,
                               mfem::ElementTransformation& Trans,

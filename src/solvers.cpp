@@ -23,6 +23,9 @@ RigidRotation::RigidRotation(int dimension, int component)
               "component out of range");
   MFEM_ASSERT(dimension == 3 || component == 2,
               "In two dimensions only z-rotation defined");
+#ifndef MFEM_THREAD_SAFE
+  _x.SetSize(dimension);
+#endif
 }
 
 void RigidRotation::SetComponent(int component) { _component = component; }
@@ -30,7 +33,9 @@ void RigidRotation::SetComponent(int component) { _component = component; }
 void RigidRotation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                          const mfem::IntegrationPoint &ip) {
   V.SetSize(vdim);
-  _x.SetSize(vdim);
+#ifdef MFEM_THREAD_SAFE
+  mfem::Vector _x(vdim);
+#endif
   T.Transform(ip, _x);
   if (_component == 0) {
     V[0] = 0;
@@ -47,10 +52,32 @@ void RigidRotation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
   }
 }
 
+RigidBodySolver::RigidBodySolver(mfem::FiniteElementSpace *fes)
+    : mfem::Solver(0, false), _fes{fes}, _parallel{false} {
+  auto vDim = _fes->GetVDim();
+  MFEM_ASSERT(vDim == 2 || vDim == 3, "Dimensions must be two or three");
+  SetRigidBodyFields();
+}
+
+#ifdef MFEM_USE_MPI
+RigidBodySolver::RigidBodySolver(MPI_Comm comm,
+                                 mfem::ParFiniteElementSpace *fes)
+    : mfem::Solver(0, false),
+      _fes{fes},
+      _pfes{fes},
+      _comm{comm},
+      _parallel{true} {
+  auto vDim = _fes->GetVDim();
+  MFEM_ASSERT(vDim == 2 || vDim == 3, "Dimensions must be two or three");
+  SetRigidBodyFields();
+}
+#endif
+
 mfem::real_t RigidBodySolver::Dot(const mfem::Vector &x,
                                   const mfem::Vector &y) const {
 #ifdef MFEM_USE_MPI
   return _parallel ? mfem::InnerProduct(_comm, x, y) : mfem::InnerProduct(x, y);
+
 #else
   return mfem::InnerProduct(x, y);
 #endif
@@ -58,6 +85,49 @@ mfem::real_t RigidBodySolver::Dot(const mfem::Vector &x,
 
 mfem::real_t RigidBodySolver::Norm(const mfem::Vector &x) const {
   return std::sqrt(Dot(x, x));
+}
+
+void RigidBodySolver::SetRigidBodyFields() {
+  auto vDim = _fes->GetVDim();
+
+  // Set up a local grid function.
+  std::unique_ptr<mfem::GridFunction> u;
+  if (_parallel) {
+#ifdef MFEM_USE_MPI
+    u = std::make_unique<mfem::ParGridFunction>(_pfes);
+#endif
+  } else {
+    u = std::make_unique<mfem::GridFunction>(_fes);
+  }
+
+  // Set the translations.
+  for (auto component = 0; component < vDim; component++) {
+    auto v = RigidTranslation(vDim, component);
+    u->ProjectCoefficient(v);
+    auto tv = std::make_unique<mfem::Vector>();
+    u->GetTrueDofs(*tv);
+    _u.push_back(std::move(tv));
+  }
+
+  // Set the rotations.
+  if (vDim == 2) {
+    auto v = RigidRotation(vDim, 2);
+    u->ProjectCoefficient(v);
+    auto tv = std::make_unique<mfem::Vector>();
+    u->GetTrueDofs(*tv);
+    _u.push_back(std::move(tv));
+
+  } else {
+    for (auto component = 0; component < vDim; component++) {
+      auto v = RigidRotation(vDim, component);
+      u->ProjectCoefficient(v);
+      auto tv = std::make_unique<mfem::Vector>();
+      u->GetTrueDofs(*tv);
+      _u.push_back(std::move(tv));
+    }
+  }
+
+  GramSchmidt();
 }
 
 void RigidBodySolver::GramSchmidt() {
@@ -85,90 +155,6 @@ void RigidBodySolver::ProjectOrthogonalToRigidBody(const mfem::Vector &x,
     auto &u = *_u[i];
     auto product = Dot(y, u);
     y.Add(-product, u);
-  }
-}
-
-RigidBodySolver::RigidBodySolver(mfem::FiniteElementSpace *fes)
-    : mfem::Solver(0, false), _fes{fes}, _parallel{false} {
-  auto vDim = _fes->GetVDim();
-  MFEM_ASSERT(vDim == 2 || vDim == 3, "Dimensions must be two or three");
-
-  // Set up a temporary gridfunction.
-  auto u = mfem::GridFunction(_fes);
-
-  // Set the translations.
-  for (auto component = 0; component < vDim; component++) {
-    auto v = RigidTranslation(vDim, component);
-    u.ProjectCoefficient(v);
-    auto tv = new mfem::Vector();
-    u.GetTrueDofs(*tv);
-    _u.push_back(tv);
-  }
-
-  // Set the rotations.
-  if (vDim == 2) {
-    auto v = RigidRotation(vDim, 2);
-    u.ProjectCoefficient(v);
-    auto tv = new mfem::Vector();
-    u.GetTrueDofs(*tv);
-    _u.push_back(tv);
-  } else {
-    for (auto component = 0; component < vDim; component++) {
-      auto v = RigidRotation(vDim, component);
-      u.ProjectCoefficient(v);
-      auto tv = new mfem::Vector();
-      u.GetTrueDofs(*tv);
-      _u.push_back(tv);
-    }
-  }
-
-  GramSchmidt();
-}
-
-#ifdef MFEM_USE_MPI
-RigidBodySolver::RigidBodySolver(MPI_Comm comm,
-                                 mfem::ParFiniteElementSpace *fes)
-    : mfem::Solver(0, false),
-      _fes{fes},
-      _pfes{fes},
-      _comm{comm},
-      _parallel{true} {
-  auto vDim = _fes->GetVDim();
-  MFEM_ASSERT(vDim == 2 || vDim == 3, "Dimensions must be two or three");
-
-  // Set up a temporary ParGridfunction.
-  auto u = mfem::ParGridFunction(_pfes);
-
-  // Set the translations.
-  for (auto component = 0; component < vDim; component++) {
-    auto v = RigidTranslation(vDim, component);
-    u.ProjectCoefficient(v);
-    auto *tv = u.GetTrueDofs();
-    _u.push_back(tv);
-  }
-
-  // Set the rotations.
-  if (vDim == 2) {
-    auto v = RigidRotation(vDim, 2);
-    u.ProjectCoefficient(v);
-    auto *tv = u.GetTrueDofs();
-    _u.push_back(tv);
-  } else {
-    for (auto component = 0; component < vDim; component++) {
-      auto v = RigidRotation(vDim, component);
-      u.ProjectCoefficient(v);
-      auto *tv = u.GetTrueDofs();
-      _u.push_back(tv);
-    }
-  }
-
-  GramSchmidt();
-}
-#endif
-
-RigidBodySolver::~RigidBodySolver() {
-  for (auto i = 0; i < GetNullDim(); i++) {
-    delete _u[i];
   }
 }
 

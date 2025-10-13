@@ -1,0 +1,24 @@
+
+find_package(gmsh CONFIG REQUIRED)
+
+
+
+add_library(meshing CircularMesh.cpp SphereMesh.cpp common.cpp)
+target_link_libraries(meshing PUBLIC gmsh::shared)
+
+add_executable(circle_test circle_test.cpp )
+target_link_libraries(circle_test meshing)
+
+add_executable(sphere_test sphere_test.cpp )
+target_link_libraries(sphere_test meshing)
+
+
+
+add_executable(offset_disk offset_disk.cpp )
+target_link_libraries(offset_disk  meshing)
+
+add_executable(ball ball.cpp )
+target_link_libraries(ball meshing)
+
+
+
