@@ -424,4 +424,207 @@ struct SphericalMeshHelper {
 #endif
 };
 
+//new contributions from ZY
+#include <algorithm>
+#include <cctype>     
+#include <chrono>     
+#include <cmath>
+#include <iomanip>
+#include <iostream>
+#include <numbers>    
+#include <sstream>
+#include <string>
+#include <vector>
+
+//helpers
+struct Timer {
+    using clk = std::chrono::steady_clock;
+    clk::time_point t0 = clk::now(), last = t0;
+    void mark(const std::string& msg){
+        auto now = clk::now();
+        double dt = std::chrono::duration<double>(now-last).count();
+        double tot= std::chrono::duration<double>(now-t0).count();
+        last = now;
+        std::cout<<std::fixed<<std::setprecision(3)
+            <<"[TIMER] +"<<dt<<" s ("<<tot<<" s total): "<<msg<<"\n";
+    }
+};
+
+inline std::vector<double> parseDoubles(const std::string &s){
+    std::vector<double> v; std::istringstream iss(s); std::string tok;
+    while (std::getline(iss, tok, '-')){
+        tok.erase(std::remove_if(tok.begin(), tok.end(), ::isspace), tok.end());
+        if(!tok.empty()) v.push_back(std::stod(tok));
+    }
+    return v;
+}
+
+inline double deg2rad(double d){ return d * std::numbers::pi / 180.0; }
+inline double rad2deg(double r){ return r * 180.0 / std::numbers::pi; }
+
+//field on a lon-lat grid
+class LonLatField {
+public:
+    LonLatField() = default;
+    LonLatField(std::vector<double> lons, std::vector<double> lats);
+
+    int nlon() const { return _nlon; }
+    int nlat() const { return _nlat; }
+
+    const std::vector<double>& lons() const { return _lons; }
+    const std::vector<double>& lats() const { return _lats; }
+
+    double lonAt(int i) const { return _lons[i]; }
+    double latAt(int j) const { return _lats[j]; }
+
+    size_t idx(int i, int j) const;
+
+    double northPole(const std::vector<double>& field) const;
+    double southPole(const std::vector<double>& field) const;
+    double bilerp(const std::vector<double>& field, double lon, double lat) const;
+
+private:
+    std::vector<double> _lons, _lats;
+    int _nlon = 0, _nlat = 0;
+};
+
+//Class for managing PREM data
+//Lines are skipped until the linear starting with 0.
+class PREMModel {
+public:
+    PREMModel(const std::string& fileName,
+              double Rref,
+              double buffer_ratio,
+              int    ignored_layers = 0);
+
+    std::vector<double>& getRadiiND();
+    std::vector<double>& getRadii();
+
+    ~PREMModel() = default;
+
+private:
+    double      _Rref;
+    double      _buffer_ratio;
+    int         _ignored_layers;
+
+    std::vector<double> radii;     
+    std::vector<double> radii_nd;
+    std::vector<double> density_list, pWave_list, sWave_list, bulkM_list, shearM_list;
+};
+
+//each surface stored as a Topography class
+class Topography {
+public:
+    Topography() = default;
+    Topography(const Topography&) = default;
+    Topography(Topography&&) noexcept = default;
+    Topography& operator=(const Topography&) = default;
+    Topography& operator=(Topography&&) noexcept = default;
+
+    Topography(const std::string& xyzFile, double Rref = 1.0);
+
+    Topography& operator+=(const Topography& other);
+    friend Topography operator+(const Topography& A, const Topography& B);
+
+    double interp(double lon, double lat) const;
+
+    int nlon() const;
+    int nlat() const;
+    const std::vector<double>& lons() const;
+    const std::vector<double>& lats() const;
+    const std::vector<double>& data() const;
+
+    double lonAt(int i) const;
+    double latAt(int j) const;
+
+    double mean() const;
+
+private:
+    LonLatField _grid;
+    double _Rref = 1.0;
+    std::vector<double> _data;
+
+    Topography(std::vector<double> lons, std::vector<double> lats, double Rref, std::vector<double> data);
+
+    static bool loadXYZ(const std::string& file,
+                        std::vector<double>& L, std::vector<double>& B, std::vector<double>& V);
+
+    void buildGrid(const std::vector<double>& L,
+                   const std::vector<double>& B,
+                   const std::vector<double>& V);
+};
+
+double meanRadiusOfSurface(int surfTag);
+
+//RadialSurface hierarchy
+class RadialSurface {
+public:
+    virtual ~RadialSurface() = default;
+    virtual double radiusAt(double lon, double lat) const = 0;
+};
+
+class FieldRadialSurface final : public RadialSurface {
+public:
+    FieldRadialSurface(const LonLatField& grid, const std::vector<double>& r_field);
+    double radiusAt(double lon, double lat) const override;
+private:
+    const LonLatField& _grid;
+    const std::vector<double>& _r_field;
+};
+
+class SpheroidalRadialSurface final : public RadialSurface {
+public:
+    explicit SpheroidalRadialSurface(double r);
+    double radiusAt(double, double) const override;
+private:
+    double _r;
+};
+
+class EllipsoidalRadialSurface final : public RadialSurface {
+public:
+    EllipsoidalRadialSurface(double a, double b, double c);
+    double radiusAt(double lon, double lat) const override;
+private:
+    double _a, _b, _c;
+};
+
+//RadialMapping 
+class RadialMapping {
+public:
+    RadialMapping(const std::vector<const Topography*>& topo, double topo_exag = 1.0);
+    virtual ~RadialMapping() = default;
+    virtual double displacement(double r, double lon, double lat) const = 0;
+
+protected:
+    double interpTopo(std::size_t i, double lon, double lat) const;
+
+    const std::vector<const Topography*>& _topo;
+    double _topo_exag;
+};
+
+class cubicBandLinearDecay final : public RadialMapping {
+public:
+    cubicBandLinearDecay(const std::vector<const Topography*>& topo,
+                         const std::vector<const RadialSurface*>& base,
+                         double decay,
+                         double topo_exag = 1.0,
+                         std::size_t iInner = 0,
+                         std::size_t iOuter = 1);
+
+    double displacement(double r, double lon, double lat) const override;
+
+private:
+    const std::vector<const RadialSurface*>& _base;
+    double _decay = 0.0;
+    std::size_t _iInner = 0;
+    std::size_t _iOuter = 1;
+};
+
+//inline functions
+void perturbAllNodes(const RadialMapping& mapping);
+
+void tagLayersByRadius(const std::vector<int>& volTags,
+                       const std::string& volPrefix = "volume_",
+                       const std::string& surfPrefix = "surface_");
+
 }  // namespace mfemElasticity

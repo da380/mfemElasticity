@@ -3,6 +3,10 @@
 **/*~
 CMakeLists.txt
 installed/
+mesh/
 *.json
+*.msh
+*.png
+*.clangd
 
 
