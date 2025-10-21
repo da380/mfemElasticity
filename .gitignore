@@ -8,5 +8,5 @@ mesh/
 *.msh
 *.png
 *.clangd
-
+*.in
 

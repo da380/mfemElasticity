@@ -237,10 +237,11 @@ int main(int argc, char *argv[]) {
       auto c =
           PoissonMultipoleOperator(MPI_COMM_WORLD, dfes.get(), &fes, degree);
       if (myid == 0) {
-        end_time = MPI_Wtime();
-        assembly_time = (end_time - start_time);
+          end_time = MPI_Wtime();
+          assembly_time = (end_time - start_time);
       }
       auto rhof = GridFunction(dfes.get());
+
       rhof.ProjectCoefficient(rho_coeff);
       c.AddMult(rhof, b, -1);
     } else {

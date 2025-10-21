@@ -5,8 +5,14 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <ranges>
 #include <vector>
+#include <string>
+#include <tuple>
+#include <limits>
+#include <cstddef>
+#include <stdexcept>
 
 // Simple struct for circles.
 struct Circle {
@@ -59,3 +65,11 @@ std::pair<int, std::vector<int>> createCircle(double x, double y, double r,
 // tags
 std::pair<int, std::vector<int>> createSphere(double x, double y, double z,
                                               double r, double lc_val);
+
+// Tagging all volumes and surfaces via ascending 'average radius' with 1,2,3,... 
+void TagLayersByRadius(const std::vector<int>& volTags,
+                       const std::string& volPrefix = "volume_",
+                       const std::string& surfPrefix = "surface_");
+
+
+double MeanRadiusOfSurface(int surfTag);

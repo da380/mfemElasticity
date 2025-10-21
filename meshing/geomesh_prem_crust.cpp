@@ -3,6 +3,45 @@
 
 #include <gmsh.h>
 #include "mfemElasticity.hpp"
+#include "common.hpp"
+
+void PerturbAllNodes(const mfemElasticity::RadialMapping& mapping)
+{
+    std::vector<std::size_t> tags;
+    std::vector<double> xyz, param;
+    gmsh::model::mesh::getNodes(tags, xyz, param, -1, -1, true, false);
+
+    for (std::size_t i = 0; i < tags.size(); ++i) {
+        double& x = xyz[3*i + 0];
+        double& y = xyz[3*i + 1];
+        double& z = xyz[3*i + 2];
+
+        const double r = std::sqrt(x*x + y*y + z*z);
+        if (r == 0.0) continue;
+
+        const double lon = mfemElasticity::Rad2Deg(std::atan2(y, x));
+        const double lat = mfemElasticity::Rad2Deg(std::asin(z / r));
+
+        const double disp = mapping.Displacement(r, lon, lat);
+        if (!std::isfinite(disp)) {
+            std::ostringstream oss;
+            oss << "Non-finite displacement at node " << tags[i]
+                << " (lon=" << lon << ", lat=" << lat << ", r=" << r << ")";
+            throw std::runtime_error(oss.str());
+        }
+        if (r + disp <= 0.0) {
+            std::ostringstream oss;
+            oss << "Negative or zero resulting radius at node " << tags[i]
+                << " (lon=" << lon << ", lat=" << lat << ", r=" << r
+                << ", disp=" << disp << ")";
+            throw std::runtime_error(oss.str());
+        }
+
+        const double s = (r + disp) / r;
+        x *= s; y *= s; z *= s;
+        gmsh::model::mesh::setNode(tags[i], {x, y, z}, {});
+    }
+}
 
 using namespace mfemElasticity; 
 
@@ -25,7 +64,7 @@ try {
         if (arg == "-prem" && i+1<argc) premFileName = argv[++i];
         else if (arg == "-out" && i+1<argc) outputFileName = argv[++i];
         else if (arg == "-h" && i+1<argc) {
-            auto ms = parseDoubles(argv[++i]);
+            auto ms = ParseDoubles(argv[++i]);
             if (ms.size()==2) { meshSizeMin = ms[0]; meshSizeMax = ms[1]; }
             else { std::cerr << "Error: -h needs a-b\n"; return 1; }
         } else if (arg == "-o" && i+1<argc) elementOrder = std::stoi(argv[++i]);
@@ -52,26 +91,26 @@ try {
     //initialization
     gmsh::initialize(); 
     gmsh::model::add("Earth_PREM_CRUST"); 
-    gtimer.mark("Model created");
+    gtimer.Mark("Model created");
 
     //read PREM and construct layers
     PREMModel prem(premFileName, Rref*1e3, buffer_ratio, ignored_layers); //PREM data is in meters
-    auto& radii = prem.getRadiiND();
+    auto& radii = prem.GetRadiiND();
     if (radii.size() < 3) { std::cerr << "Not enough PREM radii\n"; gmsh::finalize(); return 1; }
     std::cout<<"Radii of "<<radii.size()<<" layers from PREM (without Moho&topo, with the outermost boundary): ";
     for (double r: radii) std::cout<<std::fixed<<std::setprecision(8)<<r<<" ";
     std::cout<<"(The length scale is "<<std::fixed<<std::setprecision(2)<<Rref<<" kilometers.)\n";
-    gtimer.mark("Read PREM and extracted layer boundaries");
+    gtimer.Mark("Read PREM and extracted layer boundaries");
 
     //two sets of topography data
     Topography topo_ext(crustFile_d1, Rref);
     Topography moho(crustFile_d2, Rref);
     Topography topo = topo_ext + moho;
-    gtimer.mark("Loaded CRUST-1.0 grids");
+    gtimer.Mark("Loaded CRUST-1.0 grids");
 
     //OCC and fragment
-    double r_pre_topo = 1.0 + topo.mean();      
-    double r_pre_moho = 1.0 + moho.mean();
+    double r_pre_topo = 1.0 + topo.Mean();      
+    double r_pre_moho = 1.0 + moho.Mean();
     std::cout << std::fixed << std::setprecision(6)
         << "[INFO] Average topo radius  (non-dim) = " << r_pre_topo
         << "  (" << (r_pre_topo*Rref) << " km)\n"
@@ -127,7 +166,7 @@ try {
     gmsh::option::setNumber("Mesh.CharacteristicLengthExtendFromBoundary", 0);
 
     gmsh::model::mesh::generate(3);
-    gtimer.mark("3D mesh generated"); 
+    gtimer.Mark("3D mesh generated"); 
 
     //perturb the nodes
 
@@ -136,7 +175,7 @@ try {
     std::vector<const RadialSurface*> baseSurfaces = { &innerSurface, &outerSurface };
     std::vector<const Topography*> topo_fields = { &moho, &topo };
 
-    cubicBandLinearDecay mapping(
+    CubicBandLinearDecay mapping(
             topo_fields,
             baseSurfaces,
             decay_thickness_nd,
@@ -145,22 +184,22 @@ try {
             1
             );
 
-    gtimer.mark("Applying node perturbation...");
-    perturbAllNodes(mapping);
-    gtimer.mark("Perturbation complete");
+    gtimer.Mark("Applying node perturbation...");
+    PerturbAllNodes(mapping);
+    gtimer.Mark("Perturbation complete");
 
     //tagging
     gmsh::model::removePhysicalGroups();
-    tagLayersByRadius(volTags);
-    gtimer.mark("Tagged all volumes and surfaces (inner->outer = 1..N)");
+    TagLayersByRadius(volTags);
+    gtimer.Mark("Tagged all volumes and surfaces (inner->outer = 1..N)");
 
     gmsh::option::setNumber("Mesh.MshFileVersion", 2.2);
     gmsh::write(outputFileName + ".msh");
     std::cout<<"Wrote "<<outputFileName<<".msh\n";
-    gtimer.mark("Mesh written to disk");
+    gtimer.Mark("Mesh written to disk");
 
     gmsh::finalize(); 
-    gtimer.mark("Finalized Gmsh (done)");
+    gtimer.Mark("Finalized Gmsh (done)");
 
     return 0;
 

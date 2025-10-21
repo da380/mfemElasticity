@@ -87,3 +87,57 @@ std::pair<int, std::vector<int>> createSphere(double x, double y, double z,
 
   return {surface_loop_tag, surface_tags};
 }
+
+void TagLayersByRadius(const std::vector<int>& volTags,
+                       const std::string& volPrefix,
+                       const std::string& surfPrefix)
+{
+    std::vector<std::tuple<int,int,double>> layers; // (vol, outerSurf, r_outer)
+    layers.reserve(volTags.size());
+
+    for (int v : volTags) {
+        gmsh::vectorpair bnd;
+        gmsh::model::getBoundary({{3, v}}, bnd, false, false, false);
+
+        int outerSurf = -1;
+        double rmax = -std::numeric_limits<double>::infinity();
+        for (const auto& p : bnd) {
+            if (p.first != 2) continue;
+            double r = MeanRadiusOfSurface(p.second);
+            if (r > rmax) { rmax = r; outerSurf = p.second; }
+        }
+        if (outerSurf != -1) layers.emplace_back(v, outerSurf, rmax);
+    }
+
+    std::sort(layers.begin(), layers.end(),
+              [](const auto& a, const auto& b){ return std::get<2>(a) < std::get<2>(b); });
+
+    for (std::size_t i = 0; i < layers.size(); ++i) {
+        const int physId = static_cast<int>(i) + 1;
+        const int vTag = std::get<0>(layers[i]);
+        const int sTag = std::get<1>(layers[i]);
+
+        gmsh::model::addPhysicalGroup(3, {vTag}, physId);
+        gmsh::model::setPhysicalName(3, physId, volPrefix + std::to_string(physId));
+
+        gmsh::model::addPhysicalGroup(2, {sTag}, physId);
+        gmsh::model::setPhysicalName(2, physId, surfPrefix + std::to_string(physId));
+    }
+}
+
+double MeanRadiusOfSurface(int surfTag){ 
+    std::vector<std::size_t> nodeTags; 
+    std::vector<double> xyz; 
+    std::vector<double> param; 
+    gmsh::model::mesh::getNodes(nodeTags, xyz, param, 2, surfTag, true, false); 
+    if(xyz.empty()) return 0.0; 
+    double s = 0; 
+    size_t n = xyz.size() / 3; 
+    for (size_t i = 0; i < n; ++i) { 
+        double x = xyz[3*i], y=xyz[3*i+1], z=xyz[3*i+2]; 
+        s += std::sqrt(x*x+y*y+z*z); } 
+
+    return s / double(n); 
+}
+
+
