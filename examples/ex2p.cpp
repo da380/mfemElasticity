@@ -274,52 +274,52 @@ int main(int argc, char *argv[]) {
   solver.SetPrintLevel(1);
 
   if (method == 1) {
-    if (myid == 0) {
-      start_time = MPI_Wtime();
-    }
-    auto c = PoissonDtNOperator(MPI_COMM_WORLD, &fes, degree);
-    if (myid == 0) {
-      end_time = MPI_Wtime();
-      assembly_time = (end_time - start_time);
-    }
-    auto C = c.RAP();
-    auto D = SumOperator(&A, 1, &C, 1, false, false);
-    solver.SetOperator(D);
-    solver.SetPreconditioner(P);
+      if (myid == 0) {
+          start_time = MPI_Wtime();
+      }
+      auto c = PoissonDtNOperator(MPI_COMM_WORLD, &fes, degree);
+      if (myid == 0) {
+          end_time = MPI_Wtime();
+          assembly_time = (end_time - start_time);
+      }
+      auto C = c.RAP();
+      auto D = SumOperator(&A, 1, &C, 1, false, false);
+      solver.SetOperator(D);
+      solver.SetPreconditioner(P);
 
-    if (myid == 0) {
-      start_time = MPI_Wtime();
-    }
-    if (dim == 2) {
+      if (myid == 0) {
+          start_time = MPI_Wtime();
+      }
+      if (dim == 2) {
+          auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
+          orthoSolver.SetSolver(solver);
+          orthoSolver.Mult(B, X);
+      } else {
+          solver.Mult(B, X);
+      }
+      if (myid == 0) {
+          end_time = MPI_Wtime();
+          solver_time = (end_time - start_time);
+      }
+
+  } else {
+      if (myid == 0) {
+          start_time = MPI_Wtime();
+      }
+      solver.SetOperator(A);
+      solver.SetPreconditioner(P);
       auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
       orthoSolver.SetSolver(solver);
       orthoSolver.Mult(B, X);
-    } else {
-      solver.Mult(B, X);
-    }
-    if (myid == 0) {
-      end_time = MPI_Wtime();
-      solver_time = (end_time - start_time);
-    }
-
-  } else {
-    if (myid == 0) {
-      start_time = MPI_Wtime();
-    }
-    solver.SetOperator(A);
-    solver.SetPreconditioner(P);
-    auto orthoSolver = OrthoSolver(MPI_COMM_WORLD);
-    orthoSolver.SetSolver(solver);
-    orthoSolver.Mult(B, X);
-    if (myid == 0) {
-      end_time = MPI_Wtime();
-      solver_time = (end_time - start_time);
-    }
+      if (myid == 0) {
+          end_time = MPI_Wtime();
+          solver_time = (end_time - start_time);
+      }
   }
 
   if (myid == 0) {
-    std::cout << "Assembly time: " << assembly_time << " s" << std::endl;
-    std::cout << "Solver time: " << solver_time << " s" << std::endl;
+      std::cout << "Assembly time: " << assembly_time << " s" << std::endl;
+      std::cout << "Solver time: " << solver_time << " s" << std::endl;
   }
 
   a.RecoverFEMSolution(X, b, x);
@@ -329,43 +329,43 @@ int main(int argc, char *argv[]) {
       linearised == 0 ? exact.Coefficient() : exact.LinearisedCoefficient(uv);
 
   if (residual == 1) {
-    // Subtract exact solution.
-    auto y = ParGridFunction(&fes);
-    y.ProjectCoefficient(exact_coeff);
-    x -= y;
+      // Subtract exact solution.
+      auto y = ParGridFunction(&fes);
+      y.ProjectCoefficient(exact_coeff);
+      x -= y;
   }
 
   // Remove the mean from the solution.
   {
-    auto l = ParLinearForm(&fes);
-    auto z = ParGridFunction(&fes);
-    z = 1.0;
-    auto one = ConstantCoefficient(1);
-    l.AddDomainIntegrator(new DomainLFIntegrator(one));
-    l.Assemble();
-    auto area = l(z);
-    l /= area;
-    auto px = l(x);
-    x -= px;
+      auto l = ParLinearForm(&fes);
+      auto z = ParGridFunction(&fes);
+      z = 1.0;
+      auto one = ConstantCoefficient(1);
+      l.AddDomainIntegrator(new DomainLFIntegrator(one));
+      l.Assemble();
+      auto area = l(z);
+      l /= area;
+      auto px = l(x);
+      x -= px;
   }
 
   if (residual == 1) {
-    auto dom_marker = Array<int>(pmesh.attributes.Max());
-    dom_marker = 0;
-    dom_marker[0] = 1;
-    auto submesh = ParSubMesh::CreateFromDomain(pmesh, dom_marker);
-    auto subfes = ParFiniteElementSpace(&submesh, &H1);
-    auto subx = ParGridFunction(&subfes);
-    submesh.Transfer(x, subx);
-    auto zero = ConstantCoefficient(0);
-    auto error = subx.ComputeL2Error(zero);
-    subx.ProjectCoefficient(exact_coeff);
-    auto norm = subx.ComputeL2Error(zero);
-    error /= norm;
+      auto dom_marker = Array<int>(pmesh.attributes.Max());
+      dom_marker = 0;
+      dom_marker[0] = 1;
+      auto submesh = ParSubMesh::CreateFromDomain(pmesh, dom_marker);
+      auto subfes = ParFiniteElementSpace(&submesh, &H1);
+      auto subx = ParGridFunction(&subfes);
+      submesh.Transfer(x, subx);
+      auto zero = ConstantCoefficient(0);
+      auto error = subx.ComputeL2Error(zero);
+      subx.ProjectCoefficient(exact_coeff);
+      auto norm = subx.ComputeL2Error(zero);
+      error /= norm;
 
-    if (myid == 0) {
-      cout << "L2 error: " << error << endl;
-    }
+      if (myid == 0) {
+          cout << "L2 error: " << error << endl;
+      }
   }
 
   // Write to file.
@@ -389,8 +389,8 @@ int main(int argc, char *argv[]) {
   sol_sock.precision(8);
   sol_sock << "solution\n" << pmesh << x << flush;
   if (dim == 2) {
-    sol_sock << "keys Rjlbc\n" << flush;
+      sol_sock << "keys Rjlbc\n" << flush;
   } else {
-    sol_sock << "keys RRRilmc\n" << flush;
+      sol_sock << "keys RRRilmc\n" << flush;
   }
 }

@@ -1,47 +1,9 @@
-//Sample run:
-//./geomesh_prem_crust -prem data/prem.nocrust -out mesh/prem_with_crust_3 -h 20-200 -o 2 -buf 0.2 -alg 1 -alg2d 6 -Rref 6371 -crust_d1 data/crust-1.0/crsthk.xyz -crust_d2 data/crust-1.0/depthtomoho.xyz -exag 20 -il 6 -decay_thickness 300
+// Sample run:
+// ./geomesh_prem_crust -prem data/prem.nocrust -out mesh/prem_with_crust_3 -h 20-200 -o 2 -buf 0.2 -alg 1 -alg2d 6 -Rref 6371 -crust_d1 data/crust-1.0/crsthk.xyz -crust_d2 data/crust-1.0/depthtomoho.xyz -exag 20 -il 6 -decay_thickness 300
 
 #include <gmsh.h>
 #include "mfemElasticity.hpp"
 #include "common.hpp"
-
-void PerturbAllNodes(const mfemElasticity::RadialMapping& mapping)
-{
-    std::vector<std::size_t> tags;
-    std::vector<double> xyz, param;
-    gmsh::model::mesh::getNodes(tags, xyz, param, -1, -1, true, false);
-
-    for (std::size_t i = 0; i < tags.size(); ++i) {
-        double& x = xyz[3*i + 0];
-        double& y = xyz[3*i + 1];
-        double& z = xyz[3*i + 2];
-
-        const double r = std::sqrt(x*x + y*y + z*z);
-        if (r == 0.0) continue;
-
-        const double lon = mfemElasticity::Rad2Deg(std::atan2(y, x));
-        const double lat = mfemElasticity::Rad2Deg(std::asin(z / r));
-
-        const double disp = mapping.Displacement(r, lon, lat);
-        if (!std::isfinite(disp)) {
-            std::ostringstream oss;
-            oss << "Non-finite displacement at node " << tags[i]
-                << " (lon=" << lon << ", lat=" << lat << ", r=" << r << ")";
-            throw std::runtime_error(oss.str());
-        }
-        if (r + disp <= 0.0) {
-            std::ostringstream oss;
-            oss << "Negative or zero resulting radius at node " << tags[i]
-                << " (lon=" << lon << ", lat=" << lat << ", r=" << r
-                << ", disp=" << disp << ")";
-            throw std::runtime_error(oss.str());
-        }
-
-        const double s = (r + disp) / r;
-        x *= s; y *= s; z *= s;
-        gmsh::model::mesh::setNode(tags[i], {x, y, z}, {});
-    }
-}
 
 using namespace mfemElasticity; 
 
@@ -189,7 +151,6 @@ try {
     gtimer.Mark("Perturbation complete");
 
     //tagging
-    gmsh::model::removePhysicalGroups();
     TagLayersByRadius(volTags);
     gtimer.Mark("Tagged all volumes and surfaces (inner->outer = 1..N)");
 
