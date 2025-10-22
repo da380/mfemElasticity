@@ -1,12 +1,4 @@
 **/*build*
 **/install
 **/*~
-CMakeLists.txt
-installed/
-mesh/
-*.json
-*.msh
-*.png
-*.clangd
-*.in
 
