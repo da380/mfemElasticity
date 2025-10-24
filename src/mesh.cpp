@@ -283,6 +283,49 @@ void SphericalMeshHelper::SetBoundaryMarker(mfem::ParMesh* mesh) {
   assert(found == 1 && same == 1);
   _bdr_radius = radius;
 }
+#endif
+
+#ifdef MFEM_USE_MPI
+
+std::tuple<MPI_Comm, bool, int> SplitBoundaryCommunicator(
+    mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker) {
+  MPI_Comm parent_comm = mesh->GetComm();
+  int my_rank = mesh->GetMyRank();
+
+  int local_has_boundary = 0;
+  for (int i = 0; i < mesh->GetNBE(); i++) {
+    int attr = mesh->GetBdrAttribute(i);
+    if (bdr_marker[attr - 1] == 1) {
+      local_has_boundary = 1;
+      break;
+    }
+  }
+  bool is_boundary_rank = (local_has_boundary == 1);
+  int color = is_boundary_rank ? 1 : MPI_UNDEFINED;
+
+  MPI_Comm bdr_comm;
+  MPI_Comm_split(parent_comm, color, my_rank, &bdr_comm);
+
+  int bdr_local_rank = -1;
+  if (is_boundary_rank) {
+    MPI_Comm_rank(bdr_comm, &bdr_local_rank);
+  }
+
+  int bdr_root_global_rank = -1;
+  if (bdr_local_rank == 0) {
+    bdr_root_global_rank = my_rank;
+  }
+
+  MPI_Allreduce(MPI_IN_PLACE, &bdr_root_global_rank, 1, MPI_INT, MPI_MAX,
+                parent_comm);
+
+  return {bdr_comm, is_boundary_rank, bdr_root_global_rank};
+}
+
+std::tuple<MPI_Comm, bool, int> SplitBoundaryCommunicator(mfem::ParMesh* mesh) {
+  auto bdr_marker = ExternalBoundaryMarker(mesh);
+  return SplitBoundaryCommunicator(mesh, bdr_marker);
+}
 
 #endif
 

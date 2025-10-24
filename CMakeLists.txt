@@ -40,13 +40,17 @@ if(USE_MPI)
     endif()
 endif()
 
+include(FetchContent)
+
+
+
 
 # Set up the library 
 add_library(${PROJECT_NAME} STATIC)
 
 # Add in linked libraries.
 if(USE_MPI)
-    target_link_libraries(${PROJECT_NAME} PUBLIC mfem MPI::MPI_CXX)
+    target_link_libraries(${PROJECT_NAME} PUBLIC mfem MPI::MPI_CXX )
 else()
     target_link_libraries(${PROJECT_NAME} PUBLIC mfem)
 endif()
@@ -95,7 +99,7 @@ target_include_directories(
            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 # Install your library (headers and library file)
-install(TARGETS mfemElasticity
+install(TARGETS mfemElasticity 
         EXPORT mfemElasticityTargets
         DESTINATION lib)
 install(DIRECTORY include/

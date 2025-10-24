@@ -4,10 +4,8 @@
 #include <cmath>
 #include <memory>
 
-#include "mesh.hpp"  // Assuming this is mfemElasticity/mesh.hpp
-#include "mfem.hpp"
+#include "mesh.hpp"
 #include "mfemElasticity/legendre.hpp"
-#include "mfemElasticity/mesh.hpp"  // Redundant if the first "mesh.hpp" is already this one, but safe
 
 namespace mfemElasticity {
 
@@ -82,6 +80,14 @@ class PoissonDtNOperator : public mfem::Operator,
   mfem::ParFiniteElementSpace* _pfes;
   /** @brief MPI communicator used for parallel operations. */
   MPI_Comm _comm;
+
+  /** @brief Communicator for ranks owning the relevant boundary. */
+  MPI_Comm _bdr_comm;
+  /** @brief Global rank of the root processor in _bdr_comm. */
+  int _bdr_root_rank;
+  /** @brief True if this rank is part of the _bdr_comm. */
+  bool _has_boundary;
+
 #endif
 
 #ifndef MFEM_THREAD_SAFE
@@ -729,7 +735,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
  * -# A `mfem::Coefficient` is provided which specifies the scalar part,
  * \f$f\f$, of a radial mapping \f$\boldsymbol{\xi}(\bvec{x}) = f(\bvec{x})
  * \bvec{x}\f$. The form of \f$\bvec{a}\f$ is then calculated numerically.
- * -# A `mfem::VectorCoefficient` which directly specified
+ * -# A `mfem::VectorCoefficient` which directly specifies
  * \f$\boldsymbol{\xi}\f$ is provided. The form of \f$\bvec{a}\f$ is then
  * calculated numerically.
  * -# A `mfem::MatrixCoefficient` specifying \f$\bvec{a}\f$ is given directly.
