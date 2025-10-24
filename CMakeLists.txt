@@ -40,10 +40,6 @@ if(USE_MPI)
     endif()
 endif()
 
-include(FetchContent)
-
-
-
 
 # Set up the library 
 add_library(${PROJECT_NAME} STATIC)

@@ -8,8 +8,6 @@ set(MFEM_DIR @MFEM_DIR@)
 find_dependency(mfem NAMES mfem MFEM HINTS ${MFEM_DIR})
 message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 
-# Find the new dependency on the Dimensions library.
-find_dependency(Dimensions)
 
 if(USE_MPI)
     enable_language(C)
