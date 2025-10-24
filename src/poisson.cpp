@@ -18,6 +18,13 @@ void PoissonDtNOperator::SetUp() {
 #ifdef MFEM_USE_MPI
   if (_parallel) {
     SetBoundaryMarker(_pfes->GetParMesh());
+
+    auto [comm, has_bdr, root_rank] =
+        SplitBoundaryCommunicator(_pfes->GetParMesh(), _bdr_marker);
+    _bdr_comm = comm;
+    _has_boundary = has_bdr;
+    _bdr_root_rank = root_rank;
+
   } else {
     SetBoundaryMarker(_fes->GetMesh());
   }
@@ -79,8 +86,10 @@ void PoissonDtNOperator::Mult(const mfem::Vector& x, mfem::Vector& y) const {
 
 #ifdef MFEM_USE_MPI
   if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                  MPI_SUM, _comm);
+    if (_has_boundary) {
+      MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
+                    MPI_SUM, _bdr_comm);  // <-- Use _bdr_comm
+    }
   }
 #endif
 
@@ -1225,7 +1234,7 @@ void TransformedLaplaceIntegrator::AssembleElementMatrix2(
   }
 
   if (Q) {
-    // Evaluate radial function and trial nodes.
+    // Evaluate radial function at trial nodes.
     x.SetSize(dim);
     df.SetSize(dim);
     fs.SetSize(trial_dof);

@@ -424,4 +424,48 @@ struct SphericalMeshHelper {
 #endif
 };
 
+#ifdef MFEM_USE_MPI
+
+/**
+ * @brief Splits a communicator, creating a new one only for ranks owning
+ * boundary elements.
+ *
+ * This function identifies all MPI ranks that own at least one boundary
+ * element matching the provided boundary marker. It then calls
+ * `MPI_Comm_split` to create a new communicator (`bdr_comm`) containing
+ * only these "boundary" ranks.
+ *
+ * @param mesh Pointer to the mfem::ParMesh object.
+ * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
+ * (1 for inclusion, 0 for exclusion) to consider.
+ * @return A `std::tuple` containing:
+ * - `MPI_Comm`: The new communicator. Ranks not owning the boundary will
+ * receive `MPI_COMM_NULL`.
+ * - `bool`: True if the current rank is part of the new communicator,
+ * false otherwise.
+ * - `int`: The *global* rank (in the parent communicator) of the root
+ * (rank 0) of the new boundary communicator. This is needed for
+ * `MPI_Bcast` operations from the boundary group to all ranks.
+ */
+std::tuple<MPI_Comm, bool, int> SplitBoundaryCommunicator(
+    mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker);
+
+/**
+ * @brief Splits a communicator for ranks owning *external* boundary
+ * elements.
+ *
+ * This overload automatically uses `ExternalBoundaryMarker` to identify
+ * ranks owning the external boundary.
+ *
+ * @param mesh Pointer to the mfem::ParMesh object.
+ * @return A `std::tuple` containing:
+ * - `MPI_Comm`: The new communicator (`MPI_COMM_NULL` for non-boundary
+ * ranks).
+ * - `bool`: True if the current rank is part of the new communicator.
+ * - `int`: The *global* rank of the new communicator's root.
+ */
+std::tuple<MPI_Comm, bool, int> SplitBoundaryCommunicator(mfem::ParMesh* mesh);
+
+#endif
+
 }  // namespace mfemElasticity
