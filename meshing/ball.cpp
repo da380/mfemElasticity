@@ -12,34 +12,34 @@
 // Global parameters for the mesh size callback
 // In a larger application, these might be passed via a struct or class
 // or managed differently, but for a direct translation, global constants work.
-const double G_x0 = 0.0;
-const double G_y0 = 0.25;
-const double G_z0 = 0.0;
-const double G_a = 0.7;
-const double G_b = 10.0;
-const double G_small = 0.025;
-const double G_big = 0.05;
-const double G_fac = 0.2;
+const double x_0 = 0.0;
+const double y_0 = 0.25;
+const double z_0 = 0.0;
+const double a = 0.7;
+const double b = 1.0;
+const double small = 0.025;
+const double big = 0.05;
+const double fac = 0.2;
 
 // Custom mesh size callback function
 // The signature must match gmsh::model::mesh::setSizeCallback's expectation
 double meshSizeCallback(int dim, int tag, double x, double y, double z,
                         double lc) {
-  double r0 = std::sqrt(std::pow(x - G_x0, 2) + std::pow(y - G_y0, 2) +
-                        std::pow(z - G_z0, 2));
+  double r0 = std::sqrt(std::pow(x - x_0, 2) + std::pow(y - y_0, 2) +
+                        std::pow(z - z_0, 2));
   double r1 = std::sqrt(std::pow(x, 2) + std::pow(y, 2) + std::pow(z, 2));
 
-  double d0 = std::abs(r0 - G_a);
-  double d1 = std::abs(r1 - G_b);
+  double d0 = std::abs(r0 - a);
+  double d1 = std::abs(r1 - b);
 
-  double size = G_big;
+  double size = big;
 
-  if (d0 < G_fac * G_a) {
-    size = G_small + (G_big - G_small) * d0 / (G_fac * G_a);
+  if (d0 < fac * a) {
+    size = small + (big - small) * d0 / (fac * a);
   }
 
-  if (d1 < G_fac * G_b) {
-    size = std::min(size, 2 * G_big - G_big * d1 / (G_fac * G_b));
+  if (d1 < fac * b) {
+    size = std::min(size, 2 * big - big * d1 / (fac * b));
   }
 
   return size;
@@ -62,12 +62,12 @@ int main(int argc, char **argv) {
   const double lc_val = 0.1;
 
   // Create the two spheres
-  auto sphere1_info = createSphere(G_x0, G_y0, G_z0, G_a, lc_val);
+  auto sphere1_info = createSphere(x_0, y_0, z_0, a, lc_val);
   int sl1 = sphere1_info.first;
   std::vector<int> s_tags1 =
       sphere1_info.second;  // Surface tags of inner sphere
 
-  auto sphere2_info = createSphere(0, 0, 0, G_b, lc_val);
+  auto sphere2_info = createSphere(0., 0., 0., b, lc_val);
   int sl2 = sphere2_info.first;
   std::vector<int> s_tags2 =
       sphere2_info.second;  // Surface tags of outer sphere

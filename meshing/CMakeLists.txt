@@ -12,6 +12,8 @@ target_link_libraries(circle_test meshing)
 add_executable(sphere_test sphere_test.cpp )
 target_link_libraries(sphere_test meshing)
 
+add_executable(disk disk.cpp )
+target_link_libraries(disk  meshing)
 
 
 add_executable(offset_disk offset_disk.cpp )
