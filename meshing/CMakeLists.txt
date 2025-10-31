@@ -22,6 +22,9 @@ target_link_libraries(offset_disk  meshing)
 add_executable(ball ball.cpp )
 target_link_libraries(ball meshing)
 
+add_executable(offset_ball offset_ball.cpp )
+target_link_libraries(offset_ball meshing)
+
 add_executable(geomesh_prem_crust geomesh_prem_crust.cpp )
 target_link_libraries(geomesh_prem_crust meshing mfemElasticity)
 
