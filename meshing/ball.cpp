@@ -16,8 +16,8 @@ const double x_0 = 0.0;
 const double y_0 = 0.0;
 const double z_0 = 0.0;
 const double a = 1.0;
-const double small = 0.025;
-const double big = 0.05;
+const double small = 0.05;
+const double big = 0.1;
 const double fac = 0.2;
 
 // Custom mesh size callback function
@@ -58,9 +58,6 @@ int main(int argc, char **argv) {
   // v1 is the inner sphere volume
   int v1 = gmsh::model::geo::addVolume({sl1});
 
-  // Remove duplicates (e.g., points, curves, surfaces that might be shared)
-  gmsh::model::occ::removeAllDuplicates();  // Use OCC's removeAllDuplicates if
-                                            // using OCC kernel
   gmsh::model::geo::synchronize();  // Synchronize the CAD kernel with Gmsh's
                                     // model
 
