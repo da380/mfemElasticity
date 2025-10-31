@@ -83,7 +83,6 @@ if(BUILD_EXAMPLES OR BUILD_TESTS)
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             )
     add_dependencies(mfemElasticity CopyData)        
-
 endif()
 
 # Add standard install locations. 

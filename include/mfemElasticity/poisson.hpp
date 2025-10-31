@@ -743,7 +743,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
  * There is also a constructor for which no coefficients are provided, this
  * corresponding to the identity transformation.
  */
-class TransformedLaplaceIntegrator : public mfem::BilinearFormIntegrator {
+class TransformedDiffusionIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q =
       nullptr; /**< Scalar coefficient for radial transformation. */
@@ -764,7 +764,7 @@ and intermediate matrices during integration. */
    * @brief Constructor for the idenity mapping.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
-  TransformedLaplaceIntegrator(const mfem::IntegrationRule* ir = nullptr)
+  TransformedDiffusionIntegrator(const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
 
   /**
@@ -773,8 +773,8 @@ and intermediate matrices during integration. */
    * @param q A reference to the `mfem::Coefficient` \f$ q \f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
-  TransformedLaplaceIntegrator(mfem::Coefficient& q,
-                               const mfem::IntegrationRule* ir = nullptr)
+  TransformedDiffusionIntegrator(mfem::Coefficient& q,
+                                 const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
 
   /**
@@ -783,8 +783,8 @@ and intermediate matrices during integration. */
    * @param qv A reference to the `mfem::VectorCoefficient` \f$ q \f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
-  TransformedLaplaceIntegrator(mfem::VectorCoefficient& qv,
-                               const mfem::IntegrationRule* ir = nullptr)
+  TransformedDiffusionIntegrator(mfem::VectorCoefficient& qv,
+                                 const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
 
   /**
@@ -793,8 +793,8 @@ and intermediate matrices during integration. */
    * @param qm A reference to the `mfem::MatrixCoefficient` \f$ q \f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
-  TransformedLaplaceIntegrator(mfem::MatrixCoefficient& qm,
-                               const mfem::IntegrationRule* ir = nullptr)
+  TransformedDiffusionIntegrator(mfem::MatrixCoefficient& qm,
+                                 const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QM{&qm} {}
 
   /**
@@ -851,6 +851,37 @@ and intermediate matrices during integration. */
       const mfem::ElementTransformation& trans) const {
     return &GetRule(trial_fe, test_fe, trans);
   }
+};
+
+class DiffeomorphismCoefficient : public mfem::VectorCoefficient {
+ private:
+  mfem::VectorCoefficient* _QV = nullptr;
+  mfem::Coefficient* _Q = nullptr;
+
+ public:
+  DiffeomorphismCoefficient(int dim);
+
+  DiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
+
+  DiffeomorphismCoefficient(int dim, mfem::VectorCoefficient& QV);
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip);
+};
+
+class TransformedFunctionCoefficient : public mfem::Coefficient {
+ private:
+  mfem::VectorCoefficient* xi_;
+  std::function<mfem::real_t(const mfem::Vector&)> f_;
+
+ public:
+  TransformedFunctionCoefficient(
+      mfem::VectorCoefficient& xi,
+      std::function<mfem::real_t(const mfem::Vector&)> f)
+      : xi_{&xi}, f_{std::move(f)} {}
+
+  mfem::real_t Eval(mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
 };
 
 }  // namespace mfemElasticity

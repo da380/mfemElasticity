@@ -13,11 +13,12 @@
 // In a larger application, these might be passed via a struct or class
 // or managed differently, but for a direct translation, global constants work.
 const double x_0 = 0.0;
-const double y_0 = 0.0;
+const double y_0 = 0.25;
 const double z_0 = 0.0;
-const double a = 1.0;
-const double small = 0.05;
-const double big = 0.1;
+const double a = 0.7;
+const double b = 1.0;
+const double small = 0.025;
+const double big = 0.05;
 const double fac = 0.2;
 
 // Custom mesh size callback function
@@ -26,10 +27,22 @@ double meshSizeCallback(int dim, int tag, double x, double y, double z,
                         double lc) {
   double r0 = std::sqrt(std::pow(x - x_0, 2) + std::pow(y - y_0, 2) +
                         std::pow(z - z_0, 2));
+  double r1 = std::sqrt(std::pow(x, 2) + std::pow(y, 2) + std::pow(z, 2));
 
   double d0 = std::abs(r0 - a);
+  double d1 = std::abs(r1 - b);
 
-  return d0 < fac * a ? small + (big - small) * d0 / (fac * a) : big;
+  double size = big;
+
+  if (d0 < fac * a) {
+    size = small + (big - small) * d0 / (fac * a);
+  }
+
+  if (d1 < fac * b) {
+    size = std::min(size, 2 * big - big * d1 / (fac * b));
+  }
+
+  return size;
 }
 
 int main(int argc, char **argv) {
@@ -54,19 +67,33 @@ int main(int argc, char **argv) {
   std::vector<int> s_tags1 =
       sphere1_info.second;  // Surface tags of inner sphere
 
+  auto sphere2_info = createSphere(0., 0., 0., b, lc_val);
+  int sl2 = sphere2_info.first;
+  std::vector<int> s_tags2 =
+      sphere2_info.second;  // Surface tags of outer sphere
+
   // Create volumes
   // v1 is the inner sphere volume
   int v1 = gmsh::model::geo::addVolume({sl1});
+  // v2 is the volume between the outer sphere and the inner sphere
+  int v2 = gmsh::model::geo::addVolume({sl2, sl1});
 
+  // Remove duplicates (e.g., points, curves, surfaces that might be shared)
+  gmsh::model::occ::removeAllDuplicates();  // Use OCC's removeAllDuplicates if
+                                            // using OCC kernel
   gmsh::model::geo::synchronize();  // Synchronize the CAD kernel with Gmsh's
                                     // model
 
   // Add Physical Groups for volumes and surfaces
   gmsh::model::addPhysicalGroup(3, {v1}, 1);  // Physical Volume 1: Inner sphere
+  gmsh::model::addPhysicalGroup(
+      3, {v2}, 2);  // Physical Volume 2: Volume between spheres
 
   // Physical surfaces for the boundaries
   gmsh::model::addPhysicalGroup(
       2, s_tags1, 1);  // Physical Surface 1: Inner sphere boundary
+  gmsh::model::addPhysicalGroup(
+      2, s_tags2, 2);  // Physical Surface 2: Outer sphere boundary
 
   // Set meshing options
   gmsh::option::setNumber("Mesh.ElementOrder", 2);
@@ -77,7 +104,7 @@ int main(int argc, char **argv) {
   gmsh::model::mesh::generate(3);
 
   // Write the mesh to a file
-  gmsh::write("ball.msh");
+  gmsh::write("spherical_offset.msh");
 
   // Launch the GUI to see the results (if not running with -nopopup)
   bool no_popup = false;

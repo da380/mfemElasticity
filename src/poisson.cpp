@@ -1,5 +1,7 @@
 #include "mfemElasticity/poisson.hpp"
 
+#include <functional>
+
 namespace mfemElasticity {
 
 /*****************************************************************
@@ -1191,14 +1193,14 @@ void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix3D(
 ******************************************************************
 *****************************************************************/
 
-const mfem::IntegrationRule& TransformedLaplaceIntegrator::GetRule(
+const mfem::IntegrationRule& TransformedDiffusionIntegrator::GetRule(
     const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
     const mfem::ElementTransformation& Trans) {
   const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
   return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
 }
 
-void TransformedLaplaceIntegrator::AssembleElementMatrix2(
+void TransformedDiffusionIntegrator::AssembleElementMatrix2(
     const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
     mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
   using namespace mfem;
@@ -1304,6 +1306,43 @@ void TransformedLaplaceIntegrator::AssembleElementMatrix2(
       AddMult_a_ABt(w, test_dshape, trial_dshape, elmat);
     }
   }
+}
+
+DiffeomorphismCoefficient::DiffeomorphismCoefficient(int dim)
+    : mfem::VectorCoefficient(dim) {}
+
+DiffeomorphismCoefficient::DiffeomorphismCoefficient(int dim,
+                                                     mfem::Coefficient& Q)
+    : mfem::VectorCoefficient(dim), _Q{&Q} {}
+
+DiffeomorphismCoefficient::DiffeomorphismCoefficient(
+    int dim, mfem::VectorCoefficient& QV)
+    : mfem::VectorCoefficient(dim), _QV{&QV} {
+  MFEM_ASSERT(_QV.getDim() == dim, "Dimension mismatch");
+}
+
+void DiffeomorphismCoefficient::Eval(mfem::Vector& V,
+                                     mfem::ElementTransformation& T,
+                                     const mfem::IntegrationPoint& ip) {
+  if (_QV) {
+    _QV->Eval(V, T, ip);
+  } else {
+    V.SetSize(vdim);
+    T.Transform(ip, V);
+    if (_Q) {
+      V *= _Q->Eval(T, ip);
+    }
+  }
+}
+
+mfem::real_t TransformedFunctionCoefficient::Eval(
+    mfem::ElementTransformation& T, const mfem::IntegrationPoint& ip) {
+  using namespace mfem;
+
+  real_t data[3];
+  Vector y(data, 3);
+  xi_->Eval(y, T, ip);
+  return f_(y);
 }
 
 }  // namespace mfemElasticity
