@@ -1356,31 +1356,16 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
   }
 }
 
-DiffeomorphismCoefficient::DiffeomorphismCoefficient(int dim)
-    : mfem::VectorCoefficient(dim) {}
-
-DiffeomorphismCoefficient::DiffeomorphismCoefficient(int dim,
-                                                     mfem::Coefficient& Q)
+RadialDiffeomorphismCoefficient::RadialDiffeomorphismCoefficient(
+    int dim, mfem::Coefficient& Q)
     : mfem::VectorCoefficient(dim), _Q{&Q} {}
 
-DiffeomorphismCoefficient::DiffeomorphismCoefficient(
-    int dim, mfem::VectorCoefficient& QV)
-    : mfem::VectorCoefficient(dim), _QV{&QV} {
-  MFEM_ASSERT(_QV.getDim() == dim, "Dimension mismatch");
-}
-
-void DiffeomorphismCoefficient::Eval(mfem::Vector& V,
-                                     mfem::ElementTransformation& T,
-                                     const mfem::IntegrationPoint& ip) {
-  if (_QV) {
-    _QV->Eval(V, T, ip);
-  } else {
-    V.SetSize(vdim);
-    T.Transform(ip, V);
-    if (_Q) {
-      V *= _Q->Eval(T, ip);
-    }
-  }
+void RadialDiffeomorphismCoefficient::Eval(mfem::Vector& V,
+                                           mfem::ElementTransformation& T,
+                                           const mfem::IntegrationPoint& ip) {
+  V.SetSize(vdim);
+  T.Transform(ip, V);
+  V *= _Q->Eval(T, ip);
 }
 
 mfem::real_t TransformedFunctionCoefficient::Eval(

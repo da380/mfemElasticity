@@ -15,6 +15,12 @@ target_link_libraries(sphere_test meshing)
 add_executable(disk disk.cpp )
 target_link_libraries(disk  meshing)
 
+add_executable(disk2 disk2.cpp )
+target_link_libraries(disk2  meshing)
+
+add_executable(diskn diskn.cpp )
+target_link_libraries(diskn  meshing)
+
 
 add_executable(offset_disk offset_disk.cpp )
 target_link_libraries(offset_disk  meshing)

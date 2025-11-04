@@ -968,17 +968,13 @@ and intermediate matrices during integration. */
   }
 };
 
-class DiffeomorphismCoefficient : public mfem::VectorCoefficient {
+class RadialDiffeomorphismCoefficient : public mfem::VectorCoefficient {
  private:
   mfem::VectorCoefficient* _QV = nullptr;
   mfem::Coefficient* _Q = nullptr;
 
  public:
-  DiffeomorphismCoefficient(int dim);
-
-  DiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
-
-  DiffeomorphismCoefficient(int dim, mfem::VectorCoefficient& QV);
+  RadialDiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
 
   void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
             const mfem::IntegrationPoint& ip);
