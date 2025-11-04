@@ -245,7 +245,7 @@ int main(int argc, char *argv[]) {
       c.AddMult(rhof, b, -1);
     } else {
       auto c = PoissonLinearisedMultipoleOperator(MPI_COMM_WORLD, vfes.get(),
-                                                  &fes, degree);
+                                                  &fes, rho_coeff, degree);
       c.AddMult(*u, b, -1);
     }
   }

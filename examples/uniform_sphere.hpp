@@ -1,12 +1,13 @@
 #pragma once
 
 #include <cmath>
+#include <numbers>
 
 #include "mfem.hpp"
 
 class UniformSphereSolution {
  private:
-  static constexpr mfem::real_t pi = std::atan(1) * 4;
+  static constexpr mfem::real_t pi = std::numbers::pi_v<mfem::real_t>;
 
   int _dim;
   mfem::real_t _r;

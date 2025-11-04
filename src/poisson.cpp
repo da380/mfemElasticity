@@ -742,6 +742,23 @@ void PoissonLinearisedMultipoleOperator::SetUp() {
 
 PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
+    mfem::Coefficient& density, int degree, const mfem::Array<int>& dom_marker)
+    : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
+      _tr_fes{tr_fes},
+      _te_fes{te_fes},
+      _density{&density},
+      _dim{tr_fes->GetMesh()->Dimension()},
+      _degree{degree},
+      _coeff_dim{CoeffDim()},
+      _dom_marker{dom_marker},
+      _lmat(te_fes->GetVSize(), _coeff_dim),
+      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+  SetUp();
+  Assemble();
+}
+
+PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
+    mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
     int degree, const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
       _tr_fes{tr_fes},
@@ -757,6 +774,29 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
 }
 
 #ifdef MFEM_USE_MPI
+
+PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
+    MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
+    mfem::ParFiniteElementSpace* te_fes, mfem::Coefficient& density, int degree,
+    const mfem::Array<int>& dom_marker)
+    : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
+      _parallel{true},
+      _comm{comm},
+      _tr_fes{tr_fes},
+      _te_fes{te_fes},
+      _tr_pfes{tr_fes},
+      _te_pfes{te_fes},
+      _density{&density},
+      _dim{tr_fes->GetMesh()->Dimension()},
+      _degree{degree},
+      _coeff_dim{CoeffDim()},
+      _dom_marker{dom_marker},
+      _lmat(te_fes->GetVSize(), _coeff_dim),
+      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+  SetUp();
+  Assemble();
+}
+
 PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
     mfem::ParFiniteElementSpace* te_fes, int degree,
@@ -940,6 +980,10 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix2D(
 
     auto w = fac * Trans.Weight() * ip.weight;
 
+    if (_density) {
+      w *= _density->Eval(Trans, ip);
+    }
+
     MultVWt(shape, _c0, part_elmat);
     elmat.AddMatrix(w * cos, part_elmat, 0, 0);
     elmat.AddMatrix(w * sin, part_elmat, dof, 0);
@@ -1101,6 +1145,10 @@ void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
 
     fe.CalcShape(ip, shape);
     auto w = Trans.Weight() * ip.weight;
+
+    if (_density) {
+      w *= _density->Eval(Trans, ip);
+    }
 
     MultVWt(shape, _c0, part_elmat);
     elmat.AddMatrix(w * sin_theta * cos, part_elmat, 0, 0);
