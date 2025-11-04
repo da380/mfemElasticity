@@ -213,7 +213,8 @@ int main(int argc, char *argv[]) {
       rhof.ProjectCoefficient(rho_coeff);
       c.AddMult(rhof, b, -1);
     } else {
-      auto c = PoissonLinearisedMultipoleOperator(vfes.get(), &fes, degree);
+      auto c = PoissonLinearisedMultipoleOperator(vfes.get(), &fes, rho_coeff,
+                                                  degree);
       c.AddMult(*u, b, -1);
     }
   }

@@ -474,6 +474,8 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
   mfem::FiniteElementSpace* _tr_fes;
   /** @brief Pointer to the test finite element space. */
   mfem::FiniteElementSpace* _te_fes;
+  /** @brief Pointer to mfem::Coefficient for the density */
+  mfem::Coefficient* _density = nullptr;
   /** @brief Spatial dimension of the problem (2 for 2D, 3 for 3D). */
   int _dim;
   /** @brief Polynomial degree of the finite element spaces. */
@@ -589,6 +591,23 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @brief Constructs a serial PoissonLinearisedMultipoleOperator.
    * @param tr_fes Pointer to the trial finite element space.
    * @param te_fes Pointer to the test finite element space.
+   * @param density Reference to an mfem::Coefficient for the equilibrium
+   * density.
+   * @param degree The polynomial degree of the FE spaces.
+   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
+   * (1 for inclusion, 0 for exclusion) to consider for assembly.
+   */
+  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                                     mfem::FiniteElementSpace* te_fes,
+                                     mfem::Coefficient& density, int degree,
+                                     const mfem::Array<int>& dom_marker);
+
+  /**
+   * @brief Constructs a serial PoissonLinearisedMultipoleOperator. This
+   * overload doesn't take in a density coefficient, with the desnsity
+   * defaulting to the constant field with value equal to one.
+   * @param tr_fes Pointer to the trial finite element space.
+   * @param te_fes Pointer to the test finite element space.
    * @param degree The polynomial degree of the FE spaces.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly.
@@ -599,13 +618,51 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
                                      const mfem::Array<int>& dom_marker);
 
   /**
+   * @brief Constructs a serial PoissonLinearisedMultipoleOperator. This
+   * overload automatically uses `AllDomainsMarker` from `tr_fes->GetMesh()`
+   * to include all domain attributes in the assembly.
+   * @param tr_fes Pointer to the trial finite element space.
+   * @param te_fes Pointer to the test finite element space.
+   * @param density Reference to an mfem::Coefficient for the equilibrium
+   * density.
+   * @param degree The polynomial degree of the FE spaces.
+   */
+  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                                     mfem::FiniteElementSpace* te_fes,
+                                     mfem::Coefficient& density, int degree)
+      : PoissonLinearisedMultipoleOperator(
+            tr_fes, te_fes, density, degree,
+            AllDomainsMarker(tr_fes->GetMesh())) {}
+
+  /**
    * @brief Constructs a serial PoissonLinearisedMultipoleOperator (move
    * version). This overload takes the `dom_marker` by rvalue reference.
    * @param tr_fes Pointer to the trial finite element space.
    * @param te_fes Pointer to the test finite element space.
+   * @param density Reference to an mfem::Coefficient for the equilibrium
+   * density.
    * @param degree The polynomial degree of the FE spaces.
-   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
-   * (1 for inclusion, 0 for exclusion) to consider for assembly (moved).
+   * @param dom_marker An `mfem::Array<int>` marking which domain
+   * attributes (1 for inclusion, 0 for exclusion) to consider for
+   * assembly (moved).
+   */
+  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
+                                     mfem::FiniteElementSpace* te_fes,
+                                     mfem::Coefficient& density, int degree,
+                                     mfem::Array<int>&& dom_marker)
+      : PoissonLinearisedMultipoleOperator(tr_fes, te_fes, density, degree,
+                                           dom_marker) {}
+
+  /**
+   * @brief Constructs a serial PoissonLinearisedMultipoleOperator (move
+   * version). This overload takes the `dom_marker` by rvalue reference,
+   * and uses the default constant value for the density.
+   * @param tr_fes Pointer to the trial finite element space.
+   * @param te_fes Pointer to the test finite element space.
+   * @param degree The polynomial degree of the FE spaces.
+   * @param dom_marker An `mfem::Array<int>` marking which domain
+   * attributes (1 for inclusion, 0 for exclusion) to consider for
+   * assembly (moved).
    */
   PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
                                      mfem::FiniteElementSpace* te_fes,
@@ -616,7 +673,8 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
   /**
    * @brief Constructs a serial PoissonLinearisedMultipoleOperator for all
    * domains. This overload automatically uses `AllDomainsMarker` from
-   * `tr_fes->GetMesh()` to include all domain attributes in the assembly.
+   * `tr_fes->GetMesh()` to include all domain attributes in the assembly,
+   * and also uses the default value for density.
    * @param tr_fes Pointer to the trial finite element space.
    * @param te_fes Pointer to the test finite element space.
    * @param degree The polynomial degree of the FE spaces.
@@ -628,8 +686,27 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
             tr_fes, te_fes, degree, AllDomainsMarker(tr_fes->GetMesh())) {}
 
 #ifdef MFEM_USE_MPI
+
   /**
    * @brief Constructs a parallel PoissonLinearisedMultipoleOperator.
+   * @param comm The MPI communicator.
+   * @param tr_fes Pointer to the parallel trial finite element space.
+   * @param te_fes Pointer to the parallel test finite element space.
+   * @param density Reference to mfem::Coefficient for the density.
+   * @param degree The polynomial degree of the FE spaces.
+   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
+   * (1 for inclusion, 0 for exclusion) to consider for assembly.
+   */
+  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
+                                     mfem::ParFiniteElementSpace* tr_fes,
+                                     mfem::ParFiniteElementSpace* te_fes,
+                                     mfem::Coefficient& density, int degree,
+                                     const mfem::Array<int>& dom_marker);
+
+  /**
+   * @brief Constructs a parallel PoissonLinearisedMultipoleOperator.
+   * This overload uses the default density which is equal to the constant
+   * field with value one.
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
@@ -649,6 +726,26 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
+   * @param density Reference to mfem::Coefficient for the density.
+   * @param degree The polynomial degree of the FE spaces.
+   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
+   * (1 for inclusion, 0 for exclusion) to consider for assembly (moved).
+   */
+  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
+                                     mfem::ParFiniteElementSpace* tr_fes,
+                                     mfem::ParFiniteElementSpace* te_fes,
+                                     mfem::Coefficient& density, int degree,
+                                     mfem::Array<int>&& dom_marker)
+      : PoissonLinearisedMultipoleOperator(comm, tr_fes, te_fes, density,
+                                           degree, dom_marker) {}
+
+  /**
+   * @brief Constructs a parallel PoissonLinearisedMultipoleOperator (move
+   * version). This overload takes the `dom_marker` by rvalue reference,
+   * and uses the default density.
+   * @param comm The MPI communicator.
+   * @param tr_fes Pointer to the parallel trial finite element space.
+   * @param te_fes Pointer to the parallel test finite element space.
    * @param degree The polynomial degree of the FE spaces.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly (moved).
@@ -661,10 +758,28 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
                                            dom_marker) {}
 
   /**
+   * @brief Constructs a parallel PoissonLinearisedMultipoleOperator. This
+   * overload automatically uses `AllDomainsMarker` from `tr_fes->GetMesh()`
+   * to include all domain attributes in the assembly across all processors.
+   * @param comm The MPI communicator.
+   * @param tr_fes Pointer to the parallel trial finite element space.
+   * @param te_fes Pointer to the parallel test finite element space.
+   * @param density Reference to mfem::Coefficient for the density.
+   * @param degree The polynomial degree of the FE spaces.
+   */
+  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
+                                     mfem::ParFiniteElementSpace* tr_fes,
+                                     mfem::ParFiniteElementSpace* te_fes,
+                                     mfem::Coefficient& density, int degree)
+      : PoissonLinearisedMultipoleOperator(
+            comm, tr_fes, te_fes, density, degree,
+            AllDomainsMarker(tr_fes->GetMesh())) {}
+
+  /**
    * @brief Constructs a parallel PoissonLinearisedMultipoleOperator for all
    * domains. This overload automatically uses `AllDomainsMarker` from
    * `tr_fes->GetMesh()` to include all domain attributes in the assembly across
-   * all processors.
+   * all processor, and uses the default density value.
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
