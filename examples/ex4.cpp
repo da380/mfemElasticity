@@ -7,7 +7,6 @@
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
-#include "uniform_sphere.hpp"
 
 using namespace std;
 using namespace mfem;
@@ -16,6 +15,10 @@ using std::numbers::pi;
 
 int main(int argc, char *argv[]) {
   // === Set default options and parse command-line arguments ===
+
+  // Set the inner and outer radii
+  real_t inner_radius = 1;
+  real_t outer_radius = 2;
 
   // Default mesh files
   string mesh_file2 = "../data/disk2.msh";  // 2D unit disk
@@ -26,8 +29,12 @@ int main(int argc, char *argv[]) {
   int refinement = 0;
   // Default problem dimension
   int dim = 2;
-  // Default boundary conditions
-  int Dirichlet = 1;
+  // Set the mapped outer radius
+  real_t mapped_outer_radius = 10;
+  // Plot just the inner domain
+  int plot_submesh = 0;
+  // Plot the residual
+  int res = 0;
 
   // Initialize MFEM's options parser
   OptionsParser args(argc, argv);
@@ -37,8 +44,11 @@ int main(int argc, char *argv[]) {
   args.AddOption(&refinement, "-r", "--refinement",
                  "number of  mesh refinements");
   args.AddOption(&dim, "-d", "--dim", "dimension of problem (2 or 3)");
-  args.AddOption(&Dirichlet, "-D", "--Dirichlet",
-                 "Apply Dirichlet boundary conditions");
+  args.AddOption(&mapped_outer_radius, "-c", "--c", "Mapped outer radius");
+  args.AddOption(&plot_submesh, "-sub", "--submesh",
+                 "Plot just the inner domain");
+  args.AddOption(&res, "-res", "--residual",
+                 "plot residual from extact solution");
 
   // Parse the arguments
   args.Parse();
@@ -96,19 +106,20 @@ int main(int argc, char *argv[]) {
   // Get the list of "true" degrees of freedom (T-Dofs) on the essential
   // boundary
   auto ess_tdof_list = Array<int>();
-  if (Dirichlet) {
-    fes.GetEssentialTrueDofs(exterior_bdr_marker, ess_tdof_list);
-  }
 
-  auto xi = VectorFunctionCoefficient(dim, [](const Vector &x, Vector &y) {
-    auto r = x.Norml2();
-    y = x;
-    if (r > 1) {
-      auto ep = 0.02;
-      auto fac = (1 + ep) / (2 - r + ep);
-      y *= fac;
-    }
-  });
+  auto xi = VectorFunctionCoefficient(
+      dim, [inner_radius, outer_radius, mapped_outer_radius](const Vector &x,
+                                                             Vector &y) {
+        auto epsilon = inner_radius * (outer_radius - inner_radius) /
+                       (mapped_outer_radius - inner_radius);
+        auto r = x.Norml2();
+        y = x;
+        if (r > inner_radius) {
+          auto fac = (outer_radius - inner_radius + epsilon) /
+                     (outer_radius - r + epsilon);
+          y *= fac * inner_radius / r;
+        }
+      });
 
   // Create a GridFunction 'phi' to hold the FE solution
   auto phi = GridFunction(&fes);
@@ -126,7 +137,8 @@ int main(int argc, char *argv[]) {
   as.Assemble();
 
   // Set up the linear form 'b' for the right-hand side (RHS)
-  auto f = FunctionCoefficient([](const Vector &x) { return x[0] * x[1]; });
+  auto f =
+      FunctionCoefficient([inner_radius](const Vector &x) { return x[0]; });
   auto b = LinearForm(&fes);
   b.AddDomainIntegrator(new DomainLFIntegrator(f), inner_marker);
   b.Assemble();
@@ -151,33 +163,88 @@ int main(int argc, char *argv[]) {
   solver.SetPreconditioner(P);
   solver.SetOperator(A);
 
-  if (Dirichlet) {
-    auto orthoSolver = OrthoSolver();
-    orthoSolver.SetSolver(solver);
-    orthoSolver.Mult(B, X);
-  } else {
-    solver.Mult(B, X);
-  }
+  auto orthoSolver = OrthoSolver();
+  orthoSolver.SetSolver(solver);
+  orthoSolver.Mult(B, X);
 
   // Recover the final solution 'phi' (GridFunction) from the raw vector 'X'
   a.RecoverFEMSolution(X, b, phi);
 
-  // === Visualize the standard solution ===
-  char vishost[] = "localhost";
-  int visport = 19916;
+  auto exact_solution = TransformedFunctionCoefficient(
+      xi, [inner_radius, outer_radius, mapped_outer_radius](const Vector &x) {
+        auto r = x.Norml2();
+        auto a = inner_radius;
+        if (r <= inner_radius) {
+          return -0.5 * pi * x[0] * (2 * a * a - r * r) / a;
+        } else {
+          return -0.5 * pi * std::pow(a, 3) * x[0] / (r * r);
+        }
+      });
 
-  auto phi_sock = socketstream(vishost, visport);
-  phi_sock.precision(8);
-  // Send the mesh and the solution 'phi' to GLVis
-  phi_sock << "solution\n" << mesh << phi << "window_title 'phi'" << flush;
-  if (dim == 2) {
-    phi_sock << "keys Rjlcb\n" << flush;  // 2D viewing keys
+  auto l = LinearForm(&fes);
+  auto z = GridFunction(&fes);
+  z = 1.0;
+  auto one = ConstantCoefficient(1);
+  l.AddDomainIntegrator(new DomainLFIntegrator(one));
+  l.Assemble();
+  auto area = l(z);
+  l /= area;
+  auto pphi = l(phi);
+  phi -= pphi;
+
+  if (plot_submesh) {
+    auto submesh = SubMesh::CreateFromDomain(mesh, inner_marker);
+
+    auto fes_inner = FiniteElementSpace(&submesh, &H1);
+    auto phi_inner = GridFunction(&fes_inner);
+    submesh.Transfer(phi, phi_inner);
+
+    if (res) {
+      auto tmp = GridFunction(&fes_inner);
+      tmp.ProjectCoefficient(exact_solution);
+      phi_inner -= tmp;
+    }
+
+    // === Visualize the standard solution ===
+    char vishost[] = "localhost";
+    int visport = 19916;
+
+    auto phi_sock = socketstream(vishost, visport);
+    phi_sock.precision(8);
+    // Send the mesh and the solution 'phi' to GLVis
+    phi_sock << "solution\n"
+             << submesh << phi_inner << "window_title 'phi'" << flush;
+    if (dim == 2) {
+      phi_sock << "keys Rjlcb\n" << flush;  // 2D viewing keys
+    } else {
+      phi_sock << "keys RRRjlci zZ\n" << flush;  // 3D viewing keys
+    }
+
   } else {
-    phi_sock << "keys RRRjlci zZ\n" << flush;  // 3D viewing keys
+    if (res) {
+      auto tmp = GridFunction(&fes);
+      tmp.ProjectCoefficient(exact_solution);
+      phi -= tmp;
+    }
+
+    // === Visualize the standard solution ===
+    char vishost[] = "localhost";
+    int visport = 19916;
+
+    auto phi_sock = socketstream(vishost, visport);
+    phi_sock.precision(8);
+    // Send the mesh and the solution 'phi' to GLVis
+    phi_sock << "solution\n" << mesh << phi << "window_title 'phi'" << flush;
+    if (dim == 2) {
+      phi_sock << "keys Rjlcb\n" << flush;  // 2D viewing keys
+    } else {
+      phi_sock << "keys RRRjlci zZ\n" << flush;  // 3D viewing keys
+    }
   }
 
   // === Deform the mesh and visualize the "pushed-forward" solution ===
 
+  /*
   mesh.SetNodalFESpace(&vfes);
   auto *x = mesh.GetNodes();
   auto y = GridFunction(&vfes);
@@ -193,4 +260,5 @@ int main(int argc, char *argv[]) {
   } else {
     phiT_sock << "keys RRRjlci zZ\n" << flush;  // 3D viewing keys
   }
+  */
 }
