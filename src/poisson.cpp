@@ -19,7 +19,9 @@ void PoissonDtNOperator::SetUp() {
 
 #ifdef MFEM_USE_MPI
   if (_parallel) {
-    SetBoundaryMarker(_pfes->GetParMesh());
+    auto* pmesh = _pfes->GetParMesh();
+
+    SetBoundaryMarker(pmesh);
 
     auto [comm, has_bdr, root_rank] =
         SplitBoundaryCommunicator(_pfes->GetParMesh(), _bdr_marker);
@@ -56,7 +58,6 @@ PoissonDtNOperator::PoissonDtNOperator(mfem::FiniteElementSpace* fes,
       _coeff_dim{CoeffDim()},
       _mat(fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 
 #ifdef MFEM_USE_MPI
@@ -73,7 +74,6 @@ PoissonDtNOperator::PoissonDtNOperator(MPI_Comm comm,
       _coeff_dim{CoeffDim()},
       _mat(fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 #endif
 
@@ -90,13 +90,49 @@ void PoissonDtNOperator::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   if (_parallel) {
     if (_has_boundary) {
       MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                    MPI_SUM, _bdr_comm);  // <-- Use _bdr_comm
+                    MPI_SUM, _bdr_comm);
     }
   }
 #endif
 
   y.SetSize(x.Size());
   _mat.Mult(_c, y);
+}
+
+void PoissonDtNOperator::HarmonicCoefficients(const mfem::Vector& x,
+                                              mfem::Vector& y) const {
+  using namespace mfem;
+
+  y.SetSize(_coeff_dim);
+
+  _mat.MultTranspose(x, y);
+
+#ifdef MFEM_USE_MPI
+  if (_parallel) {
+    MPI_Allreduce(MPI_IN_PLACE, y.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
+                  MPI_SUM, _comm);
+  }
+#endif
+
+  // Scale the result to form the harmonic coefficients.
+  if (_dim == 2) {
+    auto i = 0;
+    for (auto k = 1; k <= _degree; k++) {
+      const auto fac = 1 / (sqrtPi * _sqrt(k));
+      y(i++) *= fac;
+      y(i++) *= fac;
+    }
+  } else {
+    auto rfac = 1 / std::sqrt(_bdr_radius);
+    y(0) *= rfac;
+    auto i = 1;
+    for (auto l = 1; l <= _degree; l++) {
+      auto fac = rfac / _sqrt[l + 1];
+      for (auto m = -l; m <= l; m++) {
+        y(i++) *= fac;
+      }
+    }
+  }
 }
 
 void PoissonDtNOperator::Assemble() {
@@ -312,7 +348,6 @@ PoissonMultipoleOperator::PoissonMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 
 #ifdef MFEM_USE_MPI
@@ -334,7 +369,6 @@ PoissonMultipoleOperator::PoissonMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 #endif
 
@@ -754,7 +788,6 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 
 PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
@@ -770,7 +803,6 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 
 #ifdef MFEM_USE_MPI
@@ -794,7 +826,6 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 
 PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
@@ -815,7 +846,6 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
       _lmat(te_fes->GetVSize(), _coeff_dim),
       _rmat(tr_fes->GetVSize(), _coeff_dim) {
   SetUp();
-  Assemble();
 }
 #endif
 
@@ -1356,31 +1386,16 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
   }
 }
 
-DiffeomorphismCoefficient::DiffeomorphismCoefficient(int dim)
-    : mfem::VectorCoefficient(dim) {}
-
-DiffeomorphismCoefficient::DiffeomorphismCoefficient(int dim,
-                                                     mfem::Coefficient& Q)
+RadialDiffeomorphismCoefficient::RadialDiffeomorphismCoefficient(
+    int dim, mfem::Coefficient& Q)
     : mfem::VectorCoefficient(dim), _Q{&Q} {}
 
-DiffeomorphismCoefficient::DiffeomorphismCoefficient(
-    int dim, mfem::VectorCoefficient& QV)
-    : mfem::VectorCoefficient(dim), _QV{&QV} {
-  MFEM_ASSERT(_QV.getDim() == dim, "Dimension mismatch");
-}
-
-void DiffeomorphismCoefficient::Eval(mfem::Vector& V,
-                                     mfem::ElementTransformation& T,
-                                     const mfem::IntegrationPoint& ip) {
-  if (_QV) {
-    _QV->Eval(V, T, ip);
-  } else {
-    V.SetSize(vdim);
-    T.Transform(ip, V);
-    if (_Q) {
-      V *= _Q->Eval(T, ip);
-    }
-  }
+void RadialDiffeomorphismCoefficient::Eval(mfem::Vector& V,
+                                           mfem::ElementTransformation& T,
+                                           const mfem::IntegrationPoint& ip) {
+  V.SetSize(vdim);
+  T.Transform(ip, V);
+  V *= _Q->Eval(T, ip);
 }
 
 mfem::real_t TransformedFunctionCoefficient::Eval(

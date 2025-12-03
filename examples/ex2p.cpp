@@ -137,7 +137,6 @@ int main(int argc, char *argv[]) {
   // Properties of the full mesh.
   auto c2 = MeshCentroid(&pmesh);
   auto [found2, same2, r2] = SphericalBoundaryRadius(&pmesh, c2);
-
   // If residual from exact solution required, check mesh is appropriate.
   if (residual) {
     assert(found1 == 1 && same1 == 1);
@@ -236,6 +235,7 @@ int main(int argc, char *argv[]) {
       }
       auto c =
           PoissonMultipoleOperator(MPI_COMM_WORLD, dfes.get(), &fes, degree);
+      c.Assemble();
       if (myid == 0) {
         end_time = MPI_Wtime();
         assembly_time = (end_time - start_time);
@@ -246,6 +246,7 @@ int main(int argc, char *argv[]) {
     } else {
       auto c = PoissonLinearisedMultipoleOperator(MPI_COMM_WORLD, vfes.get(),
                                                   &fes, rho_coeff, degree);
+      c.Assemble();
       c.AddMult(*u, b, -1);
     }
   }
@@ -277,6 +278,7 @@ int main(int argc, char *argv[]) {
       start_time = MPI_Wtime();
     }
     auto c = PoissonDtNOperator(MPI_COMM_WORLD, &fes, degree);
+    c.Assemble();
     if (myid == 0) {
       end_time = MPI_Wtime();
       assembly_time = (end_time - start_time);

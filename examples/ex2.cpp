@@ -209,12 +209,14 @@ int main(int argc, char *argv[]) {
   if (method == 2) {
     if (linearised == 0) {
       auto c = PoissonMultipoleOperator(dfes.get(), &fes, degree);
+      c.Assemble();
       auto rhof = GridFunction(dfes.get());
       rhof.ProjectCoefficient(rho_coeff);
       c.AddMult(rhof, b, -1);
     } else {
       auto c = PoissonLinearisedMultipoleOperator(vfes.get(), &fes, rho_coeff,
                                                   degree);
+      c.Assemble();
       c.AddMult(*u, b, -1);
     }
   }
@@ -241,6 +243,7 @@ int main(int argc, char *argv[]) {
 
   if (method == 1) {
     auto c = PoissonDtNOperator(&fes, degree);
+    c.Assemble();
     auto D = SumOperator(&A, 1, &c, 1, false, false);
     solver.SetOperator(D);
     solver.SetPreconditioner(P);

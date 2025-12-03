@@ -66,7 +66,7 @@ class PoissonDtNOperator : public mfem::Operator,
   mfem::FiniteElementSpace* _fes;
   /** @brief Spatial dimension of the problem (2 for 2D, 3 for 3D). */
   int _dim;
-  /** @brief Polynomial degree of the finite element space. */
+  /** @brief Harmonic degree of the expansion */
   int _degree;
   /** @brief Dimension of the coefficient space (e.g., 1 for scalar Poisson). */
   int _coeff_dim;
@@ -188,6 +188,14 @@ class PoissonDtNOperator : public mfem::Operator,
   }
 
   /**
+   * @brief Given a gridfunction (or associated vector), returns the
+   * a vector of the harmonic coefficients of the field computed on the boundary
+   * @param x The input vector (Dirichlet data).
+   * @param y Harmonic coefficients in a vector.
+   */
+  void HarmonicCoefficients(const mfem::Vector& x, mfem::Vector& y) const;
+
+  /**
    * @brief Assembles the sparse matrix associated with the DtN operator's
    * Galerkin representation. This method needs to be called after construction
    * to build the internal `_mat`.
@@ -202,6 +210,10 @@ class PoissonDtNOperator : public mfem::Operator,
    */
   mfem::RAPOperator RAP() const;
 #endif
+
+  mfem::real_t BoundaryRadius() const { return _bdr_radius; }
+
+  mfem::Vector Centroid() const { return _x0; }
 };
 
 /**
@@ -968,17 +980,13 @@ and intermediate matrices during integration. */
   }
 };
 
-class DiffeomorphismCoefficient : public mfem::VectorCoefficient {
+class RadialDiffeomorphismCoefficient : public mfem::VectorCoefficient {
  private:
   mfem::VectorCoefficient* _QV = nullptr;
   mfem::Coefficient* _Q = nullptr;
 
  public:
-  DiffeomorphismCoefficient(int dim);
-
-  DiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
-
-  DiffeomorphismCoefficient(int dim, mfem::VectorCoefficient& QV);
+  RadialDiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
 
   void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
             const mfem::IntegrationPoint& ip);
