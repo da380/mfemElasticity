@@ -210,6 +210,10 @@ class PoissonDtNOperator : public mfem::Operator,
    */
   mfem::RAPOperator RAP() const;
 #endif
+
+  mfem::real_t BoundaryRadius() const { return _bdr_radius; }
+
+  mfem::Vector Centroid() const { return _x0; }
 };
 
 /**

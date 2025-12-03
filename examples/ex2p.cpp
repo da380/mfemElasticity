@@ -137,7 +137,6 @@ int main(int argc, char *argv[]) {
   // Properties of the full mesh.
   auto c2 = MeshCentroid(&pmesh);
   auto [found2, same2, r2] = SphericalBoundaryRadius(&pmesh, c2);
-
   // If residual from exact solution required, check mesh is appropriate.
   if (residual) {
     assert(found1 == 1 && same1 == 1);

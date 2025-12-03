@@ -12,45 +12,69 @@ using namespace mfemElasticity;
 using namespace std::numbers;
 
 int main(int argc, char *argv[]) {
+  // Initialise MPI and Hypre.
+  Mpi::Init();
+  int num_procs = Mpi::WorldSize();
+  int myid = Mpi::WorldRank();
+  Hypre::Init();
+
   // 1. Initialize Options
   const char *mesh_file = "../data/circular_offset.msh";
   int order = 1;
-  int ref = 0;
+  int serial_refinement = 0;
+  int parallel_refinement = 0;
   int degree = 4;  // Expansion degree
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
   args.AddOption(&order, "-o", "--order", "Finite element order.");
-  args.AddOption(&ref, "-r", "--refinement", "Serial refinement levels.");
+  args.AddOption(&serial_refinement, "-sr", "--serial_refinement",
+                 "number of serial mesh refinements");
+  args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",
+                 "number of parallel mesh refinements");
+
   args.Parse();
   if (!args.Good()) {
     args.PrintUsage(cout);
     return 1;
   }
 
-  // 2. Mesh Setup
+  // Read in mesh in serial.
   auto mesh = Mesh(mesh_file, 1, 1);
   auto dim = mesh.Dimension();
-  for (int l = 0; l < ref; l++) {
-    mesh.UniformRefinement();
+  {
+    for (int l = 0; l < serial_refinement; l++) {
+      mesh.UniformRefinement();
+    }
+  }
+
+  // Form the parallel mesh.
+  auto pmesh = ParMesh(MPI_COMM_WORLD, mesh);
+  mesh.Clear();
+  {
+    for (int l = 0; l < parallel_refinement; l++) {
+      pmesh.UniformRefinement();
+    }
   }
 
   // 3. Finite Element Space
   auto fec = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &fec);
+  auto fes = ParFiniteElementSpace(&pmesh, &fec);
 
-  cout << "---------------------------------------------------" << endl;
-  cout << " Test: HarmonicCoefficients (Serial)" << endl;
-  cout << " Mesh: " << dim << "D" << endl;
-  cout << " DOFs: " << fes.GetTrueVSize() << endl;
-  cout << "---------------------------------------------------" << endl;
+  if (myid == 0) {
+    cout << "---------------------------------------------------" << endl;
+    cout << " Test: HarmonicCoefficients (Parallel)" << endl;
+    cout << " Mesh: " << dim << "D" << endl;
+    cout << " DOFs: " << fes.GetTrueVSize() << endl;
+    cout << "---------------------------------------------------" << endl;
+  }
 
   // 4. Assemble DtN Operator
-  auto dtn = PoissonDtNOperator(&fes, degree);
+  auto dtn = PoissonDtNOperator(MPI_COMM_WORLD, &fes, degree);
   dtn.Assemble();
 
   // 5. Project Known Function
-  auto u = GridFunction(&fes);
+  auto u = ParGridFunction(&fes);
 
   auto x0 = dtn.Centroid();
   auto b = dtn.BoundaryRadius();
@@ -93,21 +117,23 @@ int main(int argc, char *argv[]) {
   dtn.HarmonicCoefficients(u, coeffs);
 
   // Print out the coefficients for inspection
-  if (dim == 2) {
-    auto i = 0;
-    cout << showpos;
-    for (auto k = 1; k <= degree; k++) {
-      cout << -k << " " << coeffs(i++) << endl;
-      cout << k << " " << coeffs(i++) << endl;
-    }
-  } else {
-    auto i = 0;
-    cout << showpos;
-    for (auto l = 0; l <= degree; l++) {
-      cout << l << " " << 0 << " " << coeffs(i++) << endl;
-      for (auto m = 1; m <= l; m++) {
-        cout << l << " " << -m << " " << coeffs(i++) << endl;
-        cout << l << " " << m << " " << coeffs(i++) << endl;
+  if (myid == 0) {
+    if (dim == 2) {
+      auto i = 0;
+      cout << showpos;
+      for (auto k = 1; k <= degree; k++) {
+        cout << -k << " " << coeffs(i++) << endl;
+        cout << k << " " << coeffs(i++) << endl;
+      }
+    } else {
+      auto i = 0;
+      cout << showpos;
+      for (auto l = 0; l <= degree; l++) {
+        cout << l << " " << 0 << " " << coeffs(i++) << endl;
+        for (auto m = 1; m <= l; m++) {
+          cout << l << " " << -m << " " << coeffs(i++) << endl;
+          cout << l << " " << m << " " << coeffs(i++) << endl;
+        }
       }
     }
   }
