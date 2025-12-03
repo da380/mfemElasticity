@@ -236,6 +236,7 @@ int main(int argc, char *argv[]) {
       }
       auto c =
           PoissonMultipoleOperator(MPI_COMM_WORLD, dfes.get(), &fes, degree);
+      c.Assemble();
       if (myid == 0) {
         end_time = MPI_Wtime();
         assembly_time = (end_time - start_time);
@@ -246,6 +247,7 @@ int main(int argc, char *argv[]) {
     } else {
       auto c = PoissonLinearisedMultipoleOperator(MPI_COMM_WORLD, vfes.get(),
                                                   &fes, rho_coeff, degree);
+      c.Assemble();
       c.AddMult(*u, b, -1);
     }
   }
@@ -277,6 +279,7 @@ int main(int argc, char *argv[]) {
       start_time = MPI_Wtime();
     }
     auto c = PoissonDtNOperator(MPI_COMM_WORLD, &fes, degree);
+    c.Assemble();
     if (myid == 0) {
       end_time = MPI_Wtime();
       assembly_time = (end_time - start_time);
