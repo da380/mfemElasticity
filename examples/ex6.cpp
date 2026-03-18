@@ -90,8 +90,9 @@ int main(int argc, char *argv[]) {
   std::unique_ptr<SparseMatrix> R(Transpose(P));
 
   // Set up the bilinear forms.
+  auto lambda = ConstantCoefficient(0.1);
   auto a_00 = BilinearForm(&fes_0);
-  a_00.AddDomainIntegrator(new DiffusionIntegrator());
+  a_00.AddDomainIntegrator(new DiffusionIntegrator(lambda));
   a_00.Assemble();
   a_00.Finalize();
 
@@ -100,9 +101,8 @@ int main(int argc, char *argv[]) {
   a_11.Assemble();
   a_11.Finalize();
 
-  auto lambda = ConstantCoefficient(10.0);
   auto a_01 = BilinearForm(&fes_0);
-  a_01.AddDomainIntegrator(new MassIntegrator(lambda));
+  a_01.AddDomainIntegrator(new MassIntegrator());
   a_01.Assemble();
   a_01.Finalize();
 
@@ -131,12 +131,17 @@ int main(int argc, char *argv[]) {
   std::unique_ptr<SparseMatrix> A_global(A_block.CreateMonolithic());
 
   // 4. Set up the linear forms (Right-Hand Side)
-  auto f_0 = FunctionCoefficient([](const Vector &x) { return 1; });
+  auto f_0 = FunctionCoefficient([](const Vector &x) { return 0; });
   auto b_0 = LinearForm(&fes_0);
   b_0.AddDomainIntegrator(new DomainLFIntegrator(f_0));
   b_0.Assemble();
 
-  auto f_1 = FunctionCoefficient([](const Vector &x) { return 1; });
+  auto f_1 = FunctionCoefficient([](const Vector &x) {
+    auto a0 = -0.75;
+    auto a1 = -0.75;
+    auto r2 = sqrt((x(0) - a0) * (x(0) - a0) + (x(1) - a1) * (x(1) - a1));
+    return exp(-10 * r2);
+  });
   auto b_1 = LinearForm(&fes_1);
   b_1.AddDomainIntegrator(new DomainLFIntegrator(f_1));
   b_1.Assemble();
