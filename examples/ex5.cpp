@@ -1,5 +1,6 @@
 
 #include <fstream>
+#include <memory>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
@@ -81,12 +82,12 @@ int main(int argc, char *argv[]) {
   });
   u.ProjectCoefficient(f);
 
-  // Set up the prolongation mapping (Unchanged!)
-  auto P = SubMeshProlongationMatrix(sub_fes, fes);
+  // Set up the prolongation mapping
+  auto P = unique_ptr<SparseMatrix>(SubMeshProlongationMatrix(sub_fes, fes));
 
   // Use its transpose to restrict the GridFunction to the submesh
   auto u_sub = GridFunction(&sub_fes);
-  P.MultTranspose(u, u_sub);
+  P->MultTranspose(u, u_sub);
 
   // Visualise the results.
   char vishost[] = "localhost";
@@ -117,7 +118,7 @@ int main(int argc, char *argv[]) {
   b = 0.0;  // Initialize with zeros
 
   // Extend the submesh LinearForm to the parent mesh: b_parent = P * b_sub
-  P.Mult(b_sub, b);
+  P->Mult(b_sub, b);
 
   // Programmatic check: The sums should be identical
   auto sub_result = b_sub(u_sub);

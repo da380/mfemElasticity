@@ -1,16 +1,18 @@
 /**
  * @file submesh.cpp
- * @brief Implementation of the SubMeshProlongationMatrix CSR builder.
+ * @brief Implementation of the SubMeshProlongationMatrix function.
  */
 
 #include "mfemElasticity/submesh.hpp"
 
 namespace mfemElasticity {
 
-SubMeshProlongationMatrix::CSRData SubMeshProlongationMatrix::BuildCSR(
+// Factory function to build the serial SubMesh prolongation matrix
+mfem::SparseMatrix *SubMeshProlongationMatrix(
     const mfem::FiniteElementSpace &sub_fes,
     const mfem::FiniteElementSpace &parent_fes) {
   using namespace mfem;
+
   int m = parent_fes.GetVSize();  // Rows: Parent DoFs
   int n = sub_fes.GetVSize();     // Cols: SubMesh DoFs
 
@@ -65,7 +67,18 @@ SubMeshProlongationMatrix::CSRData SubMeshProlongationMatrix::BuildCSR(
     Data[pos] = p_signs[i];  // Value is the orientation sign
   }
 
-  return {I, J, Data, m, n};
+  // --- Build the SparseMatrix ---
+  // Note: The MFEM SparseMatrix constructor taking (I, J, data) takes
+  // ownership of the memory by default (own_ij = true, own_a = true).
+  // Therefore, unlike the Hypre constructor, we DO NOT delete them here!
+  bool own_ij = true;
+  bool own_a = true;
+  bool is_sorted = false;
+
+  SparseMatrix *P =
+      new SparseMatrix(I, J, Data, m, n, own_ij, own_a, is_sorted);
+
+  return P;
 }
 
 }  // namespace mfemElasticity

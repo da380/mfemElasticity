@@ -1,6 +1,7 @@
 
 #include <cmath>
 #include <fstream>
+#include <memory>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
@@ -86,8 +87,8 @@ int main(int argc, char *argv[]) {
   fes_1.GetEssentialTrueDofs(domain_1_bdr_marker, boundary_1_dofs);
 
   // Set up the prolongation operator (fes_0 -> fes_1)
-  auto P = SubMeshProlongationMatrix(fes_0, fes_1);
-  std::unique_ptr<SparseMatrix> R(Transpose(P));
+  auto P = unique_ptr<SparseMatrix>(SubMeshProlongationMatrix(fes_0, fes_1));
+  auto R = unique_ptr<SparseMatrix>(Transpose(*P));
 
   // Set up the bilinear forms.
   auto lambda = ConstantCoefficient(0.1);
@@ -113,7 +114,7 @@ int main(int argc, char *argv[]) {
 
   // 2. Perform custom matrix multiplication for off-diagonals
   std::unique_ptr<SparseMatrix> A_01(Mult(A_01_orig, *R));
-  std::unique_ptr<SparseMatrix> A_10(Mult(P, A_01_orig));
+  std::unique_ptr<SparseMatrix> A_10(Mult(*P, A_01_orig));
 
   // 3. Stitch them into a single monolithic SparseMatrix
   Array<int> block_offsets(3);
