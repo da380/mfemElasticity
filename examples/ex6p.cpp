@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
   Hypre::Init();
   bool verbose = (myid == 0);
 
-  const char *mesh_file = "mesh/ex7.msh";
+  const char *mesh_file = "mesh/ex5.msh";
   real_t rel_tol = 1e-10;
   int order = 1;
   bool visualization = false;

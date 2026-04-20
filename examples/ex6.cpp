@@ -14,7 +14,7 @@
 // Notes:
 // - The system is solved in the block manner.
 // - To generate the mesh, run: build/concentric_spheres -r 1-2 -s 0.02-0.1 -out
-// mesh/ex7.msh
+// mesh/ex5.msh
 // -----------------------------------------------------------------------------
 #include <cmath>
 
@@ -72,7 +72,7 @@ real_t f2Exact(const Vector &x) {
 int main(int argc, char *argv[]) {
   StopWatch chrono;
 
-  const char *mesh_file = "mesh/ex7.msh";
+  const char *mesh_file = "ex5.msh";
   real_t rel_tol = 1e-10;
   int order = 1;
   bool visualization = false;
