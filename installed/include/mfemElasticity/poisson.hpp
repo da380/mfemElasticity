@@ -1007,40 +1007,4 @@ class TransformedFunctionCoefficient : public mfem::Coefficient {
                     const mfem::IntegrationPoint& ip) override;
 };
 
-
-class MixedBilinearFormSubMesh : public mfem::MixedBilinearForm {
- protected:
-  mfem::FiniteElementSpace *sub_fes = nullptr;
-  mfem::Array<int> *vdof_to_vdof_map = nullptr;
-  bool extended_trial;
-
- public:
-  MixedBilinearFormSubMesh(mfem::FiniteElementSpace *tr_fes,
-                           mfem::FiniteElementSpace *te_fes,
-                           mfem::FiniteElementSpace *sub_fes_,
-                           bool extended_trial_);
-
-  void Assemble(int skip_zeros = 1);
-
-  ~MixedBilinearFormSubMesh() { delete vdof_to_vdof_map; }
-};
-
-class ParMixedBilinearFormSubMesh : public mfem::ParMixedBilinearForm {
- protected:
-  mfem::ParFiniteElementSpace *sub_pfes = nullptr;
-  mfem::Array<int> *vdof_to_vdof_map = nullptr;
-  bool extended_trial;
-
- public:
-  ParMixedBilinearFormSubMesh(mfem::ParFiniteElementSpace *tr_pfes,
-                              mfem::ParFiniteElementSpace *te_pfes,
-                              mfem::ParFiniteElementSpace *sub_pfes_,
-                              bool extended_trial_);
-
-  void Assemble(int skip_zeros = 1);
-
-  ~ParMixedBilinearFormSubMesh() { delete vdof_to_vdof_map; }
-};
-
-
 }  // namespace mfemElasticity
