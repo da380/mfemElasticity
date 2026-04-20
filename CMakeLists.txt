@@ -15,14 +15,6 @@ endif ("${CMAKE_SOURCE_DIR}" STREQUAL "${CMAKE_BINARY_DIR}")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-# --------------------------------------------------------------------------
-# Options (match my MFEM build)
-# --------------------------------------------------------------------------
-option(USE_MPI     "Use MPI"            OFF)
-option(USE_GINKGO  "Use Ginkgo backend" ON)
-option(USE_CUDA    "Use CUDA backend"   ON)
-option(USE_RAJA    "Use RAJA backend"   ON)
-
 # Import MFEM. The following variables can be used to help CMake find MFEM:
 #  * MFEM_DIR - absolute path to the MFEM build or install prefix.
 #  * mfem_DIR - absolute path to where MFEMConfig.cmake is.
@@ -48,35 +40,9 @@ if(USE_MPI)
     endif()
 endif()
 
-# --------------------------------------------------------------------------
-# Optional backends (your MFEM was built with these)
-# --------------------------------------------------------------------------
-if(USE_GINKGO)
-  # Provide -DGinkgo_DIR=/home/sssou/source/ginkgo/installed/lib/cmake/Ginkgo
-  find_package(Ginkgo CONFIG REQUIRED)
-endif()
-
-if(USE_CUDA)
-  # Provides CUDA::cusparse and include dirs (e.g., /usr/local/cuda/include)
-  find_package(CUDAToolkit REQUIRED)
-endif()
-
-if(USE_RAJA)
-  # Prefer a real CMake package if installed:
-  find_package(RAJA CONFIG QUIET)
-  if(NOT TARGET RAJA)
-    # Fallback: header-only include path
-    find_path(RAJA_INCLUDE_DIR RAJA/RAJA.hpp
-      HINTS "$ENV{HOME}/source/raja/installed/include" "/usr/local/include" "/usr/include")
-    if(NOT RAJA_INCLUDE_DIR)
-      message(FATAL_ERROR "MFEM was built with RAJA, but RAJA not found. Set -DRAJA_DIR or install RAJA.")
-    endif()
-  endif()
-endif()
 
 # Set up the library 
 add_library(${PROJECT_NAME} STATIC)
-add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 
 # Add in linked libraries.
 if(USE_MPI)
@@ -85,23 +51,6 @@ else()
     target_link_libraries(${PROJECT_NAME} PUBLIC mfem)
 endif()
 
-# Optional backends
-if(USE_GINKGO)
-  target_link_libraries(${PROJECT_NAME} PUBLIC Ginkgo::ginkgo)
-endif()
-
-if(USE_CUDA)
-  target_link_libraries(${PROJECT_NAME} PUBLIC CUDA::cusparse)
-  target_include_directories(${PROJECT_NAME} PUBLIC ${CUDAToolkit_INCLUDE_DIRS})
-endif()
-
-if(USE_RAJA)
-  if(TARGET RAJA)
-    target_link_libraries(${PROJECT_NAME} PUBLIC RAJA)
-  else()
-    target_include_directories(${PROJECT_NAME} PUBLIC ${RAJA_INCLUDE_DIR})
-  endif()
-endif()
 
 # Add in the source files. 
 add_subdirectory(src)
@@ -145,12 +94,9 @@ target_include_directories(
            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 # Install your library (headers and library file)
-install(TARGETS ${PROJECT_NAME}
-  EXPORT ${PROJECT_NAME}Targets
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-  RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
+install(TARGETS mfemElasticity 
+        EXPORT mfemElasticityTargets
+        DESTINATION lib)
 install(DIRECTORY include/
         DESTINATION include)
 
