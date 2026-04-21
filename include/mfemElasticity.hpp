@@ -7,3 +7,4 @@
 #include "mfemElasticity/mesh.hpp"
 #include "mfemElasticity/poisson.hpp"
 #include "mfemElasticity/solvers.hpp"
+#include "mfemElasticity/submesh.hpp"

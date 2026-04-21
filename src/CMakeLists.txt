@@ -5,4 +5,6 @@ target_sources(${PROJECT_NAME} PRIVATE solvers.cpp
                                        mesh.cpp
                                        poisson.cpp
                                        radial_model.cpp
+                                       elasticity.cpp
+                                       submesh.cpp
                                        )
