@@ -1412,11 +1412,10 @@ mfem::real_t TransformedFunctionCoefficient::Eval(
 using namespace mfem;
 MixedBilinearFormSubMesh::MixedBilinearFormSubMesh(FiniteElementSpace *tr_fes,
                                                    FiniteElementSpace *te_fes,
-                                                   FiniteElementSpace *sub_fes_,
                                                    bool extended_trial_)
-    : MixedBilinearForm(tr_fes, te_fes),
-      sub_fes(sub_fes_),
-      extended_trial(extended_trial_) {
+    : MixedBilinearForm(tr_fes, te_fes), extended_trial(extended_trial_) {
+  sub_fes = (extended_trial) ? test_fes : trial_fes;
+
   SubMesh *submesh = static_cast<SubMesh *>(sub_fes->GetMesh());
 
   vdof_to_vdof_map = new Array<int>();
@@ -1525,12 +1524,13 @@ void MixedBilinearFormSubMesh::Assemble(int skip_zeros) {
   }
 }
 
+#ifdef MFEM_USE_MPI
 ParMixedBilinearFormSubMesh::ParMixedBilinearFormSubMesh(
     ParFiniteElementSpace *tr_pfes, ParFiniteElementSpace *te_pfes,
-    ParFiniteElementSpace *sub_pfes_, bool extended_trial_)
-    : ParMixedBilinearForm(tr_pfes, te_pfes),
-      sub_pfes(sub_pfes_),
-      extended_trial(extended_trial_) {
+    bool extended_trial_)
+    : ParMixedBilinearForm(tr_pfes, te_pfes), extended_trial(extended_trial_) {
+  sub_pfes = (extended_trial) ? test_pfes : trial_pfes;
+
   ParSubMesh *psubmesh = static_cast<ParSubMesh *>(sub_pfes->GetMesh());
 
   vdof_to_vdof_map = new Array<int>();
@@ -1638,6 +1638,6 @@ void ParMixedBilinearFormSubMesh::Assemble(int skip_zeros) {
     }
   }
 }
-
+#endif
 
 }  // namespace mfemElasticity

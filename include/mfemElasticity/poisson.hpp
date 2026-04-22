@@ -1017,7 +1017,6 @@ class MixedBilinearFormSubMesh : public mfem::MixedBilinearForm {
  public:
   MixedBilinearFormSubMesh(mfem::FiniteElementSpace *tr_fes,
                            mfem::FiniteElementSpace *te_fes,
-                           mfem::FiniteElementSpace *sub_fes_,
                            bool extended_trial_);
 
   void Assemble(int skip_zeros = 1);
@@ -1025,6 +1024,7 @@ class MixedBilinearFormSubMesh : public mfem::MixedBilinearForm {
   ~MixedBilinearFormSubMesh() { delete vdof_to_vdof_map; }
 };
 
+#ifdef MFEM_USE_MPI
 class ParMixedBilinearFormSubMesh : public mfem::ParMixedBilinearForm {
  protected:
   mfem::ParFiniteElementSpace *sub_pfes = nullptr;
@@ -1034,13 +1034,13 @@ class ParMixedBilinearFormSubMesh : public mfem::ParMixedBilinearForm {
  public:
   ParMixedBilinearFormSubMesh(mfem::ParFiniteElementSpace *tr_pfes,
                               mfem::ParFiniteElementSpace *te_pfes,
-                              mfem::ParFiniteElementSpace *sub_pfes_,
                               bool extended_trial_);
 
   void Assemble(int skip_zeros = 1);
 
   ~ParMixedBilinearFormSubMesh() { delete vdof_to_vdof_map; }
 };
+#endif
 
 
 }  // namespace mfemElasticity

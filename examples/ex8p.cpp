@@ -1,21 +1,3 @@
-// -----------------------------------------------------------------------------
-// Coupled PDE system:
-//
-// On submesh Ω1 (sphere of radius 1):
-//     Δψ1 + ψ2 = f1
-//
-// On full mesh Ω2 (sphere of radius 2):
-//     Δψ2 + ψ1 = f2
-//
-// Boundary conditions:
-//     ψ1 = 0 on ∂Ω1
-//     ψ2 = 0 on ∂Ω2
-//
-// Notes:
-// - The system is solved in the block manner.
-// - To generate the mesh, run: build/concentric_spheres -r 1-2 -s 0.02-0.1 -out
-// mesh/ex5.msh
-// -----------------------------------------------------------------------------
 #include <cmath>
 
 #include "mfem.hpp"
@@ -72,7 +54,13 @@ real_t f2Exact(const Vector &x) {
 int main(int argc, char *argv[]) {
   StopWatch chrono;
 
-  const char *mesh_file = "ex5.msh";
+  Mpi::Init(argc, argv);
+  int num_procs = Mpi::WorldSize();
+  int myid = Mpi::WorldRank();
+  Hypre::Init();
+  bool verbose = (myid == 0);
+
+  const char *mesh_file = "mesh/ex7.msh";
   real_t rel_tol = 1e-10;
   int order = 1;
   bool visualization = false;
@@ -85,66 +73,85 @@ int main(int argc, char *argv[]) {
                  "--no-visualization", "Enable or disable GLVis.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (verbose) {
+      args.PrintUsage(cout);
+    }
     return 1;
   }
-  args.PrintOptions(cout);
+  if (verbose) {
+    args.PrintOptions(cout);
+  }
 
   Mesh *mesh = new Mesh(mesh_file, 1, 1);
+
   int dim = mesh->Dimension();
+  ParMesh *pmesh = new ParMesh(MPI_COMM_WORLD, *mesh);
 
   Array<int> attr_cond;
   attr_cond.Append(1);
-  SubMesh mesh_cond(SubMesh::CreateFromDomain(*mesh, attr_cond));
+
+  ParSubMesh pmesh_cond(ParSubMesh::CreateFromDomain(*pmesh, attr_cond));
 
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes(mesh, &fec), fes_cond(&mesh_cond, &fec);
+  ParFiniteElementSpace pfes(pmesh, &fec), pfes_cond(&pmesh_cond, &fec);
 
-  cout << "Number of psi1-unknowns: " << fes_cond.GetVSize() << endl;
-  cout << "Number of psi2-unknowns: " << fes.GetVSize() << endl;
+  HYPRE_BigInt psi1_size = pfes_cond.GlobalTrueVSize();
+  HYPRE_BigInt psi2_size = pfes.GlobalTrueVSize();
 
-  GridFunction psi1_gf(&fes_cond), psi2_gf(&fes), psi2_gf_cond(&fes_cond);
+  if (verbose) {
+    cout << "Number of psi1-unknowns: " << psi1_size << endl;
+    cout << "Number of psi2-unknowns: " << psi2_size << endl;
+  }
+
+  ParGridFunction psi1_gf(&pfes_cond), psi2_gf(&pfes), psi2_gf_cond(&pfes_cond);
   psi1_gf = 0.0;
   psi2_gf = 0.0;
   psi2_gf_cond = 0.0;
 
-  FunctionCoefficient psi1_exact_coeff(psi1Exact), psi2_exact_coeff(psi2Exact),
-      f1_coeff(f1Exact), f2_coeff(f2Exact);
+  Array<int> block_trueOffsets(3);
+  block_trueOffsets[0] = 0;
+  block_trueOffsets[1] = pfes_cond.TrueVSize();
+  block_trueOffsets[2] = pfes.TrueVSize();
+  block_trueOffsets.PartialSum();
+
+  FunctionCoefficient psi1_exact_coeff(psi1Exact);
+  FunctionCoefficient psi2_exact_coeff(psi2Exact);
+  FunctionCoefficient f1_coeff(f1Exact);
+  FunctionCoefficient f2_coeff(f2Exact);
 
   ConstantCoefficient zero(0.0), one(1.0), minus_one(-1.0);
 
   Array<int> ess_tdof_list, ess_tdof_list_cond;
 
-  Array<int> bdr_marker(mesh->bdr_attributes.Max());
+  Array<int> bdr_marker(pmesh->bdr_attributes.Max());
   bdr_marker = 0;
   bdr_marker[1] = 1;
 
-  Array<int> bdr_marker_cond(mesh_cond.bdr_attributes.Max());
+  Array<int> bdr_marker_cond(pmesh_cond.bdr_attributes.Max());
   bdr_marker_cond = 0;
   bdr_marker_cond[0] = 1;
 
-  fes.GetEssentialTrueDofs(bdr_marker, ess_tdof_list);
-  fes_cond.GetEssentialTrueDofs(bdr_marker_cond, ess_tdof_list_cond);
+  pfes.GetEssentialTrueDofs(bdr_marker, ess_tdof_list);
+  pfes_cond.GetEssentialTrueDofs(bdr_marker_cond, ess_tdof_list_cond);
 
   psi1_gf.ProjectBdrCoefficient(zero, bdr_marker_cond);
   psi2_gf.ProjectBdrCoefficient(zero, bdr_marker);
 
-  LinearForm *b1 = new LinearForm(&fes_cond);
+  ParLinearForm *b1 = new ParLinearForm(&pfes_cond);
   b1->AddDomainIntegrator(new DomainLFIntegrator(f1_coeff));
   b1->Assemble();
   *b1 *= -1.0;
 
-  LinearForm *b2 = new LinearForm(&fes);
+  ParLinearForm *b2 = new ParLinearForm(&pfes);
   b2->AddDomainIntegrator(new DomainLFIntegrator(f2_coeff));
   b2->Assemble();
   *b2 *= -1.0;
 
-  BilinearForm *a11 = new BilinearForm(&fes_cond);
-  BilinearForm *a22 = new BilinearForm(&fes);
+  ParBilinearForm *a11 = new ParBilinearForm(&pfes_cond);
+  ParBilinearForm *a22 = new ParBilinearForm(&pfes);
 
-  auto a12 = new MixedBilinearFormSubMesh(&fes, &fes_cond, &fes_cond, true);
-
-  auto a21 = new MixedBilinearFormSubMesh(&fes_cond, &fes, &fes_cond, false);
+  auto a12 = new ParMixedBilinearFormSubMesh(&pfes, &pfes_cond, true);
+  auto a21 = new ParMixedBilinearFormSubMesh(&pfes_cond, &pfes, false);
 
   a11->AddDomainIntegrator(new DiffusionIntegrator(one));
   a11->Assemble();
@@ -162,76 +169,76 @@ int main(int argc, char *argv[]) {
   a21->Assemble();
   a21->Finalize();
 
-  SparseMatrix A11, A22;
-  Vector X1, B1, X2, B2;
+  HypreParMatrix A11, A22;
+  HypreParVector X1, B1, X2, B2;
 
-  // B1 and B2 will need further reductions from off-diagonal contributions for
-  // non-zero Dirichlet BCs
   a11->FormLinearSystem(ess_tdof_list_cond, psi1_gf, *b1, A11, X1, B1);
   a22->FormLinearSystem(ess_tdof_list, psi2_gf, *b2, A22, X2, B2);
 
-  OperatorHandle A12_handle;
+  OperatorHandle A12_handle(Operator::Hypre_ParCSR);
+  OperatorHandle A21_handle(Operator::Hypre_ParCSR);
+
   a12->FormRectangularSystemMatrix(ess_tdof_list, ess_tdof_list_cond,
                                    A12_handle);
 
-  OperatorHandle A21_handle;
   a21->FormRectangularSystemMatrix(ess_tdof_list_cond, ess_tdof_list,
                                    A21_handle);
 
-  Array<int> block_offsets(3);
-  block_offsets[0] = 0;
-  block_offsets[1] = X1.Size();
-  block_offsets[2] = X2.Size();
-  block_offsets.PartialSum();
+  BlockVector trueX(block_trueOffsets), trueB(block_trueOffsets);
+  trueX = 0.0;
+  trueB = 0.0;
 
-  BlockVector X(block_offsets), B(block_offsets);
-  X = 0.0;
-  B = 0.0;
+  trueB.GetBlock(0) = B1;
+  trueB.GetBlock(1) = B2;
 
-  B.GetBlock(0) = B1;
-  B.GetBlock(1) = B2;
-
-  BlockOperator Op(block_offsets);
+  BlockOperator Op(block_trueOffsets);
   Op.SetBlock(0, 0, &A11);
   Op.SetBlock(0, 1, A12_handle.Ptr());
   Op.SetBlock(1, 0, A21_handle.Ptr());
   Op.SetBlock(1, 1, &A22);
 
-  BlockDiagonalPreconditioner Prec(block_offsets);
-  DSmoother prec11(A11);
-  DSmoother prec22(A22);
+  BlockDiagonalPreconditioner Prec(block_trueOffsets);
+  HypreBoomerAMG prec11(A11);
+  HypreBoomerAMG prec22(A22);
   Prec.SetDiagonalBlock(0, &prec11);
   Prec.SetDiagonalBlock(1, &prec22);
 
-  CGSolver solver;
+  CGSolver solver(MPI_COMM_WORLD);
   solver.SetRelTol(rel_tol);
+  solver.SetAbsTol(0.0);
   solver.SetMaxIter(3000);
-  solver.SetPrintLevel(1);
+  solver.SetPrintLevel(verbose);
   solver.SetOperator(Op);
   solver.SetPreconditioner(Prec);
 
   chrono.Clear();
   chrono.Start();
 
-  solver.Mult(B, X);
+  solver.Mult(trueB, trueX);
 
   if (solver.GetConverged()) {
-    std::cout << "Converged in " << solver.GetNumIterations()
-              << " iterations with a residual norm of " << solver.GetFinalNorm()
-              << ".\n";
+    if (verbose) {
+      std::cout << "Converged in " << solver.GetNumIterations()
+                << " iterations with a residual norm of "
+                << solver.GetFinalNorm() << ".\n";
+    }
   } else {
-    std::cout << "Did not converge in " << solver.GetNumIterations()
-              << " iterations. Residual norm is " << solver.GetFinalNorm()
-              << ".\n";
+    if (verbose) {
+      std::cout << "Did not converge in " << solver.GetNumIterations()
+                << " iterations. Residual norm is " << solver.GetFinalNorm()
+                << ".\n";
+    }
   }
 
   chrono.Stop();
-  cout << "Solver time = " << chrono.RealTime() << " s." << endl;
+  if (verbose) cout << "Solver time = " << chrono.RealTime() << " s." << endl;
 
-  psi1_gf.SetFromTrueDofs(X.GetBlock(0));
-  psi2_gf.SetFromTrueDofs(X.GetBlock(1));
+  Vector X1_block(trueX.GetBlock(0));
+  Vector X2_block(trueX.GetBlock(1));
 
-  mesh_cond.Transfer(psi2_gf, psi2_gf_cond);
+  a11->RecoverFEMSolution(X1_block, *b1, psi1_gf);
+  a22->RecoverFEMSolution(X2_block, *b2, psi2_gf);
+  pmesh_cond.Transfer(psi2_gf, psi2_gf_cond);
 
   int order_quad = max(2, 2 * order + 1);
   const IntegrationRule *irs[Geometry::NumGeom];
@@ -241,51 +248,59 @@ int main(int argc, char *argv[]) {
 
   real_t psi1_l2_err =
       psi1_gf.ComputeL2Error(psi1_exact_coeff, irs) /
-      ComputeLpNorm(2.0, psi1_exact_coeff, *fes_cond.GetMesh(), irs);
-  real_t psi2_l2_err =
-      psi2_gf.ComputeL2Error(psi2_exact_coeff, irs) /
-      ComputeLpNorm(2.0, psi2_exact_coeff, *fes.GetMesh(), irs);
+      ComputeGlobalLpNorm(2.0, psi1_exact_coeff, pmesh_cond, irs);
+  real_t psi2_l2_err = psi2_gf.ComputeL2Error(psi2_exact_coeff, irs) /
+                       ComputeGlobalLpNorm(2.0, psi2_exact_coeff, *pmesh, irs);
   real_t psi2_cond_l2_err =
       psi2_gf_cond.ComputeL2Error(psi2_exact_coeff, irs) /
-      ComputeLpNorm(2.0, psi2_exact_coeff, *fes_cond.GetMesh(), irs);
+      ComputeGlobalLpNorm(2.0, psi2_exact_coeff, pmesh_cond, irs);
 
-  cout << "\nErrors:" << endl;
-  cout << "psi1 L2 error = " << psi1_l2_err << endl;
-  cout << "psi2 L2 error = " << psi2_l2_err << endl;
-  cout << "psi2 (submesh) L2 error = " << psi2_cond_l2_err << endl;
+  if (verbose) {
+    cout << "\nErrors:" << endl;
+    cout << "psi1 L2 error = " << psi1_l2_err << endl;
+    cout << "psi2 L2 error = " << psi2_l2_err << endl;
+    cout << "psi2 (submesh) L2 error = " << psi2_cond_l2_err << endl;
+  }
 
   if (visualization) {
-    GridFunction psi1_exact_gf(&fes_cond), psi2_exact_gf(&fes),
-        psi2_exact_gf_cond(&fes_cond);
+    ParGridFunction psi1_exact_gf(&pfes_cond), psi2_exact_gf(&pfes),
+        psi2_exact_gf_cond(&pfes_cond);
     psi1_exact_gf.ProjectCoefficient(psi1_exact_coeff);
     psi2_exact_gf.ProjectCoefficient(psi2_exact_coeff);
-    mesh_cond.Transfer(psi2_exact_gf, psi2_exact_gf_cond);
+    pmesh_cond.Transfer(psi2_exact_gf, psi2_exact_gf_cond);
 
     char vishost[] = "localhost";
     int visport = 19916;
 
     socketstream psi1_sock(vishost, visport);
+    psi1_sock << "parallel " << num_procs << " " << myid << "\n";
     psi1_sock.precision(8);
     psi1_sock << "solution\n"
-              << mesh_cond << psi1_gf << "window_title 'psi1 numerical'"
+              << pmesh_cond << psi1_gf << "window_title 'psi1 numerical'"
               << endl;
+    MPI_Barrier(pmesh_cond.GetComm());
 
     socketstream psi1e_sock(vishost, visport);
+    psi1e_sock << "parallel " << num_procs << " " << myid << "\n";
     psi1e_sock.precision(8);
     psi1e_sock << "solution\n"
-               << mesh_cond << psi1_exact_gf << "window_title 'psi1 exact'"
+               << pmesh_cond << psi1_exact_gf << "window_title 'psi1 exact'"
                << endl;
+    MPI_Barrier(pmesh_cond.GetComm());
 
     socketstream psi2_sock(vishost, visport);
+    psi2_sock << "parallel " << num_procs << " " << myid << "\n";
     psi2_sock.precision(8);
     psi2_sock << "solution\n"
-              << mesh_cond << psi2_gf_cond
+              << pmesh_cond << psi2_gf_cond
               << "window_title 'psi2 numerical (submesh)'" << endl;
+    MPI_Barrier(pmesh_cond.GetComm());
 
     socketstream psi2e_sock(vishost, visport);
+    psi2e_sock << "parallel " << num_procs << " " << myid << "\n";
     psi2e_sock.precision(8);
     psi2e_sock << "solution\n"
-               << mesh_cond << psi2_exact_gf_cond
+               << pmesh_cond << psi2_exact_gf_cond
                << "window_title 'psi2 exact (submesh)'" << endl;
   }
 
@@ -293,7 +308,9 @@ int main(int argc, char *argv[]) {
   delete b2;
   delete a11;
   delete a12;
+  delete a21;
   delete a22;
+  delete pmesh;
   delete mesh;
 
   return 0;

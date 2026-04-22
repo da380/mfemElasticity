@@ -60,7 +60,7 @@ int main(int argc, char *argv[]) {
   Hypre::Init();
   bool verbose = (myid == 0);
 
-  const char *mesh_file = "mesh/ex5.msh";
+  const char *mesh_file = "mesh/ex7.msh";
   real_t rel_tol = 1e-10;
   int order = 1;
   bool visualization = false;
@@ -144,10 +144,8 @@ int main(int argc, char *argv[]) {
   ParBilinearForm *a11 = new ParBilinearForm(&pfes_cond);
   ParBilinearForm *a22 = new ParBilinearForm(&pfes);
 
-  auto a12 =
-      new ParMixedBilinearFormSubMesh(&pfes, &pfes_cond, &pfes_cond, true);
-  auto a21 =
-      new ParMixedBilinearFormSubMesh(&pfes_cond, &pfes, &pfes_cond, false);
+  auto a12 = new ParMixedBilinearFormSubMesh(&pfes, &pfes_cond, true);
+  auto a21 = new ParMixedBilinearFormSubMesh(&pfes_cond, &pfes, false);
 
   a11->AddDomainIntegrator(new DiffusionIntegrator(one));
   a11->Assemble();

@@ -12,9 +12,8 @@
 //     ψ2 = 0 on ∂Ω2
 //
 // Notes:
-// - The system is solved using a staggered (block Gauss–Seidel) iteration.
-// - To generate the mesh, run: build/concentric_spheres -r 1-2 -s 0.02-0.1 -out
-// mesh/ex5.msh
+// - The system is solved in the block manner.
+// - To generate the mesh, run: build/concentric_spheres -r 1-2 -s 0.02-0.1 -out ex7.msh
 // -----------------------------------------------------------------------------
 #include <cmath>
 
@@ -72,7 +71,7 @@ real_t f2Exact(const Vector &x) {
 int main(int argc, char *argv[]) {
   StopWatch chrono;
 
-  const char *mesh_file = "ex5.msh";
+  const char *mesh_file = "ex7.msh";
   real_t rel_tol = 1e-10;
   int order = 1;
   bool visualization = false;
@@ -142,7 +141,9 @@ int main(int argc, char *argv[]) {
   BilinearForm *a11 = new BilinearForm(&fes_cond);
   BilinearForm *a22 = new BilinearForm(&fes);
 
-  auto a12 = new MixedBilinearFormSubMesh(&fes, &fes_cond, &fes_cond, true);
+  auto a12 = new MixedBilinearFormSubMesh(&fes, &fes_cond, true);
+
+  auto a21 = new MixedBilinearFormSubMesh(&fes_cond, &fes, false);
 
   a11->AddDomainIntegrator(new DiffusionIntegrator(one));
   a11->Assemble();
@@ -156,85 +157,78 @@ int main(int argc, char *argv[]) {
   a12->Assemble();
   a12->Finalize();
 
-  SparseMatrix &A12(a12->SpMat());
-  TransposeOperator A21op(A12);
+  a21->AddDomainIntegrator(new MassIntegrator(minus_one));
+  a21->Assemble();
+  a21->Finalize();
 
-  CGSolver solver1, solver2;
-  solver1.SetRelTol(rel_tol);
-  solver1.SetMaxIter(3000);
-  solver1.SetPrintLevel(0);
+  SparseMatrix A11, A22;
+  Vector X1, B1, X2, B2;
 
-  solver2.SetRelTol(rel_tol);
-  solver2.SetMaxIter(3000);
-  solver2.SetPrintLevel(0);
+  // B1 and B2 will need further reductions from off-diagonal contributions for
+  // non-zero Dirichlet BCs
+  a11->FormLinearSystem(ess_tdof_list_cond, psi1_gf, *b1, A11, X1, B1);
+  a22->FormLinearSystem(ess_tdof_list, psi2_gf, *b2, A22, X2, B2);
 
-  int max_iter = 1000;
-  int iter = 0;
-  real_t rel_tol_coup = 1e-10;
+  OperatorHandle A12_handle;
+  a12->FormRectangularSystemMatrix(ess_tdof_list, ess_tdof_list_cond,
+                                   A12_handle);
 
-  Vector Psi1(psi1_gf), Psi2(psi2_gf);
+  OperatorHandle A21_handle;
+  a21->FormRectangularSystemMatrix(ess_tdof_list_cond, ess_tdof_list,
+                                   A21_handle);
 
-  Vector Psi2_temp(Psi2.Size()), Psi2_diff(Psi2.Size());
-  Psi2_temp = 0.0;
-  Psi2_diff = 0.0;
+  Array<int> block_offsets(3);
+  block_offsets[0] = 0;
+  block_offsets[1] = X1.Size();
+  block_offsets[2] = X2.Size();
+  block_offsets.PartialSum();
 
-  LinearForm b1_ext(&fes_cond), b2_ext(&fes);
+  BlockVector X(block_offsets), B(block_offsets);
+  X = 0.0;
+  B = 0.0;
+
+  B.GetBlock(0) = B1;
+  B.GetBlock(1) = B2;
+
+  BlockOperator Op(block_offsets);
+  Op.SetBlock(0, 0, &A11);
+  Op.SetBlock(0, 1, A12_handle.Ptr());
+  Op.SetBlock(1, 0, A21_handle.Ptr());
+  Op.SetBlock(1, 1, &A22);
+
+  BlockDiagonalPreconditioner Prec(block_offsets);
+  DSmoother prec11(A11);
+  DSmoother prec22(A22);
+  Prec.SetDiagonalBlock(0, &prec11);
+  Prec.SetDiagonalBlock(1, &prec22);
+
+  CGSolver solver;
+  solver.SetRelTol(rel_tol);
+  solver.SetMaxIter(3000);
+  solver.SetPrintLevel(1);
+  solver.SetOperator(Op);
+  solver.SetPreconditioner(Prec);
 
   chrono.Clear();
   chrono.Start();
-  for (int i = 0; i < max_iter; i++) {
-    iter++;
-    cout << "Iteration " << iter << ":" << endl;
 
-    SparseMatrix A11, A22;
-    Vector X1, B1, X2, B2;
+  solver.Mult(B, X);
 
-    // eq. 1
-    b1_ext = *b1;
-    A12.AddMult(Psi2, b1_ext, -1.0);
-
-    a11->FormLinearSystem(ess_tdof_list_cond, psi1_gf, b1_ext, A11, X1, B1);
-
-    DSmoother prec11(A11);
-    solver1.SetOperator(A11);
-    solver1.SetPreconditioner(prec11);
-    solver1.Mult(B1, X1);
-
-    a11->RecoverFEMSolution(X1, b1_ext, psi1_gf);
-
-    psi1_gf.GetTrueDofs(Psi1);
-
-    // eq. 2
-    b2_ext = *b2;
-    A21op.AddMult(Psi1, b2_ext, -1.0);
-
-    a22->FormLinearSystem(ess_tdof_list, psi2_gf, b2_ext, A22, X2, B2);
-
-    DSmoother prec22(A22);
-
-    solver2.SetOperator(A22);
-    solver2.SetPreconditioner(prec22);
-    solver2.Mult(B2, X2);
-
-    a22->RecoverFEMSolution(X2, b2_ext, psi2_gf);
-
-    psi2_gf.GetTrueDofs(Psi2_temp);
-
-    Psi2_diff = Psi2_temp;
-    Psi2_diff -= Psi2;
-
-    real_t res = Psi2_diff.Norml2() / Psi2_temp.Norml2();
-    Psi2 = Psi2_temp;
-
-    cout << "Residual = " << res << endl;
-
-    if (res < rel_tol_coup) {
-      chrono.Stop();
-      cout << "Converged at iteration " << iter << endl;
-      cout << "Time = " << chrono.RealTime() << " s" << endl;
-      break;
-    }
+  if (solver.GetConverged()) {
+    std::cout << "Converged in " << solver.GetNumIterations()
+              << " iterations with a residual norm of " << solver.GetFinalNorm()
+              << ".\n";
+  } else {
+    std::cout << "Did not converge in " << solver.GetNumIterations()
+              << " iterations. Residual norm is " << solver.GetFinalNorm()
+              << ".\n";
   }
+
+  chrono.Stop();
+  cout << "Solver time = " << chrono.RealTime() << " s." << endl;
+
+  psi1_gf.SetFromTrueDofs(X.GetBlock(0));
+  psi2_gf.SetFromTrueDofs(X.GetBlock(1));
 
   mesh_cond.Transfer(psi2_gf, psi2_gf_cond);
 
