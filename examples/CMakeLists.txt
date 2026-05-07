@@ -17,6 +17,12 @@ target_link_libraries(ex5 mfemElasticity)
 add_executable(ex6 ex6.cpp)
 target_link_libraries(ex6 mfemElasticity)
 
+add_executable(ex7 ex7.cpp)
+target_link_libraries(ex7 mfemElasticity)
+
+add_executable(ex8 ex8.cpp)
+target_link_libraries(ex8 mfemElasticity)
+
 
 
 
@@ -33,4 +39,10 @@ if(USE_MPI)
 
         add_executable(ex4p ex4p.cpp)
         target_link_libraries(ex4p mfemElasticity)
+
+        add_executable(ex7p ex7p.cpp)
+        target_link_libraries(ex7p mfemElasticity)
+
+        add_executable(ex8p ex8p.cpp)
+        target_link_libraries(ex8p mfemElasticity)
 endif()
