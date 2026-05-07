@@ -1,7 +1,5 @@
 #include "mfemElasticity/poisson.hpp"
 
-#include <functional>
-
 namespace mfemElasticity {
 
 /*****************************************************************
