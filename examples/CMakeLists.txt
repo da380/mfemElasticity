@@ -48,4 +48,7 @@ if(USE_MPI)
 
         add_executable(ex8p ex8p.cpp)
         target_link_libraries(ex8p mfemElasticity)
+
+        add_executable(grid_transfer_p grid_transfer_p.cpp)
+        target_link_libraries(grid_transfer_p mfemElasticity)
 endif()

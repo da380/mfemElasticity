@@ -147,8 +147,6 @@ int main(int argc, char* argv[]) {
   solver00.iterative_mode = true;
   solver11.iterative_mode = true;
 
-  // ... (Previous setup code remains the same up to solver11 configuration)
-
   // --- Automated Block Gauss-Seidel Outer Iterations ---
 
   // 1. Store the base right-hand side vectors.
