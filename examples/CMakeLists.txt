@@ -23,6 +23,9 @@ target_link_libraries(ex7 mfemElasticity)
 add_executable(ex8 ex8.cpp)
 target_link_libraries(ex8 mfemElasticity)
 
+add_executable(grid_transfer grid_transfer.cpp)
+target_link_libraries(grid_transfer mfemElasticity)
+
 
 
 
@@ -45,4 +48,7 @@ if(USE_MPI)
 
         add_executable(ex8p ex8p.cpp)
         target_link_libraries(ex8p mfemElasticity)
+
+        add_executable(grid_transfer_p grid_transfer_p.cpp)
+        target_link_libraries(grid_transfer_p mfemElasticity)
 endif()
