@@ -95,7 +95,7 @@ int main(int argc, char* argv[]) {
   a11.AddDomainIntegrator(new MassIntegrator(rho));
   a11.Assemble();
 
-  auto mu = ConstantCoefficient(0.1);
+  auto mu = ConstantCoefficient(0.2);
   auto a01 = ParBilinearForm(&psub_fes);
   a01.AddDomainIntegrator(new MassIntegrator(mu));
   a01.Assemble();
@@ -136,6 +136,7 @@ int main(int argc, char* argv[]) {
   auto amg00 = HypreBoomerAMG(A00);
   amg00.SetPrintLevel(0);
   auto solver00 = CGSolver(MPI_COMM_WORLD);
+
   solver00.SetRelTol(1e-12);
   solver00.SetAbsTol(1e-12);
   solver00.SetMaxIter(10000);
@@ -267,6 +268,12 @@ int main(int argc, char* argv[]) {
   sol_sock_1.precision(8);
   sol_sock_1 << "solution\n" << pmesh << x1 << flush;
   sol_sock_1 << "keys Rjlbc\n" << flush;
+
+  socketstream sol_sock_2(vishost, visport);
+  sol_sock_2 << "parallel " << num_procs << " " << myid << "\n";
+  sol_sock_2.precision(8);
+  sol_sock_2 << "solution\n" << pmesh << x10 << flush;
+  sol_sock_2 << "keys Rjlbc\n" << flush;
 
   return 0;
 }
