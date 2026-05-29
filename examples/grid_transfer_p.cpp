@@ -138,7 +138,6 @@ int main(int argc, char* argv[]) {
   auto solver00 = CGSolver(MPI_COMM_WORLD);
 
   solver00.SetRelTol(1e-12);
-  solver00.SetAbsTol(1e-12);
   solver00.SetMaxIter(10000);
   solver00.SetPrintLevel(myid == 0 ? 1 : 0);
   solver00.SetOperator(A00);
@@ -148,7 +147,6 @@ int main(int argc, char* argv[]) {
   amg11.SetPrintLevel(0);
   auto solver11 = CGSolver(MPI_COMM_WORLD);
   solver11.SetRelTol(1e-12);
-  solver11.SetAbsTol(1e-12);
   solver11.SetMaxIter(10000);
   solver11.SetPrintLevel(myid == 0 ? 1 : 0);
   solver11.SetOperator(A11);
@@ -201,6 +199,11 @@ int main(int argc, char* argv[]) {
 
     solver00.Mult(B0_curr, X0);
 
+    if (iter == 0) {
+      auto norm = solver00.GetFinalNorm();
+      solver00.SetAbsTol(norm);
+    }
+
     // Distribute T-vector solution X0 back into L-vector GridFunction x0
     a00.RecoverFEMSolution(X0, b0, x0);
 
@@ -224,6 +227,11 @@ int main(int argc, char* argv[]) {
     }
 
     solver11.Mult(B1_curr, X1);
+
+    if (iter == 0) {
+      auto norm = solver11.GetFinalNorm();
+      solver11.SetAbsTol(norm);
+    }
 
     // Distribute T-vector solution X1 back into L-vector GridFunction x1
     a11.RecoverFEMSolution(X1, b1, x1);

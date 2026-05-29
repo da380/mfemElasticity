@@ -129,7 +129,6 @@ int main(int argc, char* argv[]) {
   auto P00 = GSSmoother(A00);
   auto solver00 = CGSolver();
   solver00.SetRelTol(1e-12);
-  solver00.SetAbsTol(1e-12);
   solver00.SetMaxIter(10000);
   solver00.SetPrintLevel(1);
   solver00.SetOperator(A00);
@@ -138,7 +137,6 @@ int main(int argc, char* argv[]) {
   auto P11 = GSSmoother(A11);
   auto solver11 = CGSolver();
   solver11.SetRelTol(1e-12);
-  solver11.SetAbsTol(1e-12);
   solver11.SetMaxIter(10000);
   solver11.SetPrintLevel(1);
   solver11.SetOperator(A11);
@@ -190,6 +188,11 @@ int main(int argc, char* argv[]) {
     // Solve A00 * X0 = B0_curr
     solver00.Mult(B0_curr, X0);
 
+    if (iter == 0) {
+      auto norm = solver00.GetFinalNorm();
+      solver00.SetAbsTol(norm);
+    }
+
     // Recover the GridFunction x0
     a00.RecoverFEMSolution(X0, b0, x0);
 
@@ -209,6 +212,11 @@ int main(int argc, char* argv[]) {
 
     // Recover the GridFunction x1
     a11.RecoverFEMSolution(X1, b1, x1);
+
+    if (iter == 0) {
+      auto norm = solver11.GetFinalNorm();
+      solver11.SetAbsTol(norm);
+    }
 
     // ==========================================
     // Convergence Check
