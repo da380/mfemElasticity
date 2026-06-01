@@ -23,13 +23,17 @@ target_link_libraries(ex7 mfemElasticity)
 add_executable(ex8 ex8.cpp)
 target_link_libraries(ex8 mfemElasticity)
 
+add_executable(elastogravity elastogravity.cpp)
+target_link_libraries(elastogravity mfemElasticity)
+
+
 
 
 
 
 if(USE_MPI)
-        add_executable(ex1p ex1p.cpp)
-        target_link_libraries(ex1p mfemElasticity)
+        add_executable(elastogravity_p elastogravity_p.cpp)
+        target_link_libraries(elastogravity_p mfemElasticity)
 
         add_executable(ex2p ex2p.cpp)
         target_link_libraries(ex2p mfemElasticity)

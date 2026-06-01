@@ -1,16 +1,17 @@
 #include <mfem.hpp>
-#include <giafem.hpp>
 #include <mfemElasticity.hpp>
 #include <cmath>
 
 using namespace std;
 using namespace mfem;
-using namespace giafem;
 
 real_t rho_func(const Vector &coord);
 real_t mu_func(const Vector &coord);
 real_t lamb_func(const Vector &coord);
 real_t loading_func(const Vector &coord);
+
+const real_t G_const = 6.6743e-11;
+const real_t R_const = 6371e3;
 
 
 int main(int argc, char *argv[])
@@ -87,7 +88,7 @@ int main(int argc, char *argv[])
     auto DtN = mfemElasticity::PoissonDtNOperator(&fes_phi, deg);
     DtN.Assemble();
 
-    ProductCoefficient rhs_coeff(-4.0 * M_PI * Constants::G, rho_coeff);
+    ProductCoefficient rhs_coeff(-4.0 * M_PI * G_const, rho_coeff);
     LinearForm b0(&fes_phi);
     b0.AddDomainIntegrator(new DomainLFIntegrator(rhs_coeff));
     b0.Assemble();
@@ -162,7 +163,7 @@ int main(int argc, char *argv[])
 
     auto a21 = new MixedBilinearForm(&fes_u_ext, &fes_phi);
     
-    ConstantCoefficient c0(1.0 / (4.0 * M_PI * Constants::G));
+    ConstantCoefficient c0(1.0 / (4.0 * M_PI * G_const));
     ProductCoefficient half_rho_coeff(0.5, rho_coeff), minus_half_rho_coeff(-0.5, rho_coeff), minus_rho_coeff(-1.0, rho_coeff);
 
     auto *a11_integ_0 = new ElasticityIntegrator(lamb_coeff, mu_coeff);
@@ -193,7 +194,7 @@ int main(int argc, char *argv[])
 
     SparseMatrix &A11(a11->SpMat());
     SparseMatrix &A22_0(a22->SpMat());
-    auto A22 = SumOperator(&A22_0, 1.0, &DtN, 1.0 / (4.0 * M_PI * Constants::G), false, false);
+    auto A22 = SumOperator(&A22_0, 1.0, &DtN, 1.0 / (4.0 * M_PI * G_const), false, false);
   
     SparseMatrix &A12(a12->SpMat());
     SparseMatrix &A21(a21->SpMat());
@@ -292,10 +293,10 @@ int main(int argc, char *argv[])
 real_t rho_func(const Vector &coord)
 {
     real_t r = coord.Norml2();
-    if (r > Constants::R){
+    if (r > R_const){
         return 0.0;
     } else{
-        real_t r_norm = r / Constants::R;
+        real_t r_norm = r / R_const;
         //real_t theta = acos(coord[2] / r); // polar angle
         //real_t phi = atan2(coord[1], coord[0]); // azimuthal angle
         real_t rho_surface = 2.6e3; 
