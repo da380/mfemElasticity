@@ -144,8 +144,8 @@ int main(int argc, char *argv[]) {
   ParBilinearForm *a11 = new ParBilinearForm(&pfes_cond);
   ParBilinearForm *a22 = new ParBilinearForm(&pfes);
 
-  auto a12 = new ParMixedBilinearFormSubMesh(&pfes, &pfes_cond, true);
-  auto a21 = new ParMixedBilinearFormSubMesh(&pfes_cond, &pfes, false);
+  auto a12 = new ParMixedBilinearFormSubMesh(&pfes, &pfes_cond, &pfes_cond, true);
+  auto a21 = new ParMixedBilinearFormSubMesh(&pfes_cond, &pfes, &pfes_cond, false);
 
   a11->AddDomainIntegrator(new DiffusionIntegrator(one));
   a11->Assemble();

@@ -1,15 +1,20 @@
 #include <mfem.hpp>
-#include <giafem.hpp>
 #include <mfemElasticity.hpp>
 #include <cmath>
+#include <algorithm>
 
 using namespace std;
 using namespace mfem;
-using namespace giafem;
 
-Nondimensionalisation ND(6371e3,
-                         1.0 / sqrt(Constants::G * 5000.0),
-                         5000.0);
+constexpr real_t pi = 3.141592653589793238462643383279502884;
+constexpr real_t G_const = 6.67430e-11;
+constexpr real_t L_scale = 6371e3;
+constexpr real_t rho_scale = 5000.0;
+
+const real_t T_scale = 1.0 / sqrt(G_const * rho_scale);
+const real_t gravity_scale = L_scale / (T_scale * T_scale);
+const real_t potential_scale = L_scale * L_scale / (T_scale * T_scale);
+const real_t stress_scale = rho_scale * L_scale * L_scale / (T_scale * T_scale);
 
 real_t rho_func(const Vector &coord);
 real_t mu_func(const Vector &coord);
@@ -50,26 +55,24 @@ int main(int argc, char *argv[])
     }
     args.PrintOptions(cout);
 
-    const real_t G_nd = Constants::G * ND.Density() * ND.Time() * ND.Time();
-    const real_t poisson_rhs_factor = -4.0 * M_PI * G_nd;
-    const real_t phi_block_factor = 1.0 / (4.0 * M_PI * G_nd);
-    const real_t surface_load_scale = ND.Density() * ND.Length();
+    const real_t G_nd = G_const * rho_scale * T_scale * T_scale;
+    const real_t poisson_rhs_factor = -4.0 * pi * G_nd;
+    const real_t phi_block_factor = 1.0 / (4.0 * pi * G_nd);
+    const real_t surface_load_scale = rho_scale * L_scale;
 
-    ND.Print();
+    cout << "\nReference scales:\n";
+    cout << "  Length scale L        = " << L_scale << " m\n";
+    cout << "  Time scale T          = " << T_scale << " s\n";
+    cout << "  Density scale rho0    = " << rho_scale << " kg/m^3\n";
+    cout << "  Potential scale Phi0  = " << potential_scale << " m^2/s^2\n";
+    cout << "  Gravity scale g0      = " << gravity_scale << " m/s^2\n";
+    cout << "  Stress scale p0       = " << stress_scale << " Pa\n";
+    cout << "  Surface load scale    = " << surface_load_scale << " kg/m^2\n";
 
     cout << "\nDimensionless constants:\n";
     cout << "  G_nd                  = " << G_nd << endl;
     cout << "  -4*pi*G_nd            = " << poisson_rhs_factor << endl;
     cout << "  1/(4*pi*G_nd)         = " << phi_block_factor << endl;
-
-    cout << "\nReference scales:\n";
-    cout << "  Length scale L        = " << ND.Length() << " m\n";
-    cout << "  Time scale T          = " << ND.Time() << " s\n";
-    cout << "  Density scale rho0    = " << ND.Density() << " kg/m^3\n";
-    cout << "  Potential scale Phi0  = " << ND.Potential() << " m^2/s^2\n";
-    cout << "  Gravity scale g0      = " << ND.Gravity() << " m/s^2\n";
-    cout << "  Stress scale p0       = " << ND.Pressure() << " Pa\n";
-    cout << "  Surface load scale    = " << surface_load_scale << " kg/m^2\n";
     cout << endl;
 
     Mesh *mesh = new Mesh(mesh_file, 1, 1);
@@ -176,7 +179,7 @@ int main(int argc, char *argv[])
     a0.FormLinearSystem(ess_tdof_list, phi0_gf, b0, A0, Phi0, B0);
 
     cout << "Size of equilibrium linear system: "
-        << A0->Height() << endl;
+         << A0->Height() << endl;
 
     auto S = SumOperator(A0.Ptr(), 1.0, &DtN, 1.0, false, false);
 
@@ -221,7 +224,7 @@ int main(int argc, char *argv[])
     if (visualization)
     {
         GridFunction phi0_vis(phi0_gf);
-        ND.UnscaleGravityPotential(phi0_vis);
+        phi0_vis *= potential_scale;
 
         char vishost[] = "localhost";
         int visport = 19916;
@@ -258,9 +261,11 @@ int main(int argc, char *argv[])
     BilinearForm *a11(new BilinearForm(&fes_u));
     BilinearForm *a22(new BilinearForm(&fes_phi));
 
-    auto a12 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_phi, &fes_u, true);
+    auto a12 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_phi, &fes_u,
+                                                            &fes_phi_cond, true);
 
-    auto a21 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_u, &fes_phi, false);
+    auto a21 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_u, &fes_phi,
+                                                            &fes_phi_cond, false);
 
     ConstantCoefficient c0(phi_block_factor);
 
@@ -324,7 +329,6 @@ int main(int argc, char *argv[])
     GSSmoother prec22(A22s);
 
     MINRESSolver solver1;
-    //CGSolver solver1;
     solver1.SetRelTol(rel_tol);
     solver1.SetMaxIter(3000);
     solver1.SetOperator(A11);
@@ -363,7 +367,7 @@ int main(int argc, char *argv[])
         one_phi = 1.0;
 
         outer_l.AddBoundaryIntegrator(new BoundaryLFIntegrator(one),
-                bdr_marker_outer);
+                                       bdr_marker_outer);
         outer_l.Assemble();
 
         outer_length = outer_l(one_phi);
@@ -390,7 +394,7 @@ int main(int argc, char *argv[])
         U_old = U;
 
         A12.AddMult(Phi, b1_ext, -1.0);
-        cout<<"Elasticity solve: "<<endl;
+        cout << "Elasticity solve: " << endl;
         rigid_solver.Mult(b1_ext, U);
 
         if (iter == 1)
@@ -406,13 +410,12 @@ int main(int argc, char *argv[])
         U_diff -= U_old;
 
         A21.AddMult(U, b2_ext, -1.0);
-        cout<<"Poisson solve: "<<endl;
+        cout << "Poisson solve: " << endl;
 
         if (dim == 2)
         {
-            real_t mass_before = b2_ext(one_phi);
-            b2_ext.Add(-mass_before / outer_length, outer_l);
-            real_t mass_after = b2_ext(one_phi);
+            real_t mass = b2_ext(one_phi);
+            b2_ext.Add(-mass / outer_length, outer_l);
         }
 
         if (dim == 2)
@@ -439,14 +442,14 @@ int main(int argc, char *argv[])
         real_t phi_den = Phi_temp.Norml2();
         real_t u_den = U.Norml2();
 
-        real_t phi_res = Phi_diff.Norml2() / max(phi_den, 1e-30);
-        real_t u_res = U_diff.Norml2() / max(u_den, 1e-30);
+        real_t phi_res = Phi_diff.Norml2() / std::max(phi_den, real_t(1e-30));
+        real_t u_res = U_diff.Norml2() / std::max(u_den, real_t(1e-30));
 
         Phi = Phi_temp;
- 
+
         cout << "Iteration " << iter
-            << ", phi residual = " << phi_res
-            << ", u residual = " << u_res << endl;
+             << ", phi residual = " << phi_res
+             << ", u residual = " << u_res << endl;
 
         if (phi_res < rel_tol_coup && u_res < rel_tol_coup)
         {
@@ -473,8 +476,8 @@ int main(int argc, char *argv[])
         GridFunction u_vis(u_gf);
         GridFunction phi_vis(phi_gf_cond);
 
-        ND.UnscaleDisplacement(u_vis);
-        ND.UnscaleGravityPotential(phi_vis);
+        u_vis *= L_scale;
+        phi_vis *= potential_scale;
 
         char vishost[] = "localhost";
         int visport = 19916;
@@ -568,7 +571,7 @@ real_t rho_func(const Vector &coord)
 
     real_t rho_dim = rho_center + (rho_surface - rho_center) * r;
 
-    return ND.ScaleDensity(rho_dim);
+    return rho_dim / rho_scale;
 }
 
 real_t mu_func(const Vector &coord)
@@ -585,7 +588,7 @@ real_t mu_func(const Vector &coord)
 
     mu_dim *= (1.0 + polar_perturb) * (1.0 + azimuthal_perturb);
 
-    return ND.ScaleStress(mu_dim);
+    return mu_dim / stress_scale;
 }
 
 real_t lamb_func(const Vector &coord)
@@ -602,7 +605,7 @@ real_t lamb_func(const Vector &coord)
 
     lamb_dim *= (1.0 + polar_perturb) * (1.0 + azimuthal_perturb);
 
-    return ND.ScaleStress(lamb_dim);
+    return lamb_dim / stress_scale;
 }
 
 real_t loading_func(const Vector &coord)
@@ -655,7 +658,7 @@ real_t loading_func(const Vector &coord)
                           * (1.0 + azimuthal_perturb)
                           * factor;
 
-    real_t sigma_dim = pressure_dim / ND.Gravity();
+    real_t sigma_dim = pressure_dim / gravity_scale;
 
-    return sigma_dim / (ND.Density() * ND.Length());
+    return sigma_dim / (rho_scale * L_scale);
 }

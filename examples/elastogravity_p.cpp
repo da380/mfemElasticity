@@ -1,5 +1,4 @@
 #include <mfem.hpp>
-#include <giafem.hpp>
 #include <mfemElasticity.hpp>
 #include <cmath>
 #include <algorithm>
@@ -7,11 +6,16 @@
 
 using namespace std;
 using namespace mfem;
-using namespace giafem;
 
-Nondimensionalisation ND(6371e3,
-                         1.0 / sqrt(Constants::G * 5000.0),
-                         5000.0);
+constexpr real_t pi = 3.141592653589793238462643383279502884;
+constexpr real_t G_const = 6.67430e-11;
+constexpr real_t L_scale = 6371e3;
+constexpr real_t rho_scale = 5000.0;
+
+const real_t T_scale = 1.0 / sqrt(G_const * rho_scale);
+const real_t gravity_scale = L_scale / (T_scale * T_scale);
+const real_t potential_scale = L_scale * L_scale / (T_scale * T_scale);
+const real_t stress_scale = rho_scale * L_scale * L_scale / (T_scale * T_scale);
 
 real_t rho_func(const Vector &coord);
 real_t mu_func(const Vector &coord);
@@ -56,28 +60,26 @@ int main(int argc, char *argv[])
     Mesh mesh(mesh_file, 1, 1);
     int dim = mesh.Dimension();
 
-    const real_t G_nd = Constants::G * ND.Density() * ND.Time() * ND.Time();
-    const real_t poisson_rhs_factor = -4.0 * M_PI * G_nd;
-    const real_t phi_block_factor = 1.0 / (4.0 * M_PI * G_nd);
-    const real_t surface_load_scale = ND.Density() * ND.Length();
+    const real_t G_nd = G_const * rho_scale * T_scale * T_scale;
+    const real_t poisson_rhs_factor = -4.0 * pi * G_nd;
+    const real_t phi_block_factor = 1.0 / (4.0 * pi * G_nd);
+    const real_t surface_load_scale = rho_scale * L_scale;
 
     if (myid == 0)
     {
-        ND.Print();
+        cout << "\nReference scales:\n";
+        cout << "  Length scale L        = " << L_scale << " m\n";
+        cout << "  Time scale T          = " << T_scale << " s\n";
+        cout << "  Density scale rho0    = " << rho_scale << " kg/m^3\n";
+        cout << "  Potential scale Phi0  = " << potential_scale << " m^2/s^2\n";
+        cout << "  Gravity scale g0      = " << gravity_scale << " m/s^2\n";
+        cout << "  Stress scale p0       = " << stress_scale << " Pa\n";
+        cout << "  Surface load scale    = " << surface_load_scale << " kg/m^2\n";
 
         cout << "\nDimensionless constants:\n";
         cout << "  G_nd                  = " << G_nd << endl;
         cout << "  -4*pi*G_nd            = " << poisson_rhs_factor << endl;
         cout << "  1/(4*pi*G_nd)         = " << phi_block_factor << endl;
-
-        cout << "\nReference scales:\n";
-        cout << "  Length scale L        = " << ND.Length() << " m\n";
-        cout << "  Time scale T          = " << ND.Time() << " s\n";
-        cout << "  Density scale rho0    = " << ND.Density() << " kg/m^3\n";
-        cout << "  Potential scale Phi0  = " << ND.Potential() << " m^2/s^2\n";
-        cout << "  Gravity scale g0      = " << ND.Gravity() << " m/s^2\n";
-        cout << "  Stress scale p0       = " << ND.Pressure() << " Pa\n";
-        cout << "  Surface load scale    = " << surface_load_scale << " kg/m^2\n";
         cout << endl;
 
         cout << "Mesh dimension: " << dim << endl;
@@ -177,13 +179,6 @@ int main(int argc, char *argv[])
         real_t length = l(phi0_gf);
 
         b0.Add(-mass / length, l);
-
-        if (myid == 0)
-        {
-            cout << "Applied 2D DtN RHS compatibility correction." << endl;
-            cout << "  total RHS before correction = " << mass << endl;
-            cout << "  exterior boundary length    = " << length << endl;
-        }
     }
 
     ParBilinearForm a0(&fes_phi);
@@ -254,7 +249,7 @@ int main(int argc, char *argv[])
     {
         ParGridFunction phi0_vis(&fes_phi);
         phi0_vis = phi0_gf;
-        ND.UnscaleGravityPotential(phi0_vis);
+        phi0_vis *= potential_scale;
 
         char vishost[] = "localhost";
         int visport = 19916;
@@ -289,9 +284,15 @@ int main(int argc, char *argv[])
     ParBilinearForm *a11(new ParBilinearForm(&fes_u));
     ParBilinearForm *a22(new ParBilinearForm(&fes_phi));
 
-    auto a12 = new mfemElasticity::ParMixedBilinearFormSubMesh(&fes_phi, &fes_u, true);
+    auto a12 = new mfemElasticity::ParMixedBilinearFormSubMesh(&fes_phi,
+                                                               &fes_u,
+                                                               &fes_phi_cond,
+                                                               true);
 
-    auto a21 = new mfemElasticity::ParMixedBilinearFormSubMesh(&fes_u, &fes_phi, false);
+    auto a21 = new mfemElasticity::ParMixedBilinearFormSubMesh(&fes_u,
+                                                               &fes_phi,
+                                                               &fes_phi_cond,
+                                                               false);
 
     ConstantCoefficient c0(phi_block_factor);
 
@@ -354,18 +355,9 @@ int main(int argc, char *argv[])
     HypreBoomerAMG prec11(*A11);
     prec11.SetElasticityOptions(&fes_u);
 
-    //HypreSmoother prec11;
-    //prec11.SetType(HypreSmoother::l1GS);
-    //prec11.SetOperator(*A11);
-
     HypreBoomerAMG prec22(*A22s);
 
-    //HypreSmoother prec22;
-    //prec22.SetType(HypreSmoother::l1GS);
-    //prec22.SetOperator(*A22_0);
-
     MINRESSolver solver1(MPI_COMM_WORLD);
-    //CGSolver solver1(MPI_COMM_WORLD);
     solver1.SetRelTol(rel_tol);
     solver1.SetMaxIter(10000);
     solver1.SetOperator(*A11);
@@ -457,15 +449,8 @@ int main(int argc, char *argv[])
 
         if (dim == 2)
         {
-            real_t mass_before = InnerProduct(MPI_COMM_WORLD, b2_ext, OnePhi);
-            b2_ext.Add(-mass_before / outer_length, *OuterL);
-            real_t mass_after = InnerProduct(MPI_COMM_WORLD, b2_ext, OnePhi);
-
-            if (myid == 0)
-            {
-                cout << "phi RHS mass before = " << mass_before
-                     << ", after = " << mass_after << endl;
-            }
+            real_t mass = InnerProduct(MPI_COMM_WORLD, b2_ext, OnePhi);
+            b2_ext.Add(-mass / outer_length, *OuterL);
 
             ortho_solver2.Mult(b2_ext, Phi_temp);
         }
@@ -545,8 +530,8 @@ int main(int argc, char *argv[])
         u_vis = u_gf;
         phi_vis = phi_gf_cond;
 
-        ND.UnscaleDisplacement(u_vis);
-        ND.UnscaleGravityPotential(phi_vis);
+        u_vis *= L_scale;
+        phi_vis *= potential_scale;
 
         char vishost[] = "localhost";
         int visport = 19916;
@@ -629,7 +614,7 @@ real_t rho_func(const Vector &coord)
 
     real_t rho_dim = rho_center + (rho_surface - rho_center) * r;
 
-    return ND.ScaleDensity(rho_dim);
+    return rho_dim / rho_scale;
 }
 
 real_t mu_func(const Vector &coord)
@@ -646,7 +631,7 @@ real_t mu_func(const Vector &coord)
 
     mu_dim *= (1.0 + polar_perturb) * (1.0 + azimuthal_perturb);
 
-    return ND.ScaleStress(mu_dim);
+    return mu_dim / stress_scale;
 }
 
 real_t lamb_func(const Vector &coord)
@@ -663,7 +648,7 @@ real_t lamb_func(const Vector &coord)
 
     lamb_dim *= (1.0 + polar_perturb) * (1.0 + azimuthal_perturb);
 
-    return ND.ScaleStress(lamb_dim);
+    return lamb_dim / stress_scale;
 }
 
 real_t loading_func(const Vector &coord)
@@ -716,7 +701,7 @@ real_t loading_func(const Vector &coord)
                           * (1.0 + azimuthal_perturb)
                           * factor;
 
-    real_t sigma_dim = pressure_dim / ND.Gravity();
+    real_t sigma_dim = pressure_dim / gravity_scale;
 
-    return sigma_dim / (ND.Density() * ND.Length());
+    return sigma_dim / (rho_scale * L_scale);
 }
