@@ -26,15 +26,14 @@ target_link_libraries(ex8 mfemElasticity)
 add_executable(elastogravity elastogravity.cpp)
 target_link_libraries(elastogravity mfemElasticity)
 
+add_executable(elastogravity_block elastogravity_block.cpp)
+target_link_libraries(elastogravity_block mfemElasticity)
 
 
 
 
 
 if(USE_MPI)
-        add_executable(elastogravity_p elastogravity_p.cpp)
-        target_link_libraries(elastogravity_p mfemElasticity)
-
         add_executable(ex2p ex2p.cpp)
         target_link_libraries(ex2p mfemElasticity)
 
@@ -49,4 +48,10 @@ if(USE_MPI)
 
         add_executable(ex8p ex8p.cpp)
         target_link_libraries(ex8p mfemElasticity)
+
+        add_executable(elastogravity_p elastogravity_p.cpp)
+        target_link_libraries(elastogravity_p mfemElasticity)
+
+        add_executable(elastogravity_block_p elastogravity_block_p.cpp)
+        target_link_libraries(elastogravity_block_p mfemElasticity)
 endif()
