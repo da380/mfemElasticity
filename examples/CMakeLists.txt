@@ -27,6 +27,10 @@ add_executable(grid_transfer grid_transfer.cpp)
 target_link_libraries(grid_transfer mfemElasticity)
 
 
+add_executable(quasi_static_elasticity quasi_static_elasticity.cpp)
+target_link_libraries(quasi_static_elasticity mfemElasticity)
+
+
 
 
 
