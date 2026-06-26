@@ -199,10 +199,12 @@ int main(int argc, char* argv[]) {
 
     solver00.Mult(B0_curr, X0);
 
-    if (iter == 0) {
+    // if (iter == 0) {
+    {
       auto norm = solver00.GetFinalNorm();
       solver00.SetAbsTol(norm);
     }
+    //}
 
     // Distribute T-vector solution X0 back into L-vector GridFunction x0
     a00.RecoverFEMSolution(X0, b0, x0);
@@ -228,10 +230,12 @@ int main(int argc, char* argv[]) {
 
     solver11.Mult(B1_curr, X1);
 
-    if (iter == 0) {
+    // if (iter == 0) {
+    {
       auto norm = solver11.GetFinalNorm();
       solver11.SetAbsTol(norm);
     }
+    // }
 
     // Distribute T-vector solution X1 back into L-vector GridFunction x1
     a11.RecoverFEMSolution(X1, b1, x1);

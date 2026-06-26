@@ -126,15 +126,21 @@ int main(int argc, char* argv[]) {
   a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
 
   // Set the preconditioner
-  HypreBoomerAMG prec;
+  auto prec = HypreBoomerAMG();
   prec.SetElasticityOptions(&fespace);
 
+  // auto prec = HypreDiagScale();
+
+  // auto prec = HypreSmoother();
+  // prec.SetType(HypreSmoother::GS);
+
   // Set the solver.
-  // auto solver = CGSolver(MPI_COMM_WORLD);
-  auto solver = HyprePCG(MPI_COMM_WORLD);
+  auto solver = CGSolver(MPI_COMM_WORLD);
+  // auto solver = HyprePCG(MPI_COMM_WORLD);
   solver.SetPreconditioner(prec);
   solver.SetOperator(A);
-  solver.SetTol(1e-12);
+  // solver.SetTol(1e-12);
+  solver.SetRelTol(1e-12);
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
 
