@@ -1,82 +1,178 @@
-
-
 #include <memory>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
+/**
+ * @brief Virtual base class for quasi-static elastic problems.
+ * * This interface defines the common interactions required by viscoelastic
+ * solvers or time-stepping loops. It abstracts away the specific boundary
+ * conditions and solver implementations.
+ */
 class QuasiStaticElasticProblem {
-  // Virtual base class for quasi-static elastic problems
-  // whose purpose is to set a common interface for their
-  // interaction with viscoelastic solvers.
-
  public:
-  // Return a reference to the finite element space.
+  /**
+   * @brief Access the underlying finite element space.
+   * @return A reference to the MFEM FiniteElementSpace.
+   */
   virtual mfem::FiniteElementSpace& GetFES() = 0;
 
-  // Return a reference to the GridFunction for the displacement.
+  /**
+   * @brief Access the current displacement solution.
+   * @return A reference to the GridFunction representing the displacement
+   * field.
+   */
   virtual mfem::GridFunction& GetDisplacement() = 0;
 
-  // Set the RHS at the time t.
-  // virtual void SetRHS(mfem::real_t t) = 0;
+  /**
+   * @brief Update the right-hand side (RHS) of the problem for a specific time.
+   * * This method should rebuild or update the linear form based on
+   * time-dependent boundary conditions, tractions, or body forces.
+   * * @param t The current physical time.
+   */
+  virtual void SetRHS(mfem::real_t t) = 0;
 
-  // Increment the RHS by a given vector.
-  // virtual void IncrementRHS(const mfem::Vector& v) = 0;
+  /**
+   * @brief Increment the current right-hand side vector.
+   * * Useful for applying history terms or explicit viscoelastic stress
+   * updates.
+   * * @param v The vector to add to the existing RHS linear form.
+   */
+  virtual void IncrementRHS(const mfem::Vector& v) = 0;
 
-  // Solve the linear system.
-  // virtual void Solve() = 0;
+  /**
+   * @brief Solve the linear system for the current state.
+   * * Updates the displacement GridFunction based on the current RHS.
+   */
+  virtual void Solve() = 0;
+
+  /**
+   * @brief Default virtual destructor.
+   */
+  virtual ~QuasiStaticElasticProblem() = default;
 };
 
+/**
+ * @brief Implementation of a pure traction (Neumann) quasi-static elastic
+ * problem.
+ * * @note Because pure traction problems lack Dirichlet boundary conditions,
+ * the resulting stiffness matrix is singular (it contains a rigid body null
+ * space). This class automatically sets up an `mfemElasticity::RigidBodySolver`
+ * to project out zero-energy translational and rotational modes during the
+ * solve step.
+ */
 class TractionProblem : public QuasiStaticElasticProblem {
  private:
+  /// Non-owning pointer to the mesh (memory managed externally)
   mfem::Mesh* _mesh;
-  mfem::FiniteElementCollection* _fec;
-  mfem::FiniteElementSpace* _fes;
 
-  mfem::LinearForm* _b;
-  mfem::BilinearForm* _a;
+  std::unique_ptr<mfem::FiniteElementCollection> _fec;
+  std::unique_ptr<mfem::FiniteElementSpace> _fes;
+
+  std::unique_ptr<mfem::Coefficient> _lambda;
+  std::unique_ptr<mfem::Coefficient> _mu;
+  std::unique_ptr<mfem::VectorConstantCoefficient> _tc;
+
+  std::unique_ptr<mfem::LinearForm> _b;
+  std::unique_ptr<mfem::BilinearForm> _a;
   mfem::GridFunction _u;
 
+  std::unique_ptr<mfem::SparseMatrix> _A;
+  std::unique_ptr<mfem::Vector> _B, _X;
+  std::unique_ptr<mfem::GSSmoother> _M;
+  std::unique_ptr<mfem::IterativeSolver> _solver;
+  std::unique_ptr<mfemElasticity::RigidBodySolver> _rigidSolver;
+
  public:
+  /**
+   * @brief Construct a new Traction Problem.
+   * * Initializes the finite element space, allocates memory for the linear
+   * system, assembles the time-independent stiffness matrix, and configures the
+   * solvers.
+   * * @param mesh Pointer to the computational mesh.
+   * @param order The polynomial order for the H1 finite element collection.
+   */
   TractionProblem(mfem::Mesh* mesh, int order) : _mesh(mesh) {
     using namespace mfem;
-    // Set up the FES
-    auto dim = _mesh->Dimension();
-    auto _fec = new H1_FECollection(order, dim);
-    auto _fes = new FiniteElementSpace(_mesh, _fec, dim);
 
-    // Set up the linear form
-    auto tv = Vector(dim);
-    tv = 0.0;
-    tv[0] = 1;
-    auto tc = VectorConstantCoefficient(tv);
+    int dim = _mesh->Dimension();
+    _fec = std::make_unique<H1_FECollection>(order, dim);
+    _fes = std::make_unique<FiniteElementSpace>(_mesh, _fec.get(), dim);
 
-    _b = new LinearForm(_fes);
-    _b->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(tc));
-    _b->Assemble();
+    _lambda = std::make_unique<ConstantCoefficient>(1.0);
+    _mu = std::make_unique<ConstantCoefficient>(1.0);
 
-    // Set up the bilinear form
-    auto lambda = ConstantCoefficient(1);
-    auto mu = ConstantCoefficient(1);
-    _a = new BilinearForm(_fes);
-    _a->AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
+    _a = std::make_unique<BilinearForm>(_fes.get());
+    _a->AddDomainIntegrator(new ElasticityIntegrator(*_lambda, *_mu));
     _a->Assemble();
 
-    // Set up the GridFunction
-    _u = GridFunction(_fes);
-    _u = 0.0;
-  }
+    _b = std::make_unique<LinearForm>(_fes.get());
+    _b->Assemble();
 
-  ~TractionProblem() {
-    delete _fec;
-    delete _fes;
-    delete _b;
-    delete _a;
+    _u.SetSpace(_fes.get());
+    _u = 0.0;
+
+    _A = std::make_unique<SparseMatrix>();
+    _X = std::make_unique<Vector>();
+    _B = std::make_unique<Vector>();
+
+    Array<int> ess_tdof_list;
+    _a->FormLinearSystem(ess_tdof_list, _u, *_b, *_A, *_X, *_B);
+
+    _M = std::make_unique<GSSmoother>(*_A);
+
+    auto cg = std::make_unique<CGSolver>();
+    cg->SetPreconditioner(*_M);
+    cg->SetOperator(*_A);
+    cg->SetRelTol(1e-12);
+    cg->SetMaxIter(10000);
+    cg->SetPrintLevel(1);
+
+    _solver = std::move(cg);
+
+    _rigidSolver =
+        std::make_unique<mfemElasticity::RigidBodySolver>(_fes.get());
+    _rigidSolver->SetSolver(*_solver);
   }
 
   mfem::FiniteElementSpace& GetFES() override { return *_fes; }
 
   mfem::GridFunction& GetDisplacement() override { return _u; }
+
+  /**
+   * @brief Set the uniform unit traction right-hand side.
+   * * @param t The current time.
+   * @note Overwrites any existing boundary integrators on the linear form.
+   */
+  void SetRHS(mfem::real_t t) override {
+    using namespace mfem;
+    int dim = _mesh->Dimension();
+    Vector tv(dim);
+    tv = 0.0;
+    tv[0] = 1 + t;
+
+    _tc = std::make_unique<VectorConstantCoefficient>(tv);
+    _b = std::make_unique<LinearForm>(_fes.get());
+
+    _b->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(*_tc));
+    _b->Assemble();
+  }
+
+  void IncrementRHS(const mfem::Vector& v) override { *_b += v; }
+
+  /**
+   * @brief Solve the linear elasticity system.
+   * * Uses the pre-configured RigidBodySolver to project out the null space
+   * and conjugate gradient (CG) to solve the resulting constrained system.
+   */
+  void Solve() override {
+    using namespace mfem;
+    Array<int> ess_tdof_list;
+
+    _a->FormLinearSystem(ess_tdof_list, _u, *_b, *_A, *_X, *_B);
+    _rigidSolver->Mult(*_B, *_X);
+    _a->RecoverFEMSolution(*_X, *_b, _u);
+  }
 };
 
 using namespace std;
@@ -113,61 +209,10 @@ int main(int argc, char* argv[]) {
 
   auto problem = TractionProblem(&mesh, order);
 
-  /*
+  problem.SetRHS(0);
+  problem.Solve();
 
-  // Set up the finite element space.
-  auto fec = H1_FECollection(order, dim);
-  auto fes = FiniteElementSpace(&mesh, &fec, dim);
-  cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
-
-  // Set up the constant traction vector coefficient.
-  auto tv = Vector(dim);
-  tv = 0.0;
-  tv[0] = 1;
-  auto tc = VectorConstantCoefficient(tv);
-
-
-  // Set up the linear form.
-  auto b = LinearForm(&fes);
-  b.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(tc));
-  b.Assemble();
-
-  // Set up the bilinear form
-  auto lambda = ConstantCoefficient(1);
-  auto mu = ConstantCoefficient(1);
-  auto a = BilinearForm(&fes);
-  a.AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
-  a.Assemble();
-
-  // Set up the gridfunction.
-  auto x = GridFunction(&fes);
-  x = 0.0;
-
-  // Set the linear system.
-  Array<int> ess_tdof_list;
-  SparseMatrix A;
-  Vector B, X;
-  a.FormLinearSystem(ess_tdof_list, x, b, A, X, B);
-  cout << "Size of linear system: " << A.Height() << endl;
-
-  // Set the preconditioner.
-  GSSmoother M(A);
-
-  // Set the solver.
-  auto solver = CGSolver();
-  solver.SetPreconditioner(M);
-  solver.SetOperator(A);
-  solver.SetRelTol(1e-12);
-  solver.SetMaxIter(10000);
-  solver.SetPrintLevel(1);
-
-  // Set up the rigid body solver.
-  auto rigidSolver = mfemElasticity::RigidBodySolver(&fes);
-  rigidSolver.SetSolver(solver);
-
-  // Solve the equations.
-  rigidSolver.Mult(B, X);
-  a.RecoverFEMSolution(X, b, x);
+  auto& u = problem.GetDisplacement();
 
   // Write solution to file.
   ofstream mesh_ofs("refined.mesh");
@@ -175,20 +220,19 @@ int main(int argc, char* argv[]) {
   mesh.Print(mesh_ofs);
   ofstream sol_ofs("sol.gf");
   sol_ofs.precision(8);
-  x.Save(sol_ofs);
+  u.Save(sol_ofs);
 
   // Visualise if glvis is open.
   char vishost[] = "localhost";
   int visport = 19916;
   socketstream sol_sock(vishost, visport);
   sol_sock.precision(8);
-  sol_sock << "solution\n" << mesh << x << flush;
+  sol_sock << "solution\n" << mesh << u << flush;
   if (dim == 2) {
     sol_sock << "keys Rjlvvvvvmm\n" << flush;
   } else {
     sol_sock << "keys m\n" << flush;
   }
 
-  */
   return 0;
 }

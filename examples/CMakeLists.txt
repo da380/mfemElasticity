@@ -34,6 +34,7 @@ target_link_libraries(quasi_static_elasticity mfemElasticity)
 
 
 
+
 if(USE_MPI)
         add_executable(ex1p ex1p.cpp)
         target_link_libraries(ex1p mfemElasticity)
@@ -55,4 +56,8 @@ if(USE_MPI)
 
         add_executable(grid_transfer_p grid_transfer_p.cpp)
         target_link_libraries(grid_transfer_p mfemElasticity)
+
+        add_executable(diffusion diffusion.cpp)
+        target_link_libraries(diffusion mfemElasticity)
+
 endif()
