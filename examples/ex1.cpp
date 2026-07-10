@@ -1,3 +1,5 @@
+
+
 /*********************************************************************************
 
 Solves a static elastic  problem, with a constant boundary traction applied to
@@ -54,21 +56,24 @@ int main(int argc, char* argv[]) {
     mesh.UniformRefinement();
   }
 
+  mesh.attributes.Print(cout);
+  mesh.bdr_attributes.Print(cout);
+
   // Set up the finite element space.
   auto fec = H1_FECollection(order, dim);
   auto fes = FiniteElementSpace(&mesh, &fec, dim);
   cout << "Number of finite element unknowns: " << fes.GetTrueVSize() << endl;
 
-  // Set up the constant traction vector coefficient.
-  auto tv = Vector(dim);
-  tv = 0.0;
-  tv[0] = 1;
-  auto tc = VectorConstantCoefficient(tv);
-
   // Set up the linear form.
   auto b = LinearForm(&fes);
-  b.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(tc));
+  auto marker = mfemElasticity::ExternalBoundaryMarker(&mesh);
+  marker[0] = 0;
+  marker[1] = 1;
+  auto sigma = FunctionCoefficient([](const Vector& x) { return x[0] * x[1]; });
+  b.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(sigma), marker);
   b.Assemble();
+
+  marker.Print(cout);
 
   // Set up the bilinear form
   auto lambda = ConstantCoefficient(1);
@@ -106,6 +111,59 @@ int main(int argc, char* argv[]) {
   // Solve the equations.
   rigidSolver.Mult(B, X);
   a.RecoverFEMSolution(X, b, x);
+
+  // =====================================================================
+  // POST-PROCESSING: Calculate and remove the physical centroid shift
+  // =====================================================================
+  cout << "Calculating physical centroid shift..." << endl;
+
+  // Build a mass matrix to compute actual volume integrals (L2 projection)
+  BilinearForm m(&fes);
+  m.AddDomainIntegrator(new VectorMassIntegrator());
+  m.Assemble();
+
+  Vector Mx(fes.GetVSize());
+  m.Mult(x, Mx);
+
+  Vector shift(dim);
+
+  for (int d = 0; d < dim; d++) {
+    // Create a constant vector field (1.0 in direction d, 0.0 elsewhere)
+    Vector dir(dim);
+    dir = 0.0;
+    dir(d) = 1.0;
+    VectorConstantCoefficient dir_coeff(dir);
+
+    GridFunction const_vec(&fes);
+    const_vec.ProjectCoefficient(dir_coeff);
+
+    // Compute the volume integral of displacement: \int x_d d\Omega
+    double int_x = const_vec * Mx;
+
+    // Compute the total volume of the domain: \int 1 d\Omega
+    Vector M_const(fes.GetVSize());
+    m.Mult(const_vec, M_const);
+    double volume = const_vec * M_const;
+
+    // The physical shift is the volume-averaged displacement
+    shift(d) = int_x / volume;
+  }
+
+  cout << "Calculated Shift (x, y): " << shift(0) << ", " << shift(1) << endl;
+
+  // Subtract the calculated shift from the entire solution field
+  for (int d = 0; d < dim; d++) {
+    Vector dir(dim);
+    dir = 0.0;
+    dir(d) = -shift(d);
+    VectorConstantCoefficient shift_coeff(dir);
+
+    GridFunction shift_gf(&fes);
+    shift_gf.ProjectCoefficient(shift_coeff);
+
+    x += shift_gf;
+  }
+  // =====================================================================
 
   // Write solution to file.
   ofstream mesh_ofs("refined.mesh");

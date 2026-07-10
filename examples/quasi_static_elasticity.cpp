@@ -9,7 +9,7 @@
  * solvers or time-stepping loops. It abstracts away the specific boundary
  * conditions and solver implementations.
  */
-class QuasiStaticElasticProblem {
+class QuasiStaticLinearElasticProblem {
  public:
   /**
    * @brief Access the underlying finite element space.
@@ -49,7 +49,7 @@ class QuasiStaticElasticProblem {
   /**
    * @brief Default virtual destructor.
    */
-  virtual ~QuasiStaticElasticProblem() = default;
+  virtual ~QuasiStaticLinearElasticProblem() = default;
 };
 
 /**
@@ -61,7 +61,7 @@ class QuasiStaticElasticProblem {
  * to project out zero-energy translational and rotational modes during the
  * solve step.
  */
-class TractionProblem : public QuasiStaticElasticProblem {
+class TractionProblem : public QuasiStaticLinearElasticProblem {
  private:
   /// Non-owning pointer to the mesh (memory managed externally)
   mfem::Mesh* _mesh;
@@ -71,8 +71,9 @@ class TractionProblem : public QuasiStaticElasticProblem {
 
   std::unique_ptr<mfem::Coefficient> _lambda;
   std::unique_ptr<mfem::Coefficient> _mu;
-  std::unique_ptr<mfem::VectorConstantCoefficient> _tc;
+  std::unique_ptr<mfem::VectorCoefficient> _tc;
 
+  std::unique_ptr<mfem::Array<int>> _marker;
   std::unique_ptr<mfem::LinearForm> _b;
   std::unique_ptr<mfem::BilinearForm> _a;
   mfem::GridFunction _u;
@@ -149,12 +150,16 @@ class TractionProblem : public QuasiStaticElasticProblem {
     int dim = _mesh->Dimension();
     Vector tv(dim);
     tv = 0.0;
-    tv[0] = 1 + t;
+    tv[1] = 1 + t;
+
+    _marker = std::make_unique<mfem::Array<int>>(_mesh->bdr_attributes.Max());
+    *_marker = 0;
+    _mesh->MarkExternalBoundaries(*_marker);
 
     _tc = std::make_unique<VectorConstantCoefficient>(tv);
     _b = std::make_unique<LinearForm>(_fes.get());
 
-    _b->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(*_tc));
+    _b->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(*_tc), *_marker);
     _b->Assemble();
   }
 
