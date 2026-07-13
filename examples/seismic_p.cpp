@@ -233,8 +233,8 @@ int main(int argc, char *argv[]) {
   if (glvis_out.is_open()) {
     glvis_out << "parallel " << num_procs << " " << myid << "\n";
     glvis_out << "solution\n" << pmesh << u;
-    glvis_out << "window_title 'Surface Waveguide'\n";
-    glvis_out << "keys Rjlvvvvvppppppppppppp\n";
+    glvis_out << "keys Rjlvvvvv\n";
+    glvis_out << "palette_name manga\n";
 
     // Adjusted valuerange to capture both positive and negative oscillations
     glvis_out << "valuerange -0.1 0.1\n";
