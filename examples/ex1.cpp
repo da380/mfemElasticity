@@ -18,6 +18,7 @@ Options:
 *********************************************************************************/
 
 #include <cmath>
+#include <cstddef>
 #include <fstream>
 #include <iostream>
 
@@ -26,6 +27,69 @@ Options:
 
 using namespace std;
 using namespace mfem;
+
+class DisplacementCentroidShift : mfem::Operator {
+ private:
+  mfem::FiniteElementSpace* _fes;
+  int _dim;
+  mfem::BilinearForm* _m;
+  mutable mfem::Vector _Mx;
+  mutable mfem::Vector _shift;
+
+ public:
+  DisplacementCentroidShift(mfem::FiniteElementSpace* fes)
+      : mfem::Operator(fes->GetVSize()),
+        _fes{fes},
+        _dim{fes->GetVDim()},
+        _shift(_dim) {
+    _m = new mfem::BilinearForm(fes);
+    _m->AddDomainIntegrator(new mfem::VectorMassIntegrator());
+    _m->Assemble();
+  }
+
+  void Mult(const Vector& x, Vector& y) const override {
+    for (int d = 0; d < _dim; d++) {
+      /*
+
+      // Create a constant vector field (1.0 in direction d, 0.0 elsewhere)
+      Vector dir(dim);
+      dir = 0.0;
+      dir(d) = 1.0;
+      VectorConstantCoefficient dir_coeff(dir);
+
+      GridFunction const_vec(&fes);
+      const_vec.ProjectCoefficient(dir_coeff);
+
+      // Compute the volume integral of displacement: \int x_d d\Omega
+      double int_x = const_vec * Mx;
+
+      // Compute the total volume of the domain: \int 1 d\Omega
+      Vector M_const(fes.GetVSize());
+      m.Mult(const_vec, M_const);
+      double volume = const_vec * M_const;
+
+      // The physical shift is the volume-averaged displacement
+      shift(d) = int_x / volume;
+      */
+    }
+
+    // Subtract the calculated shift from the entire solution field
+    for (int d = 0; d < _dim; d++) {
+      /*
+      Vector dir(dim);
+
+      dir = 0.0;
+      dir(d) = -shift(d);
+      VectorConstantCoefficient shift_coeff(dir);
+
+      GridFunction shift_gf(&fes);
+      shift_gf.ProjectCoefficient(shift_coeff);
+
+      x += shift_gf;
+*/
+    }
+  }
+};
 
 int main(int argc, char* argv[]) {
   // Set the default options.
@@ -69,7 +133,7 @@ int main(int argc, char* argv[]) {
   auto marker = mfemElasticity::ExternalBoundaryMarker(&mesh);
   marker[0] = 0;
   marker[1] = 1;
-  auto sigma = FunctionCoefficient([](const Vector& x) { return x[0] * x[1]; });
+  auto sigma = FunctionCoefficient([](const Vector& x) { return x[0]; });
   b.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(sigma), marker);
   b.Assemble();
 
