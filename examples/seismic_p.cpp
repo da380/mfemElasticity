@@ -14,7 +14,7 @@ void initial_deformation(const Vector &x, Vector &u) {
   u = 0.0;
   // Shifted left (x=0.5) and into the shallow surface waveguide (y=0.9)
   double r2 = (x(0) - 1.5) * (x(0) - 1.5) + (x(1) - 0.9) * (x(1) - 0.9);
-  u(0) = exp(-5000.0 * r2);
+  u(0) = exp(-10000 * r2);
 }
 
 void initial_velocity(const Vector &x, Vector &v) { v = 0.0; }
@@ -62,7 +62,7 @@ class WaveOperator : public SecondOrderTimeDependentOperator {
 
  public:
   WaveOperator(HypreParMatrix &M_, HypreParMatrix &K_, Array<int> &ess_bdr)
-      : SecondOrderTimeDependentOperator(M_.Height(), 0.0),
+      : SecondOrderTimeDependentOperator(M_.Height()),
         M(M_),
         K(K_),
         ess_tdof_list(ess_bdr),
@@ -219,8 +219,7 @@ int main(int argc, char *argv[]) {
   double p_wave_speed_max = sqrt((4.0 + 2.0 * 4.0) / 2.0);
 
   double t = 0.0;
-  // --- NEW: Extended t_final to watch the wave travel the 3.0 length ---
-  double t_final = 2.5;
+  double t_final = 0.4;
   int eff_order = (order > 0) ? order : 1;
   double dt = cfl * h_min / (p_wave_speed_max * eff_order);
 
