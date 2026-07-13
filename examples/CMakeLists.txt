@@ -33,6 +33,18 @@ add_executable(grid_transfer grid_transfer.cpp)
 target_link_libraries(grid_transfer mfemElasticity)
 
 
+add_executable(quasi_static_elasticity quasi_static_elasticity.cpp)
+target_link_libraries(quasi_static_elasticity mfemElasticity)
+
+
+add_executable(wave wave.cpp)
+target_link_libraries(wave mfemElasticity)
+
+add_executable(ode ode.cpp)
+target_link_libraries(ode mfemElasticity)
+
+add_executable(seismic seismic.cpp)
+target_link_libraries(seismic mfemElasticity)
 
 
 
@@ -60,4 +72,10 @@ if(USE_MPI)
 
         add_executable(grid_transfer_p grid_transfer_p.cpp)
         target_link_libraries(grid_transfer_p mfemElasticity)
+
+        
+
+        add_executable(seismic_p seismic_p.cpp)
+        target_link_libraries(seismic_p mfemElasticity)
+
 endif()

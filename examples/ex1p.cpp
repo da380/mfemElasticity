@@ -1,4 +1,3 @@
-
 /*********************************************************************************
 
 Solves a static elastic  problem, with a constant boundary traction applied to
@@ -74,6 +73,11 @@ int main(int argc, char* argv[]) {
     }
   }
 
+  if (myid == 0) {
+    mesh.attributes.Print(cout);
+    mesh.bdr_attributes.Print(cout);
+  }
+
   ParMesh pmesh(MPI_COMM_WORLD, mesh);
   mesh.Clear();
   {
@@ -96,26 +100,23 @@ int main(int argc, char* argv[]) {
   x = 0;
 
   // Set up the linear form.
-  auto f = FunctionCoefficient([dim](const Vector& x) {
-    auto x0 = Vector(dim);
-    if (dim == 2) {
-      x0[0] = 2;
-      x0[1] = 0;
-    } else {
-      x0[0] = 0;
-      x0[1] = 2;
-      x0[2] = 0;
-    }
-    auto r = x.DistanceSquaredTo(x0);
-    return -exp(-20 * r);
-  });
   auto b = ParLinearForm(&fespace);
-  b.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(f));
+  auto marker = mfemElasticity::ExternalBoundaryMarker(&pmesh);
+  marker[0] = 0;
+  marker[1] = 1;
+
+  if (myid == 0) {
+    marker.Print(cout);
+  }
+
+  auto sigma =
+      FunctionCoefficient([](const Vector& pt) { return pt[0] * pt[1]; });
+  b.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(sigma), marker);
   b.Assemble();
 
   // Set up the bilinear form
-  auto lambda = FunctionCoefficient([](const Vector& x) { return 1; });
-  auto mu = FunctionCoefficient([](const Vector& x) { return 1; });
+  auto lambda = ConstantCoefficient(1);
+  auto mu = ConstantCoefficient(1);
   auto a = ParBilinearForm(&fespace);
   a.AddDomainIntegrator(new ElasticityIntegrator(lambda, mu));
   a.Assemble();
@@ -129,17 +130,10 @@ int main(int argc, char* argv[]) {
   auto prec = HypreBoomerAMG();
   prec.SetElasticityOptions(&fespace);
 
-  // auto prec = HypreDiagScale();
-
-  // auto prec = HypreSmoother();
-  // prec.SetType(HypreSmoother::GS);
-
   // Set the solver.
   auto solver = CGSolver(MPI_COMM_WORLD);
-  // auto solver = HyprePCG(MPI_COMM_WORLD);
   solver.SetPreconditioner(prec);
   solver.SetOperator(A);
-  // solver.SetTol(1e-12);
   solver.SetRelTol(1e-12);
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);
@@ -152,6 +146,72 @@ int main(int argc, char* argv[]) {
   // Solve and recover the solution.
   rigidBodySolver.Mult(B, X);
   a.RecoverFEMSolution(X, b, x);
+
+  // =====================================================================
+  // POST-PROCESSING: Calculate and remove the physical centroid shift
+  // =====================================================================
+  if (myid == 0) {
+    cout << "Calculating physical centroid shift in parallel..." << endl;
+  }
+
+  ParBilinearForm m(&fespace);
+  m.AddDomainIntegrator(new VectorMassIntegrator());
+  m.Assemble();
+  m.Finalize();
+
+  // ParallelAssemble returns a HypreParMatrix representing true global physics
+  HypreParMatrix* M = m.ParallelAssemble();
+
+  Vector shift(dim);
+  Vector x_true(fespace.GetTrueVSize());
+  x.GetTrueDofs(x_true);  // Extract true DOFs safely across distributed memory
+
+  for (int d = 0; d < dim; d++) {
+    Vector dir(dim);
+    dir = 0.0;
+    dir(d) = 1.0;
+    VectorConstantCoefficient dir_coeff(dir);
+
+    ParGridFunction const_vec(&fespace);
+    const_vec.ProjectCoefficient(dir_coeff);
+
+    Vector const_vec_true(fespace.GetTrueVSize());
+    const_vec.GetTrueDofs(const_vec_true);
+
+    Vector M_x_true(fespace.GetTrueVSize());
+    M->Mult(x_true, M_x_true);
+
+    // MPI_COMM_WORLD ensures we sum the dot product properly across all
+    // processors
+    double int_x = mfem::InnerProduct(MPI_COMM_WORLD, const_vec_true, M_x_true);
+
+    Vector M_const_true(fespace.GetTrueVSize());
+    M->Mult(const_vec_true, M_const_true);
+    double volume =
+        mfem::InnerProduct(MPI_COMM_WORLD, const_vec_true, M_const_true);
+
+    shift(d) = int_x / volume;
+  }
+
+  if (myid == 0) {
+    cout << "Calculated Shift (x, y): " << shift(0) << ", " << shift(1) << endl;
+  }
+
+  // Subtract the calculated shift
+  for (int d = 0; d < dim; d++) {
+    Vector dir(dim);
+    dir = 0.0;
+    dir(d) = -shift(d);
+    VectorConstantCoefficient shift_coeff(dir);
+
+    ParGridFunction shift_gf(&fespace);
+    shift_gf.ProjectCoefficient(shift_coeff);
+
+    x += shift_gf;
+  }
+
+  delete M;  // Clean up the allocated HypreParMatrix
+  // =====================================================================
 
   // Write to file.
   ostringstream mesh_name, sol_name;
