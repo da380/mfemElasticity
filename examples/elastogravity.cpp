@@ -1,3 +1,4 @@
+// The code for mesh generation is meshing/concentric_circles.cpp for 2d and meshing/concentric_spheres.cpp for 3d; in case it does not pass the mesh quality test of the DtN class for 3d, use meshing/offset_sphere.cpp 
 #include <algorithm>
 #include <cmath>
 #include <mfem.hpp>

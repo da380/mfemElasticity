@@ -34,6 +34,9 @@ target_link_libraries(offset_ball meshing)
 add_executable(geomesh_prem_crust geomesh_prem_crust.cpp )
 target_link_libraries(geomesh_prem_crust meshing mfemElasticity)
 
+add_executable(concentric_circles concentric_circles.cpp)
+target_link_libraries(concentric_circles meshing)
+
 add_executable(concentric_spheres concentric_spheres.cpp)
 target_link_libraries(concentric_spheres meshing)
 
