@@ -460,6 +460,7 @@ class TwoBlockRigidBodySolver : public Solver {
   }
 };
 
+#ifdef MFEM_USE_MPI
 class TwoBlockRigidBodySolverParallel : public Solver {
  private:
   MPI_Comm _comm;
@@ -653,6 +654,7 @@ class TwoBlockRigidBodySolverParallel : public Solver {
     ProjectOrthogonalToNullspace(_x, x);
   }
 };
+#endif  // MFEM_USE_MPI
 
 class ThreeBlockRigidBodySolver : public Solver {
  private:
@@ -1021,6 +1023,7 @@ class ThreeBlockRigidBodySolver : public Solver {
   }
 };
 
+#ifdef MFEM_USE_MPI
 class ThreeBlockRigidBodySolverParallel : public Solver {
  private:
   MPI_Comm _comm;
@@ -1418,7 +1421,9 @@ class ThreeBlockRigidBodySolverParallel : public Solver {
     ProjectOrthogonalToModesEuclidean(_x, x, _clean);
   }
 };
+#endif  // MFEM_USE_MPI
 
+#ifdef MFEM_USE_MPI
 void SendParSolutionToGLVis(MPI_Comm world, int myid, int dim,
                             mfem::ParMesh &pm, mfem::ParGridFunction &gf,
                             const char *title) {
@@ -1471,3 +1476,4 @@ void SendParSolutionToGLVis(MPI_Comm world, int myid, int dim,
 
   MPI_Barrier(world);
 }
+#endif  // MFEM_USE_MPI
