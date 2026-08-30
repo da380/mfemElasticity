@@ -451,7 +451,7 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
  */
 class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient \f$q\f$. */
+  mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix test_dshape,
@@ -957,7 +957,7 @@ class DomainMatrixDeformationGradientIntegrator
 class DomainSymmetricMatrixStrainIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient \f$q\f$. */
+  mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape; /**< Internal buffer for test shape functions. */
@@ -1061,7 +1061,7 @@ class DomainSymmetricMatrixStrainIntegrator
 class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
     : public mfem::BilinearFormIntegrator {
  private:
-  mfem::Coefficient* Q; /**< Pointer to the scalar coefficient \f$q\f$. */
+  mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape; /**< Internal buffer for test shape functions. */
