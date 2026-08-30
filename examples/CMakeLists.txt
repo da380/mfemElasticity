@@ -30,6 +30,9 @@ target_link_libraries(grid_transfer mfemElasticity)
 add_executable(quasi_static_elasticity quasi_static_elasticity.cpp)
 target_link_libraries(quasi_static_elasticity mfemElasticity)
 
+add_executable(viscoelasticity viscoelasticity.cpp)
+target_link_libraries(viscoelasticity mfemElasticity)
+
 
 add_executable(wave wave.cpp)
 target_link_libraries(wave mfemElasticity)
