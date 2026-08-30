@@ -1,11 +1,12 @@
-#include <algorithm>
-#include <cmath>
+// Solving in parallel the elastogravity problem with the block matrix method
+// The code for mesh generation is meshing/concentric_circles.cpp for 2d and meshing/concentric_spheres.cpp for 3d; in case it does not pass the mesh quality test of the DtN class for 3d, use meshing/offset_sphere.cpp 
 #include <mfem.hpp>
 #include <mfemElasticity.hpp>
+#include "common.hpp"
+#include <cmath>
 
 using namespace std;
 using namespace mfem;
-
 constexpr real_t pi = 3.141592653589793238462643383279502884;
 constexpr real_t G_const = 6.67430e-11;
 constexpr real_t L_scale = 6371e3;
@@ -27,34 +28,43 @@ real_t polar_func(const Vector &coord);
 int main(int argc, char *argv[]) {
   StopWatch chrono;
 
-  Mpi::Init();
+  Mpi::Init(argc, argv);
   int num_procs = Mpi::WorldSize();
   int myid = Mpi::WorldRank();
   Hypre::Init();
 
-  const char *mesh_file = "ex5_2d.msh";
+  const char *mesh_file = "ex10_2d.msh";
   real_t rel_tol = 1e-10;
   int order_u = 1;
   int deg = 16;
   bool visualization = false;
 
+  real_t shifting_factor = 1e-3;
+
   OptionsParser args(argc, argv);
+
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
+
   args.AddOption(&rel_tol, "-rt", "--rel-tol",
                  "Relative tolerance for linear solving.");
+
   args.AddOption(&order_u, "-o", "--order",
-                 "Order (degree) of the finite elements.");
+                 "Order degree of the finite elements.");
+
   args.AddOption(&deg, "-deg", "--degree",
                  "Truncation degree for the DtN map.");
+
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
                  "--no-visualization",
                  "Enable or disable GLVis visualization.");
+
   args.Parse();
 
   if (!args.Good()) {
     if (myid == 0) {
       args.PrintUsage(cout);
     }
+
     return 1;
   }
 
@@ -66,8 +76,11 @@ int main(int argc, char *argv[]) {
   int dim = mesh.Dimension();
 
   const real_t G_nd = G_const * rho_scale * T_scale * T_scale;
+
   const real_t poisson_rhs_factor = -4.0 * pi * G_nd;
+
   const real_t phi_block_factor = 1.0 / (4.0 * pi * G_nd);
+
   const real_t surface_load_scale = rho_scale * L_scale;
 
   if (myid == 0) {
@@ -87,8 +100,10 @@ int main(int argc, char *argv[]) {
     cout << endl;
 
     cout << "Mesh dimension: " << dim << endl;
+
     cout << "Serial mesh domain attributes: ";
     mesh.attributes.Print(cout);
+
     cout << "Serial mesh boundary attributes: ";
     mesh.bdr_attributes.Print(cout);
   }
@@ -109,12 +124,13 @@ int main(int argc, char *argv[]) {
   int order_phi = order_u;
   int order_dphi = order_phi - 1;
 
-  H1_FECollection fec_u(order_u, dim), fec_phi(order_phi, dim);
+  H1_FECollection fec_u(order_u, dim);
+  H1_FECollection fec_phi(order_phi, dim);
   L2_FECollection fec_dphi(order_dphi, dim);
 
-  ParFiniteElementSpace fes_phi(&pmesh, &fec_phi),
-      fes_phi_cond(&pmesh_cond, &fec_phi),
-      fes_dphi_cond(&pmesh_cond, &fec_dphi, dim);
+  ParFiniteElementSpace fes_phi(&pmesh, &fec_phi);
+  ParFiniteElementSpace fes_phi_cond(&pmesh_cond, &fec_phi);
+  ParFiniteElementSpace fes_dphi_cond(&pmesh_cond, &fec_dphi, dim);
 
   ParFiniteElementSpace fes_u(&pmesh_cond, &fec_u, dim);
 
@@ -123,16 +139,22 @@ int main(int argc, char *argv[]) {
 
   if (myid == 0) {
     cout << "Number of u-unknowns: " << u_size << endl;
+
     cout << "Number of phi-unknowns: " << phi_size << endl;
   }
 
-  ParGridFunction u_gf(&fes_u), phi_gf(&fes_phi), phi_gf_cond(&fes_phi_cond);
-  ParGridFunction phi0_gf(&fes_phi), phi0_gf_cond(&fes_phi_cond);
+  ParGridFunction u_gf(&fes_u);
+  ParGridFunction phi_gf(&fes_phi);
+  ParGridFunction phi_gf_cond(&fes_phi_cond);
+
+  ParGridFunction phi0_gf(&fes_phi);
+  ParGridFunction phi0_gf_cond(&fes_phi_cond);
   ParGridFunction dphi0_gf_cond(&fes_dphi_cond);
 
   u_gf = 0.0;
   phi_gf = 0.0;
   phi_gf_cond = 0.0;
+
   phi0_gf = 0.0;
   phi0_gf_cond = 0.0;
   dphi0_gf_cond = 0.0;
@@ -157,16 +179,18 @@ int main(int argc, char *argv[]) {
   bdr_marker_cond[pmesh_cond.bdr_attributes.Max() - 1] = 1;
 
   auto dtn = mfemElasticity::PoissonDtNOperator(MPI_COMM_WORLD, &fes_phi, deg);
+
   dtn.Assemble();
+
   auto DtN = dtn.RAP();
+
+  ConstantCoefficient one(1.0);
 
   ProductCoefficient rhs_coeff(poisson_rhs_factor, rho_coeff);
 
   ParLinearForm b0(&fes_phi);
   b0.AddDomainIntegrator(new DomainLFIntegrator(rhs_coeff));
   b0.Assemble();
-
-  ConstantCoefficient one(1.0);
 
   if (dim == 2) {
     phi0_gf = 1.0;
@@ -186,7 +210,7 @@ int main(int argc, char *argv[]) {
   a0.AddDomainIntegrator(new DiffusionIntegrator(one));
   a0.Assemble();
 
-  ConstantCoefficient eps0(0.001);
+  ConstantCoefficient eps0(shifting_factor);
 
   ParBilinearForm a0s(&fes_phi);
   a0s.AddDomainIntegrator(new DiffusionIntegrator(one));
@@ -194,7 +218,8 @@ int main(int argc, char *argv[]) {
   a0s.Assemble();
 
   HypreParMatrix A0;
-  Vector B0, Phi0;
+  Vector B0;
+  Vector Phi0;
 
   a0.FormLinearSystem(ess_tdof_list, phi0_gf, b0, A0, Phi0, B0);
 
@@ -227,6 +252,7 @@ int main(int argc, char *argv[]) {
   a0.RecoverFEMSolution(Phi0, b0, phi0_gf);
 
   DiscreteLinearOperator Grad(&fes_phi_cond, &fes_dphi_cond);
+
   Grad.AddDomainInterpolator(new GradientInterpolator);
   Grad.Assemble();
 
@@ -234,6 +260,9 @@ int main(int argc, char *argv[]) {
   Grad.Mult(phi0_gf_cond, dphi0_gf_cond);
 
   VectorGridFunctionCoefficient dphi0_cond_coeff(&dphi0_gf_cond);
+
+  GradientGridFunctionCoefficient dphi0_coeff(&phi0_gf);
+
   ScalarVectorProductCoefficient dphi0_sig_cond_coeff(loading_coeff,
                                                       dphi0_cond_coeff);
 
@@ -244,13 +273,17 @@ int main(int argc, char *argv[]) {
   if (visualization) {
     ParGridFunction phi0_vis(&fes_phi);
     phi0_vis = phi0_gf;
+
     phi0_vis *= potential_scale;
 
     char vishost[] = "localhost";
     int visport = 19916;
+
     socketstream sol_sock(vishost, visport);
     sol_sock << "parallel " << num_procs << " " << myid << "\n";
+
     sol_sock.precision(8);
+
     sol_sock << "solution\n"
              << pmesh << phi0_vis
              << "window_title 'Dimensional equilibrium potential [m^2/s^2]'"
@@ -263,25 +296,83 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  Vector U, Phi;
-  u_gf.GetTrueDofs(U);
-  phi_gf.GetTrueDofs(Phi);
+  Array<int> block_offsets(3);
+  block_offsets[0] = 0;
+  block_offsets[1] = fes_u.GetVSize();
+  block_offsets[2] = fes_phi.GetVSize();
+  block_offsets.PartialSum();
 
-  ParLinearForm *b1(new ParLinearForm(&fes_u));
-  b1->AddBoundaryIntegrator(
-      new VectorBoundaryLFIntegrator(dphi0_sig_cond_coeff), bdr_marker_cond);
-  b1->Assemble();
+  Array<int> block_trueOffsets(3);
+  block_trueOffsets[0] = 0;
+  block_trueOffsets[1] = fes_u.TrueVSize();
+  block_trueOffsets[2] = fes_phi.TrueVSize();
+  block_trueOffsets.PartialSum();
 
-  ParLinearForm *b2(new ParLinearForm(&fes_phi));
-  b2->AddBoundaryIntegrator(new BoundaryLFIntegrator(loading_coeff),
-                            bdr_marker);
-  b2->Assemble();
+  if (myid == 0) {
+    cout << "***********************************************************\n";
+    cout << "global dim(u)       = " << u_size << "\n";
+    cout << "global dim(phi)     = " << phi_size << "\n";
+    cout << "global dim(u+phi)   = " << u_size + phi_size << "\n";
+    cout << "***********************************************************\n";
+  }
 
-  std::unique_ptr<HypreParVector> B1(b1->ParallelAssemble());
-  std::unique_ptr<HypreParVector> B2(b2->ParallelAssemble());
+  BlockVector X_local(block_offsets);
+  BlockVector Rhs_local(block_offsets);
 
-  ParBilinearForm *a11_0(new ParBilinearForm(&fes_u));
-  ParBilinearForm *a11_1(new ParBilinearForm(&fes_u));
+  BlockVector X(block_trueOffsets);
+  BlockVector Rhs(block_trueOffsets);
+
+  X_local = 0.0;
+  Rhs_local = 0.0;
+  X = 0.0;
+  Rhs = 0.0;
+
+  ParLinearForm b1;
+  b1.Update(&fes_u, Rhs_local.GetBlock(0), 0);
+
+  b1.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(dphi0_sig_cond_coeff),
+                           bdr_marker_cond);
+
+  b1.Assemble();
+  b1.SyncAliasMemory(Rhs_local);
+
+  b1.ParallelAssemble(Rhs.GetBlock(0));
+  Rhs.GetBlock(0).SyncAliasMemory(Rhs);
+
+  ParLinearForm b2;
+  b2.Update(&fes_phi, Rhs_local.GetBlock(1), 0);
+
+  b2.AddBoundaryIntegrator(new BoundaryLFIntegrator(loading_coeff), bdr_marker);
+
+  b2.Assemble();
+  b2.SyncAliasMemory(Rhs_local);
+
+  b2.ParallelAssemble(Rhs.GetBlock(1));
+  Rhs.GetBlock(1).SyncAliasMemory(Rhs);
+
+  if (dim == 2) {
+    ParGridFunction one_phi_gf(&fes_phi);
+    one_phi_gf = 1.0;
+
+    Vector OnePhi;
+    one_phi_gf.GetTrueDofs(OnePhi);
+
+    ParLinearForm outer_l_form(&fes_phi);
+    outer_l_form.AddBoundaryIntegrator(new BoundaryLFIntegrator(one),
+                                       bdr_marker_outer);
+
+    outer_l_form.Assemble();
+
+    std::unique_ptr<HypreParVector> OuterL(outer_l_form.ParallelAssemble());
+
+    real_t mass = InnerProduct(MPI_COMM_WORLD, Rhs.GetBlock(1), OnePhi);
+
+    real_t outer_length = InnerProduct(MPI_COMM_WORLD, *OuterL, OnePhi);
+
+    Rhs.GetBlock(1).Add(-mass / outer_length, *OuterL);
+  }
+
+  ParBilinearForm *a11(new ParBilinearForm(&fes_u));
   ParBilinearForm *a22(new ParBilinearForm(&fes_phi));
 
   auto a12 = new mfemElasticity::ParMixedBilinearFormSubMesh(
@@ -293,6 +384,7 @@ int main(int argc, char *argv[]) {
   ConstantCoefficient c0(phi_block_factor);
 
   ProductCoefficient half_rho_coeff(0.5, rho_coeff);
+
   ProductCoefficient minus_half_rho_coeff(-0.5, rho_coeff);
 
   auto *a11_integ_0 = new ElasticityIntegrator(lamb_coeff, mu_coeff);
@@ -305,28 +397,29 @@ int main(int argc, char *argv[]) {
   auto *a11_integ_2 = new mfemElasticity::DomainVectorDivVectorIntegrator(temp);
 
   auto *a11_integ_1_t = new TransposeIntegrator(a11_integ_1, 0);
+
   auto *a11_integ_2_t = new TransposeIntegrator(a11_integ_2, 0);
 
-  a11_0->AddDomainIntegrator(a11_integ_0);
-  a11_0->Assemble();
-  a11_0->Finalize();
+  a11->AddDomainIntegrator(a11_integ_0);
+  a11->AddDomainIntegrator(a11_integ_1);
+  a11->AddDomainIntegrator(a11_integ_2);
+  a11->AddDomainIntegrator(a11_integ_1_t);
+  a11->AddDomainIntegrator(a11_integ_2_t);
 
-  a11_1->AddDomainIntegrator(a11_integ_1);
-  a11_1->AddDomainIntegrator(a11_integ_2);
-  a11_1->AddDomainIntegrator(a11_integ_1_t);
-  a11_1->AddDomainIntegrator(a11_integ_2_t);
-  a11_1->Assemble();
-  a11_1->Finalize();
+  a11->Assemble();
+  a11->Finalize();
 
   a22->AddDomainIntegrator(new DiffusionIntegrator(c0));
   a22->Assemble();
   a22->Finalize();
 
-  ConstantCoefficient eps22(0.001 * phi_block_factor);
+  ConstantCoefficient eps22(shifting_factor * phi_block_factor);
 
   ParBilinearForm *a22s(new ParBilinearForm(&fes_phi));
+
   a22s->AddDomainIntegrator(new DiffusionIntegrator(c0));
   a22s->AddDomainIntegrator(new MassIntegrator(eps22));
+
   a22s->Assemble();
   a22s->Finalize();
 
@@ -336,11 +429,11 @@ int main(int argc, char *argv[]) {
 
   a21->AddDomainIntegrator(
       new TransposeIntegrator(new GradientIntegrator(rho_coeff)));
+
   a21->Assemble();
   a21->Finalize();
 
-  std::unique_ptr<HypreParMatrix> A11_0(a11_0->ParallelAssemble());
-  std::unique_ptr<HypreParMatrix> A11_1(a11_1->ParallelAssemble());
+  std::unique_ptr<HypreParMatrix> A11(a11->ParallelAssemble());
   std::unique_ptr<HypreParMatrix> A22_0(a22->ParallelAssemble());
   std::unique_ptr<HypreParMatrix> A22s(a22s->ParallelAssemble());
   std::unique_ptr<HypreParMatrix> A12(a12->ParallelAssemble());
@@ -349,175 +442,68 @@ int main(int argc, char *argv[]) {
   auto A22 =
       SumOperator(A22_0.get(), 1.0, &DtN, phi_block_factor, false, false);
 
-  HypreBoomerAMG prec11(*A11_0);
-  prec11.SetElasticityOptions(&fes_u);
+  BlockOperator EGOp(block_trueOffsets);
 
+  EGOp.SetBlock(0, 0, A11.get());
+  EGOp.SetBlock(0, 1, A12.get());
+  EGOp.SetBlock(1, 0, A21.get());
+  EGOp.SetBlock(1, 1, &A22);
+
+  HypreBoomerAMG prec11(*A11);
+  prec11.SetElasticityOptions(&fes_u);
   // HypreSmoother prec11;
   // prec11.SetType(HypreSmoother::l1GS);
   // prec11.SetOperator(*A11);
 
   HypreBoomerAMG prec22(*A22s);
 
-  // HypreSmoother prec22;
-  // prec22.SetType(HypreSmoother::l1GS);
-  // prec22.SetOperator(*A22_0);
+  BlockDiagonalPreconditioner EGPrec(block_trueOffsets);
 
-  // MINRESSolver solver1(MPI_COMM_WORLD);
-  CGSolver solver1(MPI_COMM_WORLD);
-  solver1.SetRelTol(rel_tol);
-  solver1.SetMaxIter(10000);
-  solver1.SetOperator(*A11_0);
-  solver1.SetPreconditioner(prec11);
-  solver1.SetPrintLevel(myid == 0 ? 1 : 0);
+  EGPrec.SetDiagonalBlock(0, &prec11);
+  EGPrec.SetDiagonalBlock(1, &prec22);
 
-  mfemElasticity::RigidBodySolver rigid_solver(MPI_COMM_WORLD, &fes_u);
-  rigid_solver.SetSolver(solver1);
+  MINRESSolver solver(MPI_COMM_WORLD);
 
-  CGSolver solver2(MPI_COMM_WORLD);
-  solver2.SetRelTol(rel_tol);
-  solver2.SetMaxIter(5000);
-  solver2.SetOperator(A22);
-  solver2.SetPreconditioner(prec22);
-  solver2.SetPrintLevel(0);
+  solver.SetRelTol(rel_tol);
+  solver.SetAbsTol(0.0);
+  solver.SetMaxIter(10000);
 
-  OrthoSolver ortho_solver2(MPI_COMM_WORLD);
-  if (dim == 2) {
-    ortho_solver2.SetSolver(solver2);
-  }
+  solver.SetOperator(EGOp);
+  solver.SetPreconditioner(EGPrec);
 
-  int max_iter = 1000;
-  int iter = 0;
-  real_t rel_tol_coup = 1e-6;
+  solver.SetPrintLevel(myid == 0 ? 1 : 0);
 
-  Vector b1_ext(B1->Size());
-  Vector b2_ext(B2->Size());
+  TwoBlockRigidBodySolverParallel rigid_solver(MPI_COMM_WORLD, &fes_u,
+                                                 &fes_phi, &block_trueOffsets,
+                                                 &dphi0_coeff, dim == 2);
 
-  std::unique_ptr<ParGridFunction> one_phi_gf;
-  Vector OnePhi;
-  std::unique_ptr<HypreParVector> OuterL;
-  real_t outer_length = 0.0;
-
-  if (dim == 2) {
-    one_phi_gf = std::make_unique<ParGridFunction>(&fes_phi);
-    *one_phi_gf = 1.0;
-    one_phi_gf->GetTrueDofs(OnePhi);
-
-    ParLinearForm outer_l_form(&fes_phi);
-    outer_l_form.AddBoundaryIntegrator(new BoundaryLFIntegrator(one),
-                                       bdr_marker_outer);
-    outer_l_form.Assemble();
-
-    OuterL.reset(outer_l_form.ParallelAssemble());
-
-    outer_length = InnerProduct(MPI_COMM_WORLD, *OuterL, OnePhi);
-  }
-
-  Vector Phi_new(Phi.Size()), Phi_diff(Phi.Size());
-  Vector U_new(U.Size()), U_diff(U.Size());
-
-  Phi_new = 0.0;
-  Phi_diff = 0.0;
-  U_new = 0.0;
-  U_diff = 0.0;
-
-  real_t omega = 0.5;
+  rigid_solver.SetSolver(solver);
 
   chrono.Clear();
   chrono.Start();
-  for (int i = 0; i < max_iter; i++) {
-    iter++;
 
-    b1_ext = *B1;
-    b2_ext = *B2;
+  rigid_solver.Mult(Rhs, X);
 
-    if (myid == 0) {
-      cout << "Elasticity solve: " << endl;
-    }
+  chrono.Stop();
 
-    A12->AddMult(Phi, b1_ext, -1.0);
-    A11_1->AddMult(U, b1_ext, -1.0);
-
-    rigid_solver.Mult(b1_ext, U_new);
-
-    U_new *= omega;
-    U_new.Add(1.0 - omega, U);
-
-    if (iter == 1) {
-      real_t norm = solver1.GetFinalNorm();
-      solver1.SetAbsTol(norm);
-
-      if (myid == 0) {
-        cout << "solver1 adaptive abs tol = " << norm << endl;
-      }
-    }
-
-    U_diff = U_new;
-    U_diff -= U;
-
-    U = U_new;
-
-    A21->AddMult(U, b2_ext, -1.0);
-
-    if (dim == 2) {
-      real_t mass = InnerProduct(MPI_COMM_WORLD, b2_ext, OnePhi);
-      b2_ext.Add(-mass / outer_length, *OuterL);
-
-      ortho_solver2.Mult(b2_ext, Phi_new);
+  if (myid == 0) {
+    if (solver.GetConverged()) {
+      cout << "Parallel block MINRES converged in " << solver.GetNumIterations()
+           << " iterations with residual norm " << solver.GetFinalNorm() << "."
+           << endl;
     } else {
-      solver2.Mult(b2_ext, Phi_new);
+      cout << "Parallel block MINRES did not converge in "
+           << solver.GetNumIterations()
+           << " iterations. Residual norm = " << solver.GetFinalNorm() << "."
+           << endl;
     }
 
-    if (iter == 1) {
-      real_t norm = solver2.GetFinalNorm();
-      solver2.SetAbsTol(norm);
-
-      if (myid == 0) {
-        cout << "solver2 adaptive abs tol = " << norm << endl;
-      }
-    }
-
-    Phi_diff = Phi_new;
-    Phi_diff -= Phi;
-
-    real_t phi_den = sqrt(InnerProduct(MPI_COMM_WORLD, Phi_new, Phi_new));
-    real_t u_den = sqrt(InnerProduct(MPI_COMM_WORLD, U_new, U_new));
-
-    real_t phi_res = sqrt(InnerProduct(MPI_COMM_WORLD, Phi_diff, Phi_diff)) /
-                     std::max(phi_den, real_t(1e-30));
-
-    real_t u_res = sqrt(InnerProduct(MPI_COMM_WORLD, U_diff, U_diff)) /
-                   std::max(u_den, real_t(1e-30));
-
-    Phi = Phi_new;
-
-    if (myid == 0) {
-      cout << "Iteration " << iter << ", phi residual = " << phi_res
-           << ", u residual = " << u_res << endl;
-    }
-
-    if (phi_res < rel_tol_coup && u_res < rel_tol_coup) {
-      chrono.Stop();
-
-      if (myid == 0) {
-        cout << "Converged at iteration " << iter << "." << endl;
-        cout << "Time = " << chrono.RealTime() << " s" << endl;
-      }
-
-      break;
-    }
-
-    if (i == max_iter - 1) {
-      chrono.Stop();
-
-      if (myid == 0) {
-        cout << "Did not converge in " << max_iter << " iterations." << endl;
-        cout << "Time = " << chrono.RealTime() << " s" << endl;
-      }
-    }
+    cout << "Parallel block solve time = " << chrono.RealTime() << " s" << endl;
   }
 
-  u_gf.SetFromTrueDofs(U);
-  phi_gf.SetFromTrueDofs(Phi);
+  u_gf.SetFromTrueDofs(X.GetBlock(0));
+  phi_gf.SetFromTrueDofs(X.GetBlock(1));
+
   pmesh_cond.Transfer(phi_gf, phi_gf_cond);
 
   if (visualization) {
@@ -534,8 +520,11 @@ int main(int argc, char *argv[]) {
     int visport = 19916;
 
     socketstream u_sock(vishost, visport);
+
     u_sock << "parallel " << num_procs << " " << myid << "\n";
+
     u_sock.precision(8);
+
     u_sock << "solution\n"
            << pmesh_cond << u_vis
            << "window_title 'Dimensional deformation [m]'" << endl;
@@ -547,8 +536,11 @@ int main(int argc, char *argv[]) {
     }
 
     socketstream phi_sock(vishost, visport);
+
     phi_sock << "parallel " << num_procs << " " << myid << "\n";
+
     phi_sock.precision(8);
+
     phi_sock
         << "solution\n"
         << pmesh_cond << phi_vis
@@ -562,10 +554,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  delete b1;
-  delete b2;
-  delete a11_0;
-  delete a11_1;
+  delete a11;
   delete a12;
   delete a21;
   delete a22;
