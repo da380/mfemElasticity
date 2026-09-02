@@ -63,6 +63,10 @@ if(USE_MPI)
     target_link_libraries(TestSubMeshDofInjectionPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSubMeshMixedBilinearFormPar TestSubMeshMixedBilinearFormPar.cpp)
     target_link_libraries(TestSubMeshMixedBilinearFormPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestElasticProblemPar TestElasticProblemPar.cpp)
+    target_link_libraries(TestElasticProblemPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
+    target_link_libraries(TestViscoelasticPar PRIVATE mfemElasticity MPI::MPI_CXX)
     foreach(np 1 2 4)
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
@@ -70,9 +74,35 @@ if(USE_MPI)
         add_test(NAME TestSubMeshMixedBilinearFormPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshMixedBilinearFormPar>)
+        add_test(NAME TestElasticProblemPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestElasticProblemPar>)
+        add_test(NAME TestViscoelasticPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestViscoelasticPar>)
     endforeach()
 endif()
 
+
+add_executable(TestRheology TestRheology.cpp)
+target_link_libraries(TestRheology PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestRheology)
+
+add_executable(TestElasticProblem TestElasticProblem.cpp)
+target_link_libraries(TestElasticProblem PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestElasticProblem)
+
+add_executable(TestElasticTensor TestElasticTensor.cpp)
+target_link_libraries(TestElasticTensor PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestElasticTensor)
+
+add_executable(TestElasticTensorIntegrator TestElasticTensorIntegrator.cpp)
+target_link_libraries(TestElasticTensorIntegrator PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestElasticTensorIntegrator)
+
+add_executable(TestViscoelastic TestViscoelastic.cpp)
+target_link_libraries(TestViscoelastic PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestViscoelastic)
 
 add_executable(TestSubMeshMixedBilinearForm TestSubMeshMixedBilinearForm.cpp)
 target_link_libraries(TestSubMeshMixedBilinearForm PRIVATE mfemElasticity gtest_main)

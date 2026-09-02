@@ -201,6 +201,14 @@ Phase A/B are independent of the SubMesh work and of the solver work; they can b
 
 ---
 
+**Status (2 Sep 2026): Phases A and B done**, in `include/mfemElasticity/elastic_tensor.hpp` / `src/elastic_tensor.cpp`, with the §6 recommendations taken as decided: library ordering with Mandel scaling internally, Voigt only at input; the integrator takes a plain `MatrixCoefficient&` with a size check; name `ElasticTensorIntegrator`; plane strain in 2-D. Notes:
+
+- `SymmetricTensorBasis` also provides `Component` (inverse of `Index`), the volumetric/deviatoric projectors and `RotationMatrix` (the Mandel representation `Q` of `ε ↦ R ε Rᵀ`, orthogonal). `RotatedElasticTensorCoefficient` uses `Q C Qᵀ` rather than the 81·81 loop; the tests check the two against each other.
+- `DeviatoricProjectionElasticTensorCoefficient` (§2.5, first variant) is included: `P_dev C P_dev` or its complement; for isotropic C the tests confirm `2μ` dev-dev and `d κ` on the volumetric projector. The "(L, N) only" TI split is just the TI class with A = C = F = 0 and needs no code. Wiring into the viscoelastic layer (anisotropic branches `C_k`, tensor force integrator) is the viscoelastic plan's Phase 4 and is not done.
+- `GridFunctionElasticTensorCoefficient` (§2.6) is not done.
+- MFEM trap met: the dense products `Mult`, `MultABt`, `MultAAt`, `AddMult_a_AtB` do **not** resize their output (only `MFEM_ASSERT`, i.e. nothing in release builds); an unsized output silently produces an empty result. Every product in the library and tests is sized explicitly, and the test comparison helper treats a size mismatch as failure.
+- Tests: `tests/TestElasticTensor.cpp` (tests 1–4 plus the coefficient-level 2-D/3-D consistency of test 9; 2-D and 3-D) and `tests/TestElasticTensorIntegrator.cpp` (tests 5–9: isotropic agreement with `ElasticityIntegrator` to 1e-13 on curved (order-2) meshes for tri/quad/tet/hex and orders 1–3; symmetry, non-negativity and the rigid modes in the null space for a radially anisotropic TI material — on an *isoparametric* geometry, since a rigid rotation on a curved element is only representable when the geometry order does not exceed the displacement order; the energy patch test; element-level rotation covariance; a plane-strain quad sheet against an extruded hex slab). `examples/anisotropic_elasticity.cpp` solves a radially anisotropic clamped body and, with `-iso`, reproduces `ElasticityIntegrator` to 2e-16.
+
 ## 6. Decisions to confirm
 
 - **Ordering**: library `SymmetricMatrixIndex` order with Mandel scaling internally; Voigt only at input/output. (Alternative — Voigt throughout — would force per-node permutations and √2 bookkeeping in the viscoelastic coupling; not recommended.)

@@ -1,9 +1,10 @@
 // ============================================================================
 // quasi_static_elasticity.cpp
 //
-// Driver for the quasi-static linear elastic problems defined in elastic.hpp,
-// exercising the AssembleForce / AddForce / Solve protocol over a sequence of
-// times. See elastic.hpp for the interface contract.
+// Driver for the quasi-static linear elastic problems defined in
+// mfemElasticity/elastic_problem.hpp, exercising the AssembleForce / AddForce /
+// Solve protocol over a sequence of times. See
+// mfemElasticity/elastic_problem.hpp for the interface contract.
 //
 // Sample runs:
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2
@@ -15,7 +16,7 @@
 #include <iostream>
 #include <memory>
 
-#include "elastic.hpp"
+#include "mfemElasticity.hpp"
 
 /*----------------------------------------------------------------------------
   Driver
@@ -23,6 +24,7 @@
 
 using namespace std;
 using namespace mfem;
+using namespace mfemElasticity;
 
 int main(int argc, char* argv[]) {
   // Set the default options.
@@ -71,16 +73,48 @@ int main(int argc, char* argv[]) {
     mesh.UniformRefinement();
   }
 
+  // Displacement space and material (lambda = mu = 1, so kappa = 1 + 2/d).
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes(&mesh, &fec, dim);
+  ConstantCoefficient kappa(1.0 + 2.0 / dim), mu(1.0);
+  auto rheology = GeneralisedMaxwellRheology::Elastic(dim, kappa, mu);
+
+  // Loads. Problem 0: a time-scaled uniform traction t -> (0, 1 + t, ...)
+  // on all external boundaries. Problem 1: boundary attribute 1 clamped,
+  // a time-scaled pull t -> (0, ..., -0.05 (1 + t)) on attribute 2.
+  VectorFunctionCoefficient traction(
+      dim, [problem_type](const Vector& /*x*/, real_t t, Vector& f) {
+        f = 0.0;
+        if (problem_type == 0) {
+          f[1] = 1.0 + t;
+        } else {
+          f[f.Size() - 1] = -0.05 * (1.0 + t);
+        }
+      });
+  Array<int> marker(mesh.bdr_attributes.Max()), ess_bdr;
+  marker = 0;
+
   // Construct the requested problem behind the common interface.
   unique_ptr<QuasiStaticLinearElasticProblem> problem;
   if (problem_type == 0) {
-    problem = make_unique<TractionProblem>(&mesh, order);
+    mesh.MarkExternalBoundaries(marker);
+    problem = make_unique<TractionProblem>(&fes, rheology, traction, marker);
   } else if (problem_type == 1) {
-    problem = make_unique<ClampedProblem>(&mesh, order);
+    MFEM_VERIFY(mesh.bdr_attributes.Max() >= 2,
+                "Problem 1 needs boundary attributes 1 (clamped) and 2 "
+                "(traction), e.g. data/beam-quad.mesh.");
+    ess_bdr.SetSize(mesh.bdr_attributes.Max());
+    ess_bdr = 0;
+    ess_bdr[0] = 1;
+    marker[1] = 1;
+    problem =
+        make_unique<ClampedProblem>(&fes, rheology, ess_bdr, traction, marker);
   } else {
     cerr << "Unknown problem type: " << problem_type << "\n";
     return 1;
   }
+  static_cast<ElasticProblemBase&>(*problem).SetPrintLevel(
+      IterativeSolver::PrintLevel().Summary());
   cout << "Displacement unknowns: "
        << problem->DisplacementSpace().GetTrueVSize() << "\n";
 

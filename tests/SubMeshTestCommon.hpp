@@ -48,14 +48,3 @@ inline double TestFunction(const Vector& x) {
   }
   return v;
 }
-
-// Entrywise max |A - B| for finalized sparse matrices of equal size.
-inline double MaxDiff(const SparseMatrix& A, const SparseMatrix& B) {
-  EXPECT_EQ(A.Height(), B.Height());
-  EXPECT_EQ(A.Width(), B.Width());
-  if (A.Height() != B.Height() || A.Width() != B.Width()) {
-    return std::numeric_limits<double>::infinity();
-  }
-  std::unique_ptr<SparseMatrix> D(mfem::Add(1.0, A, -1.0, B));
-  return D->MaxNorm();
-}
