@@ -7,6 +7,246 @@
 
 namespace mfemElasticity {
 
+namespace {
+
+// The submesh facts SubMeshDofInjection needs, read from either a SubMesh or
+// a ParSubMesh (which are unrelated types in MFEM).
+struct SubMeshInfo {
+  const mfem::Mesh* parent;
+  mfem::SubMesh::From from;
+  const mfem::Array<int>* parent_element_ids;
+};
+
+SubMeshInfo GetSubMeshInfo(const mfem::Mesh* mesh) {
+  if (auto* sm = dynamic_cast<const mfem::SubMesh*>(mesh)) {
+    return {sm->GetParent(), sm->GetFrom(), &sm->GetParentElementIDMap()};
+  }
+#ifdef MFEM_USE_MPI
+  if (auto* psm = dynamic_cast<const mfem::ParSubMesh*>(mesh)) {
+    return {psm->GetParent(), psm->GetFrom(), &psm->GetParentElementIDMap()};
+  }
+#endif
+  MFEM_ABORT("SubMeshDofInjection: sub space is not on a (Par)SubMesh.");
+  return {nullptr, mfem::SubMesh::From::Domain, nullptr};
+}
+
+}  // namespace
+
+SubMeshDofInjection::SubMeshDofInjection(
+    const mfem::FiniteElementSpace& sub_fes,
+    const mfem::FiniteElementSpace& parent_fes)
+    : mfem::Operator(parent_fes.GetVSize(), sub_fes.GetVSize()),
+      sub_fes_(&sub_fes),
+      parent_fes_(&parent_fes) {
+  using namespace mfem;
+
+  auto info = GetSubMeshInfo(sub_fes.GetMesh());
+  MFEM_VERIFY(info.parent == parent_fes.GetMesh(),
+              "SubMeshDofInjection: parent_fes is not defined on the parent "
+              "mesh of the submesh.");
+  MFEM_VERIFY(sub_fes.FEColl() == parent_fes.FEColl(),
+              "SubMeshDofInjection: the sub space must share the parent "
+              "space's FiniteElementCollection object (use MakeShadowSpace).");
+  MFEM_VERIFY(sub_fes.GetVDim() == parent_fes.GetVDim() &&
+                  sub_fes.GetOrdering() == parent_fes.GetOrdering(),
+              "SubMeshDofInjection: vdim/ordering mismatch between sub and "
+              "parent spaces.");
+  MFEM_VERIFY(!sub_fes.IsVariableOrder() && !parent_fes.IsVariableOrder(),
+              "SubMeshDofInjection: variable-order spaces are not supported.");
+  const auto cont = parent_fes.FEColl()->GetContType();
+  MFEM_VERIFY(cont == FiniteElementCollection::CONTINUOUS ||
+                  cont == FiniteElementCollection::DISCONTINUOUS,
+              "SubMeshDofInjection: only H1 and L2 collections are supported "
+              "(H(div)/H(curl) need face-orientation corrections).");
+  MFEM_VERIFY(parent_fes.GetMesh()->Conforming() &&
+                  sub_fes.GetMesh()->Conforming(),
+              "SubMeshDofInjection: nonconforming meshes are not supported.");
+
+  Array<int> raw_map;
+  SubMeshUtils::BuildVdofToVdofMap(sub_fes, parent_fes, info.from,
+                                   *info.parent_element_ids, raw_map);
+
+  const int n = sub_fes.GetVSize();
+  parent_vdof_.SetSize(n);
+  sign_.SetSize(n);
+  for (int i = 0; i < n; i++) {
+    real_t s = 1.0;
+    parent_vdof_[i] = FiniteElementSpace::DecodeDof(raw_map[i], s);
+    sign_[i] = s;
+  }
+}
+
+std::unique_ptr<mfem::FiniteElementSpace> SubMeshDofInjection::MakeShadowSpace(
+    const mfem::FiniteElementSpace& parent_fes, mfem::SubMesh& submesh) {
+  return std::make_unique<mfem::FiniteElementSpace>(
+      &submesh, parent_fes.FEColl(), parent_fes.GetVDim(),
+      parent_fes.GetOrdering());
+}
+
+#ifdef MFEM_USE_MPI
+std::unique_ptr<mfem::ParFiniteElementSpace>
+SubMeshDofInjection::MakeShadowSpace(
+    const mfem::ParFiniteElementSpace& parent_fes, mfem::ParSubMesh& submesh) {
+  return std::make_unique<mfem::ParFiniteElementSpace>(
+      &submesh, parent_fes.FEColl(), parent_fes.GetVDim(),
+      parent_fes.GetOrdering());
+}
+#endif
+
+void SubMeshDofInjection::Mult(const mfem::Vector& x, mfem::Vector& y) const {
+  y = 0.0;
+  for (int i = 0; i < width; i++) {
+    y[parent_vdof_[i]] = sign_[i] * x[i];
+  }
+}
+
+void SubMeshDofInjection::MultTranspose(const mfem::Vector& x,
+                                        mfem::Vector& y) const {
+  for (int i = 0; i < width; i++) {
+    y[i] = sign_[i] * x[parent_vdof_[i]];
+  }
+}
+
+std::unique_ptr<mfem::SparseMatrix> SubMeshDofInjection::NewSparseMatrix()
+    const {
+  using namespace mfem;
+  const int m = height, n = width;
+
+  int* I = new int[m + 1]();
+  for (int i = 0; i < n; i++) {
+    I[parent_vdof_[i] + 1]++;
+  }
+  for (int i = 0; i < m; i++) {
+    I[i + 1] += I[i];
+  }
+
+  int* J = new int[n];
+  real_t* data = new real_t[n];
+  for (int i = 0; i < n; i++) {
+    // Injective map: each parent row receives at most one entry, so I[row]
+    // is its exact position.
+    const int pos = I[parent_vdof_[i]];
+    J[pos] = i;
+    data[pos] = sign_[i];
+  }
+
+  return std::make_unique<SparseMatrix>(I, J, data, m, n, true, true, true);
+}
+
+std::unique_ptr<mfem::SparseMatrix> SubMeshDofInjection::RemapRows(
+    const mfem::SparseMatrix& M) const {
+  using namespace mfem;
+  MFEM_VERIFY(M.Finalized(), "SubMeshDofInjection::RemapRows: M must be "
+                             "finalized.");
+  MFEM_VERIFY(M.Height() == width,
+              "SubMeshDofInjection::RemapRows: M must have SubVSize() rows.");
+
+  const int* MI = M.GetI();
+  const int* MJ = M.GetJ();
+  const real_t* MA = M.GetData();
+  const int nnz = MI[width];
+
+  int* I = new int[height + 1]();
+  for (int i = 0; i < width; i++) {
+    I[parent_vdof_[i] + 1] = MI[i + 1] - MI[i];
+  }
+  for (int i = 0; i < height; i++) {
+    I[i + 1] += I[i];
+  }
+
+  int* J = new int[nnz];
+  real_t* data = new real_t[nnz];
+  for (int i = 0; i < width; i++) {
+    int pos = I[parent_vdof_[i]];
+    for (int k = MI[i]; k < MI[i + 1]; k++, pos++) {
+      J[pos] = MJ[k];
+      data[pos] = sign_[i] * MA[k];
+    }
+  }
+
+  return std::make_unique<SparseMatrix>(I, J, data, height, M.Width(), true,
+                                        true, false);
+}
+
+std::unique_ptr<mfem::SparseMatrix> SubMeshDofInjection::RemapColumns(
+    const mfem::SparseMatrix& M) const {
+  using namespace mfem;
+  MFEM_VERIFY(M.Finalized(), "SubMeshDofInjection::RemapColumns: M must be "
+                             "finalized.");
+  MFEM_VERIFY(M.Width() == width, "SubMeshDofInjection::RemapColumns: M must "
+                                  "have SubVSize() columns.");
+
+  const int* MI = M.GetI();
+  const int* MJ = M.GetJ();
+  const real_t* MA = M.GetData();
+  const int m = M.Height();
+  const int nnz = MI[m];
+
+  int* I = new int[m + 1];
+  std::copy(MI, MI + m + 1, I);
+  int* J = new int[nnz];
+  real_t* data = new real_t[nnz];
+  for (int k = 0; k < nnz; k++) {
+    J[k] = parent_vdof_[MJ[k]];
+    data[k] = sign_[MJ[k]] * MA[k];
+  }
+
+  auto res = std::make_unique<SparseMatrix>(I, J, data, m, height, true, true,
+                                            false);
+  res->SortColumnIndices();
+  return res;
+}
+
+#ifdef MFEM_USE_MPI
+std::unique_ptr<mfem::HypreParMatrix> SubMeshDofInjection::NewTrueDofMatrix()
+    const {
+  using namespace mfem;
+
+  auto* sub_pfes = dynamic_cast<const ParFiniteElementSpace*>(sub_fes_);
+  auto* parent_pfes = dynamic_cast<const ParFiniteElementSpace*>(parent_fes_);
+  MFEM_VERIFY(sub_pfes && parent_pfes,
+              "SubMeshDofInjection::NewTrueDofMatrix: both spaces must be "
+              "ParFiniteElementSpaces.");
+
+  // Build Pi^T (sub true dofs x parent true dofs) with exactly one +-1 per
+  // row: the owner of each sub true dof reads off the *global* parent true
+  // dof of its representative local vdof. GetGlobalTDofNumber is valid for
+  // unowned parent ldofs too (conforming spaces), so it does not matter which
+  // rank owns the parent dof.
+  const int nrows = sub_pfes->TrueVSize();
+  Array<int> I(nrows + 1);
+  Array<HYPRE_BigInt> J(std::max(nrows, 1));
+  Vector data(std::max(nrows, 1));
+  J = HYPRE_BigInt(-1);
+
+  for (int l = 0; l < width; l++) {
+    const int lt = sub_pfes->GetLocalTDofNumber(l);
+    if (lt < 0) {
+      continue;
+    }
+    MFEM_ASSERT(J[lt] == -1, "duplicate true dof");
+    J[lt] = parent_pfes->GetGlobalTDofNumber(parent_vdof_[l]);
+    data[lt] = sign_[l];
+  }
+  for (int i = 0; i <= nrows; i++) {
+    I[i] = i;
+  }
+  for (int i = 0; i < nrows; i++) {
+    MFEM_VERIFY(J[i] >= 0, "SubMeshDofInjection::NewTrueDofMatrix: sub true "
+                           "dof without a parent image.");
+  }
+
+  HypreParMatrix Pi_t(
+      sub_pfes->GetComm(), nrows, sub_pfes->GlobalTrueVSize(),
+      parent_pfes->GlobalTrueVSize(), I.GetData(), J.GetData(),
+      data.GetData(),
+      const_cast<ParFiniteElementSpace*>(sub_pfes)->GetTrueDofOffsets(),
+      const_cast<ParFiniteElementSpace*>(parent_pfes)->GetTrueDofOffsets());
+
+  return std::unique_ptr<HypreParMatrix>(Pi_t.Transpose());
+}
+#endif
+
 // Factory function to build the serial SubMesh prolongation matrix
 mfem::SparseMatrix *SubMeshProlongationMatrix(
     const mfem::FiniteElementSpace &sub_fes,

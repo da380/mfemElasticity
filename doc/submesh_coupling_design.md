@@ -115,17 +115,29 @@ Both are equal to `P·M` and `M·Pᵀ` (test: compare with `mfem::Mult` on the e
 
 ### 2.4 True-dof injection Π (parallel)
 
-Needed for block operators, the Schur-complement solver, and transferring true-dof vectors. Two ways; the first is a few lines:
+Needed for block operators, the Schur-complement solver, and transferring true-dof vectors.
 
-```
-P_sub   = sub_pfes->Dof_TrueDof_Matrix();               // HypreParMatrix, ldof × tdof
-P_loc   = NewSparseMatrix();                             // parent ldof × sub ldof (local)
-tmp     = P_sub->LeftDiagMult(*P_loc, parent_pfes->GetDofOffsets());   // parent ldof × sub tdof
-R       = parent_pfes->GetRestrictionMatrix();           // SparseMatrix, parent tdof × ldof
-Pi      = tmp->LeftDiagMult(*R, parent_pfes->GetTrueDofOffsets());     // parent tdof × sub tdof
-```
+> **Correction (1 Sep 2026, found during implementation).** The construction this section originally led with —
+> `Π = R_parent · P_loc · P_sub` via two `LeftDiagMult` calls — is **wrong** whenever a shared parent dof on the
+> submesh boundary is owned by a rank whose local elements there all lie outside the submesh: `R_parent` selects only
+> *owned* parent ldofs, and on the owning rank the corresponding `P_loc` row is empty, so the Π entry is silently
+> lost. This is not exotic: a 4×4 quad mesh, submesh = the half x > 0.5, slab-partitioned on 2 ranks, order-2 H1
+> already fails (‖ΠᵀΠx − x‖∞ ≈ 1.47; the dofs on the interface x = 0.5 are owned by rank 0, which has no submesh
+> elements). Very plausibly the reason earlier hand-rolled parallel maps "never worked".
+>
+> The implemented construction is what was previously listed as the fallback: build **Πᵀ row by row over *owned sub*
+> true dofs**. The owner of a sub true dof always has the submesh element (ParSubMesh inherits the parent partition),
+> and `ParFiniteElementSpace::GetGlobalTDofNumber(parent_ldof)` returns the correct global parent true dof even for
+> *unowned* parent ldofs (conforming spaces), so no ownership case is ever missed:
+>
+> ```
+> for each sub ldof l:  lt = sub_pfes->GetLocalTDofNumber(l);  if (lt < 0) continue;
+>     J[lt] = parent_pfes->GetGlobalTDofNumber(parent_vdof_[l]);  data[lt] = sign_[l];
+> Πᵀ = HypreParMatrix(comm, sub_tdofs, glob_sub, glob_parent, I=identity-offsets, J, data,
+>                     sub tdof offsets, parent tdof offsets);      Π = Πᵀ.Transpose();
+> ```
 
-`Π = R_parent P_loc P_sub` is a boolean injection (one ±1 per column, at most one per row). Because a sub true-dof has exactly one owner and its L-vector copies are consistent after `P_sub`, this equals `P_parentᵀ P_loc R_subᵀ`, so **Πᵀ is at once the exact primal restriction parent→sub and the correct dual prolongation** — the two uses never need separate operators. Πᵀ Π = I; Π Πᵀ = diag(indicator of parent dofs in the submesh). Alternative construction if `LeftDiagMult` proves awkward: build Πᵀ row by row (each owned sub tdof → global parent tdof read from the column index of `P_parent`'s single nonzero in row `parent_vdof_[ldof]`) with the `HypreParMatrix(comm, nrows, glob_rows, glob_cols, I, J_global, data, rows, cols)` constructor, then `Transpose()`.
+Π is a boolean injection (one ±1 per column, at most one per row), so **Πᵀ is at once the exact primal restriction parent→sub and the correct dual prolongation** — the two uses never need separate operators. Πᵀ Π = I; Π Πᵀ = diag(indicator of parent dofs in the submesh).
 
 `ParSubMesh::Transfer`/`ParTransferMap` reconcile shared dofs at the L-vector level with a `GroupCommunicator::Sum` divided by multiplicity; Π does the same at the T-vector level with no custom communication. Test them against each other.
 
@@ -255,6 +267,10 @@ Meshes: `data/circular_offset.msh` (2D, two attributes, curved order-2 boundary)
 |---|---|---|
 | 1 | `SubMeshDofInjection` (serial), `SubMeshMixedBilinearForm`, tests 1–4, 6; old class kept | 1–2 d |
 | 2 | `ParSubMeshMixedBilinearForm` via the mixin; `NewTrueDofMatrix()`; tests 7–8 | 1–2 d |
+
+**Status (1 Sep 2026):** Layer A is implemented and tested — `SubMeshDofInjection` in `include/mfemElasticity/submesh.hpp` / `src/submesh.cpp` (serial + `NewTrueDofMatrix()`, §2.4 as corrected above), with `tests/TestSubMeshDofInjection.cpp` (gtest: 192 configurations over dim × element type × order 1–3 × H1/L2 × vdim × ordering, domain and boundary submeshes; tests 1–2 of §6) and `tests/TestSubMeshDofInjectionPar.cpp` (standalone MPI program, registered with ctest at 1/2/4 ranks: 1920 checks per rank count, including empty-rank partitions and submesh boundaries aligned with rank boundaries on both ownership sides; the Π parts of test 7). Layer B and the remaining tests are still to do.
+
+Worked examples for review: `examples/submesh_injection.cpp` and `examples/submesh_injection_p.cpp` (on `data/circular_offset.msh`) demonstrate field transfer in both directions and solve a self-checking toy block system — Poisson on the parent coupled to an auxiliary field on the submesh through a cross-mesh mass matrix, built via `RemapRows`/`RemapColumns` in serial and as `ParMult(Π, M̂)` in parallel (the §3 Π-composition pattern, by hand). Both validate against a monolithic single-mesh solve (agreement ~1e-14) and against `u = Πᵀφ`. One MFEM trap encountered and worth remembering for Layer B call sites: in serial legacy assembly, `FormLinearSystem`'s returned `X` *aliases* the grid function's memory and `RecoverFEMSolution` relies on that aliasing — after solving in a `BlockVector`, copy the block back explicitly instead of calling `RecoverFEMSolution`.
 | 3 | Boundary-submesh shadows (`From::Boundary`), test 5; migrate the 26 call sites; delete `MixedBilinearFormSubMesh`; `SubMeshProlongationMatrix` → `NewSparseMatrix()`; docs | 1 d |
 | 4 (optional) | Root-parent composition for sibling submeshes (only if a use appears); matrix-free `SubMeshMixedOperator` for partial assembly; a `SubMeshDiscreteLinearOperator` for things like `GradientInterpolator` parent→submesh-L2 (today done as `Transfer` + `Grad`, which is fine) | — |
 

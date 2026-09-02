@@ -55,6 +55,9 @@ target_link_libraries(ode mfemElasticity)
 add_executable(seismic seismic.cpp)
 target_link_libraries(seismic mfemElasticity)
 
+add_executable(submesh_injection submesh_injection.cpp)
+target_link_libraries(submesh_injection mfemElasticity)
+
 
 
 if(USE_MPI)
@@ -93,4 +96,7 @@ if(USE_MPI)
 
         add_executable(ex12p ex12p.cpp)
         target_link_libraries(ex12p mfemElasticity)
+
+        add_executable(submesh_injection_p submesh_injection_p.cpp)
+        target_link_libraries(submesh_injection_p mfemElasticity)
 endif()

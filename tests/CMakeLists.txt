@@ -54,3 +54,17 @@ add_executable(TestDomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator Test
 target_link_libraries(TestDomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator PRIVATE  mfemElasticity gtest_main)
 gtest_discover_tests(TestDomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator)
 
+add_executable(TestSubMeshDofInjection TestSubMeshDofInjection.cpp)
+target_link_libraries(TestSubMeshDofInjection PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSubMeshDofInjection)
+
+if(USE_MPI)
+    add_executable(TestSubMeshDofInjectionPar TestSubMeshDofInjectionPar.cpp)
+    target_link_libraries(TestSubMeshDofInjectionPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    foreach(np 1 2 4)
+        add_test(NAME TestSubMeshDofInjectionPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSubMeshDofInjectionPar>)
+    endforeach()
+endif()
+

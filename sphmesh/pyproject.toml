@@ -1,0 +1,31 @@
+[project]
+name = "sphmesh"
+version = "0.1.0"
+description = "Parameterised gmsh meshing of geometrically spherical planetary models"
+authors = [
+    {name = "David Al-Attar", email = "da380@cam.ac.uk"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy (>=2.0,<3.0)",
+    "gmsh (>=4.13)",
+    "sphmod",
+]
+
+[tool.poetry]
+packages = [{include = "sphmesh", from = "src"}]
+
+# sphmod is David's spherically-symmetric planetary model package
+# (github.com/da380/sphmod). For development it is expected as a sibling
+# checkout: ~/dev/sphmod next to ~/dev/mfemElasticity. Swap for a git
+# dependency if that layout is inconvenient.
+[tool.poetry.dependencies]
+sphmod = {path = "../../sphmod", develop = true}
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
