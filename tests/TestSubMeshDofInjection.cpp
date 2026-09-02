@@ -1,4 +1,4 @@
-#include "TestCommon.hpp"
+#include "SubMeshTestCommon.hpp"
 
 /*
   Tests for SubMeshDofInjection (serial): design doc
@@ -14,43 +14,6 @@ namespace {
 
 // (dim, elementType, order, useL2, useVectorSpace, byVDIM)
 using InjectionParam = std::tuple<int, int, int, bool, bool, bool>;
-
-Mesh MakeTwoAttributeMesh(int dim, int elementType) {
-  auto mesh =
-      dim == 2
-          ? Mesh::MakeCartesian2D(4, 4,
-                                  elementType == 0 ? Element::TRIANGLE
-                                                   : Element::QUADRILATERAL)
-          : Mesh::MakeCartesian3D(3, 3, 3,
-                                  elementType == 0 ? Element::TETRAHEDRON
-                                                   : Element::HEXAHEDRON);
-  for (auto i = 0; i < mesh.GetNE(); i++) {
-    Vector c(dim);
-    mesh.GetElementCenter(i, c);
-    mesh.SetAttribute(i, c[0] < 0.5 ? 2 : 1);
-  }
-  mesh.SetAttributes();
-  return mesh;
-}
-
-double TestFunction(const Vector& x) {
-  auto v = 1.0;
-  for (auto i = 0; i < x.Size(); i++) {
-    v *= std::sin(2.0 * x[i] + 0.5 * i) + 0.25 * x[i] * x[i];
-  }
-  return v;
-}
-
-// Entrywise max |A - B| through dense conversion (meshes are small).
-double MaxDiff(const SparseMatrix& A, const SparseMatrix& B) {
-  EXPECT_EQ(A.Height(), B.Height());
-  EXPECT_EQ(A.Width(), B.Width());
-  DenseMatrix Ad, Bd;
-  A.ToDenseMatrix(Ad);
-  B.ToDenseMatrix(Bd);
-  Ad -= Bd;
-  return Ad.MaxMaxNorm();
-}
 
 class SubMeshDofInjectionTest : public testing::TestWithParam<InjectionParam> {
  protected:
@@ -72,8 +35,7 @@ class SubMeshDofInjectionTest : public testing::TestWithParam<InjectionParam> {
 
   // The checks shared by the domain and boundary variants.
   void CheckInjection(SubMesh& submesh) {
-    auto shadow =
-        SubMeshDofInjection::MakeShadowSpace(*parent_fes, submesh);
+    auto shadow = SubMeshDofInjection::MakeShadowSpace(*parent_fes, submesh);
     auto injection = SubMeshDofInjection(*shadow, *parent_fes);
 
     const auto n = injection.SubVSize();
@@ -117,8 +79,8 @@ class SubMeshDofInjectionTest : public testing::TestWithParam<InjectionParam> {
     // MultTranspose of a projected analytic parent function equals
     // SubMesh::Transfer of it into the shadow space.
     auto f = FunctionCoefficient(TestFunction);
-    auto fv = VectorFunctionCoefficient(
-        vdim, [this](const Vector& x, Vector& u) {
+    auto fv =
+        VectorFunctionCoefficient(vdim, [this](const Vector& x, Vector& u) {
           u.SetSize(vdim);
           for (auto i = 0; i < vdim; i++) {
             u[i] = (i + 1.0) * TestFunction(x);
@@ -189,10 +151,11 @@ TEST_P(SubMeshDofInjectionTest, BoundarySubMesh) {
   CheckInjection(submesh);
 }
 
-INSTANTIATE_TEST_SUITE_P(
-    SubMeshDofInjection, SubMeshDofInjectionTest,
-    testing::Combine(testing::Values(2, 3), testing::Values(0, 1),
-                     testing::Values(1, 2, 3), testing::Bool(),
-                     testing::Bool(), testing::Bool()));
+INSTANTIATE_TEST_SUITE_P(SubMeshDofInjection, SubMeshDofInjectionTest,
+                         testing::Combine(testing::Values(2, 3),
+                                          testing::Values(0, 1),
+                                          testing::Values(1, 2, 3),
+                                          testing::Bool(), testing::Bool(),
+                                          testing::Bool()));
 
 }  // namespace

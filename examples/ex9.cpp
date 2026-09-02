@@ -252,11 +252,9 @@ int main(int argc, char *argv[]) {
   BilinearForm *a11_1(new BilinearForm(&fes_u));
   BilinearForm *a22(new BilinearForm(&fes_phi));
 
-  auto a12 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_phi, &fes_u,
-                                                          &fes_phi_cond, true);
+  auto a12 = new mfemElasticity::SubMeshMixedBilinearForm(&fes_phi, &fes_u);
 
-  auto a21 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_u, &fes_phi,
-                                                          &fes_phi_cond, false);
+  auto a21 = new mfemElasticity::SubMeshMixedBilinearForm(&fes_u, &fes_phi);
 
   ConstantCoefficient c0(phi_block_factor);
 

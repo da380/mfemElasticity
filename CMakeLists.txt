@@ -34,6 +34,16 @@ message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 option(USE_MPI "Use MPI library" OFF)
 if(USE_MPI)
     enable_language(C)
+    # Prefer the mpiexec that sits next to the MPI compiler wrapper (e.g. a
+    # PETSc-installed MPICH), so that ctest launches with the same MPI the
+    # code links against rather than whatever mpiexec is first on PATH.
+    if(NOT MPIEXEC_EXECUTABLE)
+        get_filename_component(_mpi_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        if(EXISTS "${_mpi_bin_dir}/mpiexec")
+            set(MPIEXEC_EXECUTABLE "${_mpi_bin_dir}/mpiexec" CACHE FILEPATH
+                "MPI launcher (taken from the compiler wrapper's directory)")
+        endif()
+    endif()
     find_package(MPI REQUIRED)        
     if (NOT CMAKE_CXX_COMPILER AND MFEM_CXX_COMPILER)  
         set(CMAKE_CXX_COMPILER "${MFEM_CXX_COMPILER}")      

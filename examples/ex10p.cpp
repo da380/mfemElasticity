@@ -375,11 +375,9 @@ int main(int argc, char *argv[]) {
   ParBilinearForm *a11(new ParBilinearForm(&fes_u));
   ParBilinearForm *a22(new ParBilinearForm(&fes_phi));
 
-  auto a12 = new mfemElasticity::ParMixedBilinearFormSubMesh(
-      &fes_phi, &fes_u, &fes_phi_cond, true);
+  auto a12 = new mfemElasticity::ParSubMeshMixedBilinearForm(&fes_phi, &fes_u);
 
-  auto a21 = new mfemElasticity::ParMixedBilinearFormSubMesh(
-      &fes_u, &fes_phi, &fes_phi_cond, false);
+  auto a21 = new mfemElasticity::ParSubMeshMixedBilinearForm(&fes_u, &fes_phi);
 
   ConstantCoefficient c0(phi_block_factor);
 

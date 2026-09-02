@@ -61,10 +61,19 @@ gtest_discover_tests(TestSubMeshDofInjection)
 if(USE_MPI)
     add_executable(TestSubMeshDofInjectionPar TestSubMeshDofInjectionPar.cpp)
     target_link_libraries(TestSubMeshDofInjectionPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestSubMeshMixedBilinearFormPar TestSubMeshMixedBilinearFormPar.cpp)
+    target_link_libraries(TestSubMeshMixedBilinearFormPar PRIVATE mfemElasticity MPI::MPI_CXX)
     foreach(np 1 2 4)
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshDofInjectionPar>)
+        add_test(NAME TestSubMeshMixedBilinearFormPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSubMeshMixedBilinearFormPar>)
     endforeach()
 endif()
 
+
+add_executable(TestSubMeshMixedBilinearForm TestSubMeshMixedBilinearForm.cpp)
+target_link_libraries(TestSubMeshMixedBilinearForm PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSubMeshMixedBilinearForm)

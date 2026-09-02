@@ -87,7 +87,7 @@ int main(int argc, char *argv[]) {
   fes_1.GetEssentialTrueDofs(domain_1_bdr_marker, boundary_1_dofs);
 
   // Set up the prolongation operator (fes_0 -> fes_1)
-  auto P = unique_ptr<SparseMatrix>(SubMeshProlongationMatrix(fes_0, fes_1));
+  auto P = SubMeshDofInjection(fes_0, fes_1).NewSparseMatrix();
   auto R = unique_ptr<SparseMatrix>(Transpose(*P));
 
   // Set up the bilinear forms.

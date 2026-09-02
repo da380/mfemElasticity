@@ -141,7 +141,7 @@ int main(int argc, char *argv[]) {
   BilinearForm *a11 = new BilinearForm(&fes_cond);
   BilinearForm *a22 = new BilinearForm(&fes);
 
-  auto a12 = new MixedBilinearFormSubMesh(&fes, &fes_cond, &fes_cond, true);
+  auto a12 = new SubMeshMixedBilinearForm(&fes, &fes_cond);
 
   a11->AddDomainIntegrator(new DiffusionIntegrator(one));
   a11->Assemble();

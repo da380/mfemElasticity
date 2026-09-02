@@ -28,7 +28,7 @@ This document records where the library stands, what was checked, an assessment 
 | `mesh.hpp/cpp` — markers, `SphericalBoundaryRadius`, `MeshCentroid`, `SphericalMeshHelper`, `SplitBoundaryCommunicator` | Geometry helpers for the spherical outer boundary | Done | None |
 | `legendre.hpp/cpp` | Normalised associated Legendre recursions for the harmonic expansions | Done | Implicitly via `ex2` |
 | `solvers.hpp/cpp` — `RigidTranslation`, `RigidRotation`, `RigidBodySolver` | Wraps a solver with projections orthogonal to the six (three in 2D) rigid modes | Done, serial + parallel | None |
-| `submesh.hpp/cpp` — `SubMeshProlongationMatrix`, `MixedBilinearFormSubMesh`, `ParMixedBilinearFormSubMesh` | The custom cross-mesh coupling (§3) | Works in the examples; design open | None |
+| `submesh.hpp/cpp` — `SubMeshDofInjection`, `SubMeshMixedBilinearForm`, `ParSubMeshMixedBilinearForm` (replaced `SubMeshProlongationMatrix` and `(Par)MixedBilinearFormSubMesh` on 2 Sep 2026) | The cross-mesh coupling (§3; design and status in `submesh_coupling_design.md`) | Implemented per that design | gtest + MPI tests at 1/2/4 ranks |
 | `elasticity.hpp` / `elasticity.cpp` | A stale sketch of `QuasiStaticElasticityProblem`; the `.cpp` is empty; the header is not in the umbrella `mfemElasticity.hpp` | Superseded by `examples/elastic.hpp` | — |
 | `radial_model.hpp/cpp` | `RadialModelCoefficient` (namespace `RadialModel`, not `mfemElasticity`; duplicate `#pragma once`; not in the umbrella header) | Orphan | — |
 
@@ -205,7 +205,7 @@ MFEM's `ElasticityIntegrator` (`fem/bilininteg.cpp:3208-3287`) is isotropic (λ,
 Ordered so that each step is testable on its own and unblocks the next; rough effort in developer-days.
 
 1. **Stabilise the base** (1–2 d): merge ZY4; commit WIP; tests on; fix the CG tolerance bug and the `beam-quad` segfault; verify `ex2` prints an L2 error.
-2. **Injection operator Π, serial + parallel, with tests** (2–3 d): replace `SubMeshProlongationMatrix`/`MixedBilinearFormSubMesh` call sites in `ex6`, `ex8`, `elastogravity*`; check ex7/ex8 agreement is preserved; parallel test with empty ranks.
+2. **Injection operator Π, serial + parallel, with tests** (2–3 d): replace `SubMeshProlongationMatrix`/`MixedBilinearFormSubMesh` call sites in `ex6`, `ex8`, `elastogravity*`; check ex7/ex8 agreement is preserved; parallel test with empty ranks. — **Done, 2 Sep 2026** (`submesh_coupling_design.md` §7 status); `ex9`–`ex12` await their meshes before they can be re-run.
 3. **Library `elasticity.hpp`** (2 d): promote the `QuasiStaticLinearElasticProblem` design, serial + parallel; generalised null-space projector (list of null vectors, optional mass weighting); tolerance handling.
 4. **`SelfGravitatingElasticProblem`** (3–5 d): Π-based coupling blocks, Schur-complement CG as default with MINRES/block-diagonal as an alternative, DtN assembled once, 2D constant-mode handling; reproduce `elastogravity` results; then a Love-number / surface-load benchmark of a PREM-like sphere against your radial codes (this is the first real physics verification of the whole stack and should come before anything below).
 5. **Anisotropic integrator + TI coefficient + tests** (2–3 d): independent of 2–4, can run in parallel with them.

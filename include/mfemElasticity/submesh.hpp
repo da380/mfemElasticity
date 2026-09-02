@@ -1,7 +1,9 @@
 /**
  * @file submesh.hpp
- * @brief Defines the SubMeshProlongationMatrix for mapping between MFEM
- * SubMeshes and their parent meshes.
+ * @brief Coupling between a mesh and its (Par)SubMesh: the signed dof
+ * injection SubMeshDofInjection and the mixed bilinear forms
+ * SubMeshMixedBilinearForm / ParSubMeshMixedBilinearForm whose trial and
+ * test spaces live on the two meshes.
  */
 
 #pragma once
@@ -52,8 +54,7 @@ class SubMeshDofInjection : public mfem::Operator {
 #ifdef MFEM_USE_MPI
   /** @brief Parallel overload of MakeShadowSpace. */
   static std::unique_ptr<mfem::ParFiniteElementSpace> MakeShadowSpace(
-      const mfem::ParFiniteElementSpace& parent_fes,
-      mfem::ParSubMesh& submesh);
+      const mfem::ParFiniteElementSpace& parent_fes, mfem::ParSubMesh& submesh);
 #endif
 
   /** @brief Number of sub vdofs ( = Width()). */
@@ -123,93 +124,113 @@ class SubMeshDofInjection : public mfem::Operator {
   mfem::Array<mfem::real_t> sign_;
 };
 
-/**
- * @brief Factory function to build an optimized prolongation matrix mapping a
- * SubMesh space to its parent space.
- *
- * This function generates a sparse matrix acting as a prolongation operator
- * $P$, mapping local degrees of freedom (DoFs) from the submesh space to the
- * global parent mesh space ($u_{global} = P u_{local}$). It calculates and
- * populates the Compressed Sparse Row (CSR) arrays in a highly optimized $O(N)$
- * pass.
- *
- * @note The caller takes ownership of the returned SparseMatrix pointer and is
- * responsible for deleting it. The underlying CSR arrays (`I`, `J`, and `Data`)
- * are automatically managed and will be freed by the SparseMatrix destructor.
- *
- * @param sub_fes The finite element space defined on the SubMesh.
- * @param parent_fes The finite element space defined on the exact parent Mesh
- * of the SubMesh.
- * @return mfem::SparseMatrix* A dynamically allocated SparseMatrix representing
- * the prolongation operator.
- */
-mfem::SparseMatrix *SubMeshProlongationMatrix(
-    const mfem::FiniteElementSpace &sub_fes,
-    const mfem::FiniteElementSpace &parent_fes);
-
-
-
-
+namespace detail {
 
 /**
- * @brief Mixed bilinear form assembly between a parent-mesh finite element
- * space and a corresponding SubMesh finite element space.
- *
- * This class assembles mixed operators in which one finite element space is
- * defined on a SubMesh and the other on its parent mesh. Local element
- * matrices are assembled on the SubMesh and inserted into the global mixed
- * matrix through an automatically constructed SubMesh-to-parent DoF mapping.
- *
- * If @p extended_trial is true, the trial space is defined on the parent mesh
- * and restricted to the SubMesh during assembly. Otherwise, the test space is
- * defined on the parent mesh and restricted to the SubMesh.
- *
- * @note The space supplied through @p sub_fes must be defined on the SubMesh
- * and represent the restriction of the parent-space field to the SubMesh.
+ * @brief The shadow space and injection shared by SubMeshMixedBilinearForm
+ * and ParSubMeshMixedBilinearForm; built from the trial/test pair.
  */
-class MixedBilinearFormSubMesh : public mfem::MixedBilinearForm
-{
-protected:
-    mfem::FiniteElementSpace *sub_fes = nullptr;
-    mfem::Array<int> *vdof_to_vdof_map = nullptr;
-    bool extended_trial;
+struct SubMeshFormSetup {
+  SubMeshFormSetup(mfem::FiniteElementSpace* trial_fes,
+                   mfem::FiniteElementSpace* test_fes);
 
-public:
-    MixedBilinearFormSubMesh(mfem::FiniteElementSpace *tr_fes,
-                             mfem::FiniteElementSpace *te_fes,
-                             mfem::FiniteElementSpace *sub_fes_,
-                             bool extended_trial_);
+  std::unique_ptr<mfem::FiniteElementSpace> shadow;
+  std::unique_ptr<SubMeshDofInjection> injection;
+  bool parent_is_trial;
+};
 
-    void Assemble(int skip_zeros = 1);
+/**
+ * @brief Assemble @p form's integrators on the submesh (via a helper
+ * MixedBilinearForm that borrows them) and re-index the parent side.
+ * Returns the finalized matrix in the real spaces' vdof numbering.
+ */
+std::unique_ptr<mfem::SparseMatrix> AssembleOnSubMesh(
+    mfem::MixedBilinearForm& form, const SubMeshFormSetup& setup,
+    int skip_zeros);
 
-    ~MixedBilinearFormSubMesh() { delete vdof_to_vdof_map; }
+}  // namespace detail
+
+/**
+ * @brief A MixedBilinearForm whose trial and test spaces live on a mesh and
+ * on a SubMesh of that mesh (either way round).
+ *
+ * All integrals are taken over the SubMesh: its elements, boundary elements
+ * or boundary faces. Every integrator type accepted by MixedBilinearForm is
+ * supported except interior-face integrators. Attribute markers refer to the
+ * SubMesh's attributes: domain attributes are inherited from the parent,
+ * boundary attributes are inherited where the parent had a boundary element
+ * and equal max(parent bdr attributes) + 1 on the cut. As for
+ * MixedBilinearForm, a marker must be sized to the SubMesh's
+ * attributes.Max() / bdr_attributes.Max().
+ *
+ * Assemble() builds a plain MixedBilinearForm on the SubMesh between the
+ * SubMesh-side space and a shadow of the parent-side space (see
+ * SubMeshDofInjection::MakeShadowSpace), assembles it with MFEM's own code,
+ * and re-indexes the parent side through the SubMeshDofInjection. The result
+ * is a matrix in the two real spaces' vdof numbering, so everything else
+ * (SpMat, Mult, EliminateTrialDofs, FormRectangularSystemMatrix, ...) is
+ * inherited unchanged.
+ *
+ * @note Assemble() hides the non-virtual MixedBilinearForm::Assemble (as
+ * mfem::DiscreteLinearOperator does): call it through this type. It replaces
+ * any previously assembled matrix rather than adding to it. Only
+ * AssemblyLevel::LEGACY is supported.
+ */
+class SubMeshMixedBilinearForm : public mfem::MixedBilinearForm {
+ public:
+  /**
+   * @param trial_fes Trial space, on the parent mesh or on the SubMesh.
+   * @param test_fes Test space, on the other of the two meshes.
+   */
+  SubMeshMixedBilinearForm(mfem::FiniteElementSpace* trial_fes,
+                           mfem::FiniteElementSpace* test_fes);
+
+  /** @brief Assemble on the SubMesh and re-index; the result is finalized. */
+  void Assemble(int skip_zeros = 1);
+
+  /** @brief The injection from the shadow space into the parent-side space. */
+  const SubMeshDofInjection& Injection() const { return *setup_.injection; }
+
+  /** @brief The shadow of the parent-side space on the SubMesh. */
+  const mfem::FiniteElementSpace& ShadowSpace() const { return *setup_.shadow; }
+
+  /** @brief True if the trial space is the one on the parent mesh. */
+  bool ParentIsTrial() const { return setup_.parent_is_trial; }
+
+ private:
+  detail::SubMeshFormSetup setup_;
 };
 
 #ifdef MFEM_USE_MPI
 /**
- * @brief Parallel version of MixedBilinearFormSubMesh.
+ * @brief Parallel version of SubMeshMixedBilinearForm, for
+ * ParFiniteElementSpaces on a ParMesh and a ParSubMesh of it.
  *
- * Provides the same functionality as MixedBilinearFormSubMesh for
- * ParFiniteElementSpace objects defined on a ParSubMesh and its parent mesh.
+ * Assemble() produces the local (L-vector) matrix in the real spaces'
+ * numbering exactly as in serial; the inherited ParallelAssemble() and
+ * FormRectangularSystemMatrix() then apply the two spaces' own
+ * prolongations, so no parallel-specific assembly is needed. Ranks holding
+ * no submesh elements contribute an empty local matrix.
  */
-class ParMixedBilinearFormSubMesh : public mfem::ParMixedBilinearForm
-{
-protected:
-    mfem::ParFiniteElementSpace *sub_pfes = nullptr;
-    mfem::Array<int> *vdof_to_vdof_map = nullptr;
-    bool extended_trial;
+class ParSubMeshMixedBilinearForm : public mfem::ParMixedBilinearForm {
+ public:
+  ParSubMeshMixedBilinearForm(mfem::ParFiniteElementSpace* trial_fes,
+                              mfem::ParFiniteElementSpace* test_fes);
 
-public:
-    ParMixedBilinearFormSubMesh(mfem::ParFiniteElementSpace *tr_pfes,
-                                mfem::ParFiniteElementSpace *te_pfes,
-                                mfem::ParFiniteElementSpace *sub_pfes_,
-                                bool extended_trial_);
+  /** @brief Assemble the local matrix on the ParSubMesh and re-index. */
+  void Assemble(int skip_zeros = 1);
 
-    void Assemble(int skip_zeros = 1);
+  const SubMeshDofInjection& Injection() const { return *setup_.injection; }
 
-    ~ParMixedBilinearFormSubMesh() { delete vdof_to_vdof_map; }
+  const mfem::ParFiniteElementSpace& ShadowSpace() const {
+    return static_cast<const mfem::ParFiniteElementSpace&>(*setup_.shadow);
+  }
+
+  bool ParentIsTrial() const { return setup_.parent_is_trial; }
+
+ private:
+  detail::SubMeshFormSetup setup_;
 };
 #endif
-
 
 }  // namespace mfemElasticity

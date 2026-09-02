@@ -83,7 +83,7 @@ int main(int argc, char *argv[]) {
   u.ProjectCoefficient(f);
 
   // Set up the prolongation mapping
-  auto P = unique_ptr<SparseMatrix>(SubMeshProlongationMatrix(sub_fes, fes));
+  auto P = SubMeshDofInjection(sub_fes, fes).NewSparseMatrix();
 
   // Use its transpose to restrict the GridFunction to the submesh
   auto u_sub = GridFunction(&sub_fes);

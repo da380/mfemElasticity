@@ -412,17 +412,13 @@ int main(int argc, char *argv[]) {
   BilinearForm *a22(new BilinearForm(&fes_u_mantle));
   BilinearForm *a33(new BilinearForm(&fes_phi));
 
-  auto a13 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_phi, &fes_u_ic,
-                                                          &fes_phi_ic, true);
+  auto a13 = new mfemElasticity::SubMeshMixedBilinearForm(&fes_phi, &fes_u_ic);
 
-  auto a31 = new mfemElasticity::MixedBilinearFormSubMesh(&fes_u_ic, &fes_phi,
-                                                          &fes_phi_ic, false);
+  auto a31 = new mfemElasticity::SubMeshMixedBilinearForm(&fes_u_ic, &fes_phi);
 
-  auto a23 = new mfemElasticity::MixedBilinearFormSubMesh(
-      &fes_phi, &fes_u_mantle, &fes_phi_mantle, true);
+  auto a23 = new mfemElasticity::SubMeshMixedBilinearForm(&fes_phi, &fes_u_mantle);
 
-  auto a32 = new mfemElasticity::MixedBilinearFormSubMesh(
-      &fes_u_mantle, &fes_phi, &fes_phi_mantle, false);
+  auto a32 = new mfemElasticity::SubMeshMixedBilinearForm(&fes_u_mantle, &fes_phi);
 
   ConstantCoefficient c0(phi_block_factor);
 
