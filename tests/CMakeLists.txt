@@ -67,6 +67,8 @@ if(USE_MPI)
     target_link_libraries(TestElasticProblemPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
     target_link_libraries(TestViscoelasticPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestSelfGravitatingPar TestSelfGravitatingPar.cpp)
+    target_link_libraries(TestSelfGravitatingPar PRIVATE mfemElasticity MPI::MPI_CXX)
     foreach(np 1 2 4)
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
@@ -80,6 +82,9 @@ if(USE_MPI)
         add_test(NAME TestViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestViscoelasticPar>)
+        add_test(NAME TestSelfGravitatingPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSelfGravitatingPar>)
     endforeach()
 endif()
 
@@ -107,3 +112,11 @@ gtest_discover_tests(TestViscoelastic)
 add_executable(TestSubMeshMixedBilinearForm TestSubMeshMixedBilinearForm.cpp)
 target_link_libraries(TestSubMeshMixedBilinearForm PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestSubMeshMixedBilinearForm)
+
+add_executable(TestTransformedDiffusionIntegrator TestTransformedDiffusionIntegrator.cpp)
+target_link_libraries(TestTransformedDiffusionIntegrator PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestTransformedDiffusionIntegrator)
+
+add_executable(TestSelfGravitating TestSelfGravitating.cpp)
+target_link_libraries(TestSelfGravitating PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSelfGravitating)

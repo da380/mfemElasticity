@@ -4,9 +4,9 @@ target_sources(${PROJECT_NAME} PRIVATE solvers.cpp
                                        legendre.cpp                                       
                                        mesh.cpp
                                        poisson.cpp
-                                       radial_model.cpp
                                        rheology.cpp
                                        elastic_problem.cpp
+                                       self_gravitating.cpp
                                        viscoelastic.cpp
                                        elastic_tensor.cpp
                                        submesh.cpp

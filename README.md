@@ -1,103 +1,94 @@
 # mfemElasticity
 
-This library provides extensions to the [mfem library](https://mfem.org) for solving elastic and viscoelastic problems.
+Extensions to the [MFEM library](https://mfem.org) for quasi-static elastic and
+viscoelastic problems in geophysics, including self-gravitation. The main
+pieces are
+
+- mixed bilinear/linear form integrators between vector, scalar and tensor
+  nodal spaces (`bilininteg.hpp`, `lininteg.hpp`);
+- an anisotropic elasticity integrator with isotropic, transversely isotropic
+  (radially anisotropic), Voigt-matrix and rotated tensor coefficients
+  (`elastic_tensor.hpp`);
+- the exterior Poisson machinery: a matrix-free Dirichlet-to-Neumann operator
+  on a spherical outer boundary and multipole right-hand-side operators
+  (`poisson.hpp`, `mesh.hpp`, `legendre.hpp`);
+- coupling of forms between a mesh and one of its `SubMesh`es through a
+  boolean dof injection (`submesh.hpp`);
+- a quasi-static linear elastic problem interface with traction and clamped
+  reference implementations, a generalised Maxwell rheology and a
+  viscoelastic time-dependent operator (`elastic_problem.hpp`,
+  `rheology.hpp`, `viscoelastic.hpp`);
+- the self-gravitating elastic problem: displacement on a SubMesh of the
+  body coupled to the potential perturbation on the enclosing ball with the
+  DtN outer condition, implementing the same interface so the viscoelastic
+  layer runs on it unchanged (`self_gravitating.hpp`);
+- rigid-body and general null-space projectors for singular systems
+  (`solvers.hpp`).
+
+Serial and parallel (MPI) paths are provided throughout. Design notes and the
+roadmap are in `doc/`.
 
 ## Installation
 
-The `mfem` library must be installed first. This project uses CMake for configuration and building.
+MFEM must be built first (a parallel MFEM, with hypre and METIS, for the MPI
+build). The project uses CMake; in-source builds are refused.
 
-There are two ways to configure the project: using the provided configure scripts or by calling `cmake` directly.
-
-### Using the configure scripts (recommended)
-
-The project includes two scripts to simplify the configuration process: `configure_serial.sh` and `configure_parallel.sh`. These scripts will create `serial_build` and `parallel_build` directories respectively.
-
-Before running these scripts, you may need to set some environment variables to point to your dependencies.
-
-**Serial Configuration:**
-
-Set the `CMAKE_PREFIX_PATH` to the location of your serial MFEM installation.
+**Serial:**
 ```bash
-export CMAKE_PREFIX_PATH=/path/to/your/mfem_serial_build
-./configure_serial.sh
+cmake -S . -B build_serial \
+      -DCMAKE_PREFIX_PATH=/path/to/mfem_serial_build \
+      -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON
+cmake --build build_serial -j
 ```
 
-**Parallel Configuration:**
-
-Set the `CMAKE_PREFIX_PATH` to your parallel MFEM installation. You also need to make sure CMake can find your MPI compilers. You can do this by adding the compiler's location to your `PATH`, or by setting the `MPI_C_COMPILER` and `MPI_CXX_COMPILER` environment variables.
-
-Using `PATH`:
+**Parallel:**
 ```bash
-export CMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build
-export PATH=/path/to/your/mpi/bin:$PATH
-./configure_parallel.sh
+cmake -S . -B build_parallel \
+      -DUSE_MPI=ON \
+      -DCMAKE_PREFIX_PATH=/path/to/mfem_parallel_build \
+      -DMPI_C_COMPILER=/path/to/mpicc \
+      -DMPI_CXX_COMPILER=/path/to/mpic++ \
+      -DBUILD_EXAMPLES=ON -DBUILD_TESTS=ON
+cmake --build build_parallel -j
 ```
 
-Using `MPI_C_COMPILER` and `MPI_CXX_COMPILER`:
-```bash
-export CMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build
-export MPI_C_COMPILER=/path/to/your/mpicc
-export MPI_CXX_COMPILER=/path/to/your/mpic++
-./configure_parallel.sh
-```
+`MFEM_DIR` can be given instead of `CMAKE_PREFIX_PATH`. When `USE_MPI` is on,
+the `mpiexec` next to the MPI compiler wrapper is used for the MPI tests unless
+`MPIEXEC_EXECUTABLE` is set.
 
-After running the configure script, you can build the project:
-```bash
-cmake --build serial_build # for serial
-# or
-cmake --build parallel_build # for parallel
-```
+### Build options
 
-### Manual CMake configuration
+All default to `OFF`.
 
-You can also configure the project by calling `cmake` directly.
+- `USE_MPI`: build against a parallel MFEM and enable the parallel classes,
+  examples and tests.
+- `BUILD_EXAMPLES`: build the programs in `examples/`.
+- `BUILD_TESTS`: build the googletest suite in `tests/` (googletest is fetched
+  at configure time); run with `ctest` in the build directory.
+- `BUILD_GMSH`: build the gmsh-based mesh generators in `meshing/` (requires
+  the gmsh C++ SDK). These are being replaced by the Python package in
+  `sphmesh/`; see `doc/meshing_design.md`.
+- `BUILD_DOCS`: generate the Doxygen API documentation.
 
-**Serial Configuration:**
-```bash
-mkdir build
-cd build
-cmake .. -DCMAKE_PREFIX_PATH=/path/to/your/mfem_serial_build
-cmake --build .
-```
+## Examples
 
-**Parallel Configuration:**
-```bash
-mkdir build
-cd build
-cmake .. -DUSE_MPI=ON \
-         -DCMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build \
-         -DMPI_C_COMPILER=/path/to/your/mpicc \
-         -DMPI_CXX_COMPILER=/path/to/your/mpic++
-cmake --build .
-```
+Examples are run from the build's `examples/` directory; they find their
+meshes in `../data`, which is copied from the source tree at build time. Each
+has `-h` for its options.
 
-### Build Options
+| Program | What it does |
+|---|---|
+| `poisson_dtn` / `_p` | Poisson equation on the whole space: Neumann, DtN and multipole outer conditions, static and linearised, against the exact uniform-sphere solution |
+| `transformed_diffusion` / `_p` | Laplace equation on a mapped domain solved on the reference domain with `TransformedDiffusionIntegrator` |
+| `submesh_injection` / `_p` | Tour of `SubMeshDofInjection`: moving fields and assembling coupling blocks between a mesh and a submesh |
+| `coupled_poisson` / `_p` | Two Poisson equations, one on a submesh, coupled and solved monolithically |
+| `elastogravity` / `_p` | Self-gravitating elastic body under a surface load: block MINRES with the DtN outer condition |
+| `elastogravity_two_layer` / `_p` | The same with a liquid core and solid mantle |
+| `elastogravity_three_layer` / `_p` | The same with solid inner core, liquid outer core and mantle |
+| `quasi_static_elasticity` | Driver for the `QuasiStaticLinearElasticProblem` interface |
+| `self_gravitating_elasticity` / `_p` | `SelfGravitatingElasticProblem`: self-gravitating body under a surface mass load, Schur CG and block MINRES solvers compared, rigid-mode diagnostics |
+| `viscoelasticity` | Generalised Maxwell viscoelasticity with `ViscoelasticOperator` |
+| `anisotropic_elasticity` | Radially anisotropic (transversely isotropic) elasticity with `ElasticTensorIntegrator` |
 
-You can control which optional parts of the project are built by passing CMake options to the configure scripts or to `cmake` directly.
-
-The configure scripts enable some options by default, but you can override them. For example, to turn an option off, you would use `-D<OPTION_NAME>=OFF`.
-
-The following options are available:
-
-*   `BUILD_EXAMPLES`: Build the example programs in the `examples` directory. (Default: `ON` in configure scripts)
-*   `BUILD_TESTS`: Build the test suite in the `tests` directory. (Default: `ON` in configure scripts)
-*   `BUILD_GMSH`: Build the meshing utilities in the `meshing` directory. (Default: `ON` in configure scripts)
-    *   **Requires Gmsh:** You must have Gmsh installed. You may need to set `CMAKE_PREFIX_PATH` to point to your Gmsh installation if it's in a non-standard location.
-*   `BUILD_DOCS`: Generate the API documentation using Doxygen. (Default: `OFF` in configure scripts)
-    *   **Requires Doxygen:** You must have Doxygen installed.
-
-**Example:**
-
-To configure a serial build without the Gmsh-based meshing utilities, you can run:
-
-```bash
-export CMAKE_PREFIX_PATH=/path/to/your/mfem_serial_build
-./configure_serial.sh -DBUILD_GMSH=OFF
-```
-
-To enable documentation generation with the parallel script:
-```bash
-export CMAKE_PREFIX_PATH=/path/to/your/mfem_parallel_build
-export PATH=/path/to/your/mpi/bin:$PATH
-./configure_parallel.sh -DBUILD_DOCS=ON
-```
+The gmsh meshes in `data/` were produced with the tools in `meshing/`; the
+generating command is recorded at the top of each example that uses one.

@@ -1,4 +1,5 @@
 #include "mfemElasticity/solvers.hpp"
+#include <cmath>
 
 namespace mfemElasticity {
 
@@ -178,6 +179,72 @@ void RigidBodySolver::Mult(const mfem::Vector &b, mfem::Vector &x) const {
   _solver->iterative_mode = iterative_mode;
   _solver->Mult(_b, x);
   ProjectOrthogonalToRigidBody(x, x);
+}
+
+// ---------------------------------------------------------------------------
+
+mfem::real_t NullSpaceProjector::Dot(const mfem::Vector &x,
+                                     const mfem::Vector &y) const {
+#ifdef MFEM_USE_MPI
+  if (parallel_) {
+    return mfem::InnerProduct(comm_, x, y);
+  }
+#endif
+  return mfem::InnerProduct(x, y);
+}
+
+bool NullSpaceProjector::Add(const mfem::Vector &v, mfem::real_t drop_tol) {
+  auto n = std::make_unique<mfem::Vector>(v);
+  const auto norm0 = std::sqrt(Dot(*n, *n));
+  if (!(norm0 > 0.0)) {
+    return false;
+  }
+  for (const auto &b : basis_) {
+    n->Add(-Dot(*n, *b), *b);
+  }
+  const auto norm = std::sqrt(Dot(*n, *n));
+  if (norm <= drop_tol * norm0) {
+    return false;
+  }
+  *n /= norm;
+  basis_.push_back(std::move(n));
+  return true;
+}
+
+void NullSpaceProjector::Project(mfem::Vector &x) const {
+  for (const auto &b : basis_) {
+    x.Add(-Dot(x, *b), *b);
+  }
+}
+
+void ProjectedOperator::Mult(const mfem::Vector &x, mfem::Vector &y) const {
+  P_->Project(x, z_);
+  A_->Mult(z_, y);
+  P_->Project(y);
+}
+
+void ProjectedSolver::SetSolver(mfem::Solver &solver) {
+  solver_ = &solver;
+  height = solver_->Height();
+  width = solver_->Width();
+}
+
+void ProjectedSolver::SetOperator(const mfem::Operator &op) {
+  MFEM_VERIFY(solver_, "ProjectedSolver: call SetSolver() first.");
+  projected_ = std::make_unique<ProjectedOperator>(op, *P_);
+  solver_->SetOperator(*projected_);
+  height = op.Height();
+  width = op.Width();
+}
+
+void ProjectedSolver::Mult(const mfem::Vector &b, mfem::Vector &x) const {
+  P_->Project(b, b_);
+  solver_->iterative_mode = iterative_mode;
+  if (iterative_mode) {
+    P_->Project(x);
+  }
+  solver_->Mult(b_, x);
+  P_->Project(x);
 }
 
 }  // namespace mfemElasticity

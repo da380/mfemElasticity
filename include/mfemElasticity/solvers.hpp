@@ -264,4 +264,106 @@ class RigidBodySolver : public mfem::Solver {
   void Mult(const mfem::Vector &b, mfem::Vector &x) const override;
 };
 
+/**
+ * @brief An orthonormal basis of a (near-)null space of an operator, with the
+ * Euclidean projection onto its orthogonal complement; serial or parallel
+ * (true-dof vectors, global inner products).
+ *
+ * Vectors are added one at a time and orthonormalised by modified
+ * Gram-Schmidt; a vector that is (numerically) dependent on the ones already
+ * present is dropped. This generalises the rigid-body projection of
+ * RigidBodySolver to arbitrary null vectors, for instance the coupled
+ * displacement/potential null vectors of a self-gravitating body or the
+ * constant potential in two dimensions.
+ */
+class NullSpaceProjector {
+ public:
+  NullSpaceProjector() = default;
+
+#ifdef MFEM_USE_MPI
+  explicit NullSpaceProjector(MPI_Comm comm) : comm_(comm), parallel_(true) {}
+#endif
+
+  /**
+   * @brief Add @p v to the basis (orthonormalised against the existing
+   * vectors). Returns false, and adds nothing, if the remainder is below
+   * @p drop_tol times the norm of @p v.
+   */
+  bool Add(const mfem::Vector& v, mfem::real_t drop_tol = 1e-10);
+
+  /** @brief Number of basis vectors. */
+  int Size() const { return static_cast<int>(basis_.size()); }
+
+  /** @brief Orthonormal basis vector @p i. */
+  const mfem::Vector& Basis(int i) const { return *basis_[i]; }
+
+  /** @brief x <- (I - sum_i n_i n_i^T) x. */
+  void Project(mfem::Vector& x) const;
+
+  /** @brief y = (I - sum_i n_i n_i^T) x. */
+  void Project(const mfem::Vector& x, mfem::Vector& y) const {
+    y = x;
+    Project(y);
+  }
+
+  /** @brief Inner product, global in parallel. */
+  mfem::real_t Dot(const mfem::Vector& x, const mfem::Vector& y) const;
+
+ private:
+  std::vector<std::unique_ptr<mfem::Vector>> basis_;
+#ifdef MFEM_USE_MPI
+  MPI_Comm comm_ = MPI_COMM_NULL;
+#endif
+  bool parallel_ = false;
+};
+
+/**
+ * @brief The operator @f$P A P@f$ for a projector @f$P@f$ from a
+ * NullSpaceProjector: @f$A@f$ restricted to the orthogonal complement of the
+ * null space. Symmetric when @f$A@f$ is; the natural operator to hand to a
+ * Krylov method for a singular or nearly singular symmetric system.
+ */
+class ProjectedOperator : public mfem::Operator {
+ public:
+  ProjectedOperator(const mfem::Operator& A, const NullSpaceProjector& P)
+      : mfem::Operator(A.Height(), A.Width()), A_(&A), P_(&P) {
+    MFEM_VERIFY(A.Height() == A.Width(),
+                "ProjectedOperator: the operator must be square.");
+  }
+
+  void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
+
+ private:
+  const mfem::Operator* A_;
+  const NullSpaceProjector* P_;
+  mutable mfem::Vector z_;
+};
+
+/**
+ * @brief Wraps a solver for a (nearly) singular symmetric system: the
+ * operator handed to the inner solver is @f$P A P@f$, the right-hand side and
+ * (in iterative mode) the initial guess are projected before, and the
+ * solution after, the inner solve. The generalisation of RigidBodySolver to
+ * an arbitrary NullSpaceProjector.
+ */
+class ProjectedSolver : public mfem::Solver {
+ public:
+  explicit ProjectedSolver(const NullSpaceProjector& P)
+      : mfem::Solver(0, false), P_(&P) {}
+
+  /** @brief The inner solver; call before SetOperator(). */
+  void SetSolver(mfem::Solver& solver);
+
+  /** @brief Set @f$A@f$: the inner solver receives @f$P A P@f$. */
+  void SetOperator(const mfem::Operator& op) override;
+
+  void Mult(const mfem::Vector& b, mfem::Vector& x) const override;
+
+ private:
+  const NullSpaceProjector* P_;
+  mfem::Solver* solver_ = nullptr;
+  std::unique_ptr<ProjectedOperator> projected_;
+  mutable mfem::Vector b_;
+};
+
 }  // namespace mfemElasticity

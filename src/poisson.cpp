@@ -1350,7 +1350,7 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
       trial_dshape.MultTranspose(fs, df);
       for (auto k = 0; k < dim; k++) {
         for (auto j = 0; j < dim; j++) {
-          F(j, k) = x(j) * df(j);
+          F(j, k) = x(j) * df(k);
         }
         F(k, k) += f;
       }

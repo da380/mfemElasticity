@@ -9,6 +9,7 @@
 #include "mfemElasticity/mesh.hpp"
 #include "mfemElasticity/poisson.hpp"
 #include "mfemElasticity/rheology.hpp"
+#include "mfemElasticity/self_gravitating.hpp"
 #include "mfemElasticity/solvers.hpp"
 #include "mfemElasticity/submesh.hpp"
 #include "mfemElasticity/viscoelastic.hpp"

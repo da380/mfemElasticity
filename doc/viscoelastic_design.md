@@ -338,7 +338,7 @@ Dependencies: `viscoelastic.hpp` depends only on the interface and on `bilininte
 |---|---|---|
 | 1 | `rheology.hpp`; `elastic_problem.hpp` promoted from `examples/elastic.hpp` with the κ/dev split, effective-modulus hook, multi-field interface, serial+parallel in one class; `Traction`/`Clamped` reference problems; tests 1–2 | 2 d |
 | 2 | `viscoelastic.hpp`: generalised Maxwell, block state, Galerkin strain map, `Mult`, ETD1, exponential trapezoid, `ImplicitSolve`; adaptors; tests 3–7 | 2–3 d |
-| 3 | `SelfGravitatingElasticProblem` implementing the interface (after SubMesh phases 1–2); test 8 | 3–5 d |
+| 3 | `SelfGravitatingElasticProblem` implementing the interface (after SubMesh phases 1–2); test 8 | 3–5 d | **Done 2 Sep 2026** (`self_gravitating.hpp`; see `status_and_roadmap.md` step 4). Test 8 (viscoelastic self-gravitating sphere vs radial codes) still open; the operator runs on the problem (creep test in `TestSelfGravitating.cpp`). |
 | 4 | Anisotropic branches (`C_k`), nonlinear rheology hooks, adjoint stepping | later |
 
 **Status (2 Sep 2026): Phases 1 and 2 done.** Phase 1: `rheology.hpp/cpp` (`MaxwellBranch`, `GeneralisedMaxwellRheology` with `Elastic`/`Maxwell` factories) and `elastic_problem.hpp/cpp` (`QuasiStaticLinearElasticProblem`, `ElasticProblemBase`, `TractionProblem`, `ClampedProblem`) are in the library; `examples/elastic.hpp` and the stale `elasticity.hpp/cpp` are deleted and the two drivers use the library classes. Notes where the implementation differs from §2:
