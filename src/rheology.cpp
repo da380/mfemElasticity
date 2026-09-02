@@ -1,52 +1,248 @@
 /**
  * @file rheology.cpp
- * @brief Implementation of GeneralisedMaxwellRheology.
+ * @brief Implementation of the rheologies and their stiffness objects.
  */
 
 #include "mfemElasticity/rheology.hpp"
 
 namespace mfemElasticity {
 
-GeneralisedMaxwellRheology::GeneralisedMaxwellRheology(
-    int dim, mfem::Coefficient& kappa, mfem::Coefficient& mu_inf,
+using namespace mfem;
+
+bool Rheology::IsLinear() const {
+  for (int k = 0; k < NumBranches(); k++) {
+    const RelaxationLaw* law = Law(k);
+    if (law && law->IsStateDependent()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+Coefficient& Rheology::BranchShearModulus(int /*k*/) const {
+  MFEM_ABORT("Rheology::BranchShearModulus: this rheology has no scalar "
+             "branch moduli (TraceFreeInternalVariables() is false).");
+  return *static_cast<Coefficient*>(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Isotropic
+
+namespace {
+
+/// kappa div-div + 2 mu dev-dev with mu redirectable between mu_U and
+/// mu_inf + sum_k beta_k mu_k.
+class IsotropicStiffness : public ElasticStiffness {
+ public:
+  explicit IsotropicStiffness(const IsotropicMaxwellRheology& r)
+      : r_(&r), mu_current_(&r.UnrelaxedShearModulus()) {}
+
+  void AddIntegrators(BilinearForm& form) override {
+    const int dim = r_->SpaceDim();
+    form.AddDomainIntegrator(
+        new ElasticityIntegrator(r_->BulkModulus(), 1.0, 0.0));
+    form.AddDomainIntegrator(
+        new ElasticityIntegrator(mu_current_, -2.0 / dim, 1.0));
+  }
+
+  void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
+    MFEM_VERIFY(static_cast<int>(beta.size()) == r_->NumBranches(),
+                "SetRelaxationWeights: one weight per branch.");
+    // mu_eff = mu_inf + sum_k beta_k mu_k as a chain of coefficients; the
+    // old chain is released only after the target has been moved.
+    std::vector<std::unique_ptr<Coefficient>> chain;
+    Coefficient* mu = &r_->LongTermShearModulus();
+    for (int k = 0; k < r_->NumBranches(); k++) {
+      chain.push_back(
+          std::make_unique<ProductCoefficient>(*beta[k], *r_->Branch(k).mu));
+      chain.push_back(std::make_unique<SumCoefficient>(*mu, *chain.back()));
+      mu = chain.back().get();
+    }
+    mu_current_.SetTarget(mu);
+    chain_ = std::move(chain);
+    relaxed_ = true;
+  }
+
+  void ClearRelaxationWeights() override {
+    mu_current_.SetTarget(&r_->UnrelaxedShearModulus());
+    chain_.clear();
+    relaxed_ = false;
+  }
+
+  bool IsRelaxed() const override { return relaxed_; }
+
+ private:
+  const IsotropicMaxwellRheology* r_;
+  detail::RedirectableCoefficient mu_current_;
+  std::vector<std::unique_ptr<Coefficient>> chain_;
+  bool relaxed_ = false;
+};
+
+}  // namespace
+
+IsotropicMaxwellRheology::IsotropicMaxwellRheology(
+    int dim, Coefficient& kappa, Coefficient& mu_inf,
     const std::vector<MaxwellBranch>& branches)
     : dim_(dim), kappa_(&kappa), mu_inf_(&mu_inf), branches_(branches) {
   MFEM_VERIFY(dim == 2 || dim == 3,
-              "GeneralisedMaxwellRheology: dim must be 2 or 3.");
+              "IsotropicMaxwellRheology: dim must be 2 or 3.");
   for (const auto& b : branches_) {
     MFEM_VERIFY(b.mu && b.tau,
-                "GeneralisedMaxwellRheology: every branch needs mu and tau.");
+                "IsotropicMaxwellRheology: every branch needs mu and tau.");
   }
 
   // mu_U = mu_inf + sum_k mu_k, as a chain of SumCoefficients.
   mu_u_ = mu_inf_;
   for (const auto& b : branches_) {
-    owned_.push_back(std::make_unique<mfem::SumCoefficient>(*mu_u_, *b.mu));
+    owned_.push_back(std::make_unique<SumCoefficient>(*mu_u_, *b.mu));
     mu_u_ = owned_.back().get();
   }
 
   // lambda_U = kappa - 2 mu_U / dim.
-  owned_.push_back(std::make_unique<mfem::SumCoefficient>(
-      *kappa_, *mu_u_, 1.0, -2.0 / static_cast<mfem::real_t>(dim_)));
+  owned_.push_back(std::make_unique<SumCoefficient>(
+      *kappa_, *mu_u_, 1.0, -2.0 / static_cast<real_t>(dim_)));
   lambda_u_ = owned_.back().get();
 }
 
-GeneralisedMaxwellRheology GeneralisedMaxwellRheology::Elastic(
-    int dim, mfem::Coefficient& kappa, mfem::Coefficient& mu) {
-  return GeneralisedMaxwellRheology(dim, kappa, mu);
+IsotropicMaxwellRheology IsotropicMaxwellRheology::Elastic(
+    int dim, Coefficient& kappa, Coefficient& mu) {
+  return IsotropicMaxwellRheology(dim, kappa, mu);
 }
 
-GeneralisedMaxwellRheology GeneralisedMaxwellRheology::Maxwell(
-    int dim, mfem::Coefficient& kappa, mfem::Coefficient& mu,
-    mfem::Coefficient& tau) {
+IsotropicMaxwellRheology IsotropicMaxwellRheology::Maxwell(
+    int dim, Coefficient& kappa, Coefficient& mu, Coefficient& tau,
+    const RelaxationLaw* law) {
   // mu_inf = 0 is an owned constant; move it into the result so that the
   // pointer stays valid.
-  auto zero = std::make_unique<mfem::ConstantCoefficient>(0.0);
+  auto zero = std::make_unique<ConstantCoefficient>(0.0);
   auto* zero_ptr = zero.get();
-  std::vector<MaxwellBranch> branches{MaxwellBranch{&mu, &tau}};
-  GeneralisedMaxwellRheology r(dim, kappa, *zero_ptr, branches);
+  std::vector<MaxwellBranch> branches{MaxwellBranch{&mu, &tau, law}};
+  IsotropicMaxwellRheology r(dim, kappa, *zero_ptr, branches);
   r.owned_.push_back(std::move(zero));
   return r;
+}
+
+void IsotropicMaxwellRheology::BranchModulus(int k, ElementTransformation& T,
+                                               const IntegrationPoint& ip,
+                                               DenseMatrix& Ck) const {
+  // 2 mu_k P_dev in Mandel form.
+  SymmetricTensorBasis::DeviatoricProjector(dim_, Ck);
+  Ck *= 2.0 * branches_[k].mu->Eval(T, ip);
+}
+
+void IsotropicMaxwellRheology::UnrelaxedModulus(ElementTransformation& T,
+                                                const IntegrationPoint& ip,
+                                                DenseMatrix& CU) const {
+  // lambda_U 1 1^T + 2 mu_U I in Mandel form, 1 1^T = d P_vol.
+  const int ns = SymmetricTensorBasis::Size(dim_);
+  SymmetricTensorBasis::VolumetricProjector(dim_, CU);
+  CU *= dim_ * lambda_u_->Eval(T, ip);
+  const real_t two_mu = 2.0 * mu_u_->Eval(T, ip);
+  for (int i = 0; i < ns; i++) {
+    CU(i, i) += two_mu;
+  }
+}
+
+std::unique_ptr<ElasticStiffness> IsotropicMaxwellRheology::MakeStiffness()
+    const {
+  return std::make_unique<IsotropicStiffness>(*this);
+}
+
+// ---------------------------------------------------------------------------
+// Anisotropic
+
+namespace {
+
+/// One ElasticTensorIntegrator with a redirectable tensor: C_U, or
+/// C_inf + sum_k beta_k C_k.
+class AnisotropicStiffness : public ElasticStiffness {
+ public:
+  explicit AnisotropicStiffness(const AnisotropicMaxwellRheology& r)
+      : r_(&r), C_current_(&r.UnrelaxedTensor()) {}
+
+  void AddIntegrators(BilinearForm& form) override {
+    form.AddDomainIntegrator(new ElasticTensorIntegrator(C_current_));
+  }
+
+  void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
+    MFEM_VERIFY(static_cast<int>(beta.size()) == r_->NumBranches(),
+                "SetRelaxationWeights: one weight per branch.");
+    std::vector<std::unique_ptr<MatrixCoefficient>> chain;
+    MatrixCoefficient* C = &r_->LongTermTensor();
+    for (int k = 0; k < r_->NumBranches(); k++) {
+      chain.push_back(std::make_unique<ScalarMatrixProductCoefficient>(
+          *beta[k], *r_->Branch(k).C));
+      chain.push_back(
+          std::make_unique<MatrixSumCoefficient>(*C, *chain.back(), 1.0, 1.0));
+      C = chain.back().get();
+    }
+    C_current_.SetTarget(C);
+    chain_ = std::move(chain);
+    relaxed_ = true;
+  }
+
+  void ClearRelaxationWeights() override {
+    C_current_.SetTarget(&r_->UnrelaxedTensor());
+    chain_.clear();
+    relaxed_ = false;
+  }
+
+  bool IsRelaxed() const override { return relaxed_; }
+
+ private:
+  const AnisotropicMaxwellRheology* r_;
+  detail::RedirectableMatrixCoefficient C_current_;
+  std::vector<std::unique_ptr<MatrixCoefficient>> chain_;
+  bool relaxed_ = false;
+};
+
+}  // namespace
+
+AnisotropicMaxwellRheology::AnisotropicMaxwellRheology(
+    int dim, MatrixCoefficient& C_inf,
+    const std::vector<AnisotropicBranch>& branches)
+    : dim_(dim), C_inf_(&C_inf), branches_(branches) {
+  MFEM_VERIFY(dim == 2 || dim == 3,
+              "AnisotropicMaxwellRheology: dim must be 2 or 3.");
+  const int ns = SymmetricTensorBasis::Size(dim);
+  MFEM_VERIFY(C_inf.GetHeight() == ns && C_inf.GetWidth() == ns,
+              "AnisotropicMaxwellRheology: C_inf must be n_s x n_s.");
+  for (const auto& b : branches_) {
+    MFEM_VERIFY(b.C && b.tau,
+                "AnisotropicMaxwellRheology: every branch needs C and tau.");
+    MFEM_VERIFY(b.C->GetHeight() == ns && b.C->GetWidth() == ns,
+                "AnisotropicMaxwellRheology: C_k must be n_s x n_s.");
+  }
+  C_u_ = C_inf_;
+  for (const auto& b : branches_) {
+    owned_.push_back(
+        std::make_unique<MatrixSumCoefficient>(*C_u_, *b.C, 1.0, 1.0));
+    C_u_ = owned_.back().get();
+  }
+}
+
+AnisotropicMaxwellRheology AnisotropicMaxwellRheology::Elastic(
+    int dim, MatrixCoefficient& C) {
+  return AnisotropicMaxwellRheology(dim, C);
+}
+
+AnisotropicMaxwellRheology AnisotropicMaxwellRheology::DeviatoricMaxwell(
+    int dim, MatrixCoefficient& C, Coefficient& tau, const RelaxationLaw* law) {
+  auto dev = std::make_unique<DeviatoricProjectionElasticTensorCoefficient>(
+      dim, C, true);
+  auto rest = std::make_unique<DeviatoricProjectionElasticTensorCoefficient>(
+      dim, C, false);
+  std::vector<AnisotropicBranch> branches{
+      AnisotropicBranch{dev.get(), &tau, law}};
+  AnisotropicMaxwellRheology r(dim, *rest, branches);
+  r.owned_.push_back(std::move(dev));
+  r.owned_.push_back(std::move(rest));
+  return r;
+}
+
+std::unique_ptr<ElasticStiffness> AnisotropicMaxwellRheology::MakeStiffness()
+    const {
+  return std::make_unique<AnisotropicStiffness>(*this);
 }
 
 }  // namespace mfemElasticity

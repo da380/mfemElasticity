@@ -1300,4 +1300,99 @@ class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
                               mfem::DenseMatrix& elmat) override;
 };
 
+/**
+ * @brief Boundary integrator
+ * \f[
+ *   (\bvec{u},\bvec{v}) \mapsto \int_{\Gamma} q\,(\bvec{n}\cdot\bvec{u})
+ *   (\bvec{n}\cdot\bvec{v}) \dd S,
+ * \f]
+ * on boundary elements, for a vector field on a nodal (H1-type) space with
+ * vdim equal to the space dimension and Ordering::byNODES, and a scalar
+ * coefficient \f$q\f$.
+ *
+ * \f$\bvec{n}\f$ is the unit normal of the boundary element obtained from
+ * mfem::CalcOrtho of its transformation's Jacobian, i.e. the outward normal
+ * of the mesh for consistently oriented boundary elements (the normal that
+ * mfem::BoundaryNormalLFIntegrator uses). On a (Par)SubMesh this is the
+ * outward normal of the submesh, on inherited and on cut boundaries alike.
+ *
+ * Used for the fluid–solid interface term of self-gravitating problems,
+ * \f$-\int \rho_F\,(\bvec{m}\cdot\nabla\Phi_0)(\bvec{m}\cdot\bvec{u})
+ * (\bvec{m}\cdot\bvec{v})\f$, with \f$q\f$ built from a
+ * BoundaryNormalDotCoefficient.
+ */
+class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* Q = nullptr; /**< Pointer to the coefficient \f$q\f$. */
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector shape, normal, nshape; /**< Internal buffers. */
+#endif
+
+ public:
+  /**
+   * @param q The scalar coefficient (optional; unit when null).
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  explicit BoundaryNormalNormalIntegrator(
+      mfem::Coefficient* q = nullptr, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{q} {}
+
+  explicit BoundaryNormalNormalIntegrator(
+      mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /** @brief Default rule: order 2 el.GetOrder() + Trans.OrderW(). */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans);
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+};
+
+/**
+ * @brief Mixed boundary integrator acting on a scalar trial field \f$p\f$
+ * and a vector test field \f$\bvec{v}\f$:
+ * \f[
+ *   (\bvec{v}, p) \mapsto \int_{\Gamma} q\, p\,(\bvec{n}\cdot\bvec{v})
+ *   \dd S,
+ * \f]
+ * on boundary elements, with \f$\bvec{n}\f$ the boundary element's unit
+ * normal as in BoundaryNormalNormalIntegrator. The vector space must be a
+ * nodal space with vdim equal to the space dimension and Ordering::byNODES.
+ *
+ * Its transpose (vector trial, scalar test) is obtained with
+ * mfem::TransposeIntegrator. Used for the interface coupling
+ * \f$-\int \rho_F\,\phi\,(\bvec{m}\cdot\bvec{v})\f$ of self-gravitating
+ * fluid–solid problems.
+ */
+class BoundaryNormalScalarIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* Q = nullptr; /**< Pointer to the coefficient \f$q\f$. */
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector trial_shape, test_shape, normal, nshape; /**< Buffers. */
+#endif
+
+ public:
+  explicit BoundaryNormalScalarIntegrator(
+      mfem::Coefficient* q = nullptr, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{q} {}
+
+  explicit BoundaryNormalScalarIntegrator(
+      mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /** @brief Default rule: order trial + test + Trans.OrderW(). */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+};
+
 }  // namespace mfemElasticity

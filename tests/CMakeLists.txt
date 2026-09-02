@@ -54,6 +54,10 @@ add_executable(TestDomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator Test
 target_link_libraries(TestDomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator PRIVATE  mfemElasticity gtest_main)
 gtest_discover_tests(TestDomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator)
 
+add_executable(TestBoundaryNormalIntegrators TestBoundaryNormalIntegrators.cpp)
+target_link_libraries(TestBoundaryNormalIntegrators PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestBoundaryNormalIntegrators)
+
 add_executable(TestSubMeshDofInjection TestSubMeshDofInjection.cpp)
 target_link_libraries(TestSubMeshDofInjection PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestSubMeshDofInjection)
@@ -69,6 +73,10 @@ if(USE_MPI)
     target_link_libraries(TestViscoelasticPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSelfGravitatingPar TestSelfGravitatingPar.cpp)
     target_link_libraries(TestSelfGravitatingPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestBoundaryNormalIntegratorsPar TestBoundaryNormalIntegratorsPar.cpp)
+    target_link_libraries(TestBoundaryNormalIntegratorsPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestSelfGravitatingFluidPar TestSelfGravitatingFluidPar.cpp)
+    target_link_libraries(TestSelfGravitatingFluidPar PRIVATE mfemElasticity MPI::MPI_CXX)
     foreach(np 1 2 4)
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
@@ -85,9 +93,19 @@ if(USE_MPI)
         add_test(NAME TestSelfGravitatingPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSelfGravitatingPar>)
+        add_test(NAME TestBoundaryNormalIntegratorsPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestBoundaryNormalIntegratorsPar>)
+        add_test(NAME TestSelfGravitatingFluidPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSelfGravitatingFluidPar>)
     endforeach()
 endif()
 
+
+add_executable(TestRelaxationLaw TestRelaxationLaw.cpp)
+target_link_libraries(TestRelaxationLaw PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestRelaxationLaw)
 
 add_executable(TestRheology TestRheology.cpp)
 target_link_libraries(TestRheology PRIVATE mfemElasticity gtest_main)
@@ -120,3 +138,7 @@ gtest_discover_tests(TestTransformedDiffusionIntegrator)
 add_executable(TestSelfGravitating TestSelfGravitating.cpp)
 target_link_libraries(TestSelfGravitating PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestSelfGravitating)
+
+add_executable(TestSelfGravitatingFluid TestSelfGravitatingFluid.cpp)
+target_link_libraries(TestSelfGravitatingFluid PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSelfGravitatingFluid)

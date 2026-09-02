@@ -6,8 +6,8 @@
   (2-D disc in a disc, 3-D ball in a ball), see SelfGravitatingTestCommon.hpp.
 
   - The Schur-complement CG and the block MINRES solvers give the same
-    displacement and potential, to the level of the rigid-mode residuals
-    (the two regularise the near-singular system differently).
+    displacement and potential to solver tolerance (both solve the system
+    restricted to the complement of the rigid modes).
   - The rigid-mode residuals are small and decrease with the order.
   - With zero density the problem reduces to pure elasticity: the solution
     equals a direct projected CG solve of the traction problem's stiffness
@@ -19,9 +19,9 @@
     and superposition of a surface load and an AddForce() increment.
   - Repeated and out-of-order solves (warm starts) reproduce the cold
     solutions to solver tolerance.
-  - SetEffectiveShearModulus(mu_U) leaves the solution unchanged, a
-    different modulus changes it and ClearEffectiveShearModulus() restores
-    it; the potential block is not rebuilt.
+  - On a Maxwell rheology, a unit relaxation weight leaves the solution
+    unchanged, a smaller one changes it and ClearRelaxationWeights()
+    restores it; the potential block is not rebuilt.
   - A supplied background potential equal to the solved one gives the same
     solution.
   - The viscoelastic operator runs on top of the problem (creep under a
@@ -41,7 +41,7 @@ struct Case {
   std::unique_ptr<H1_FECollection> fec_u, fec_phi;
   std::unique_ptr<FiniteElementSpace> fes_u, fes_phi;
   std::unique_ptr<ConstantCoefficient> kappa, mu, rho;
-  std::unique_ptr<GeneralisedMaxwellRheology> rheology;
+  std::unique_ptr<IsotropicMaxwellRheology> rheology;
   std::unique_ptr<FunctionCoefficient> sigma;
   Array<int> surface;
 
@@ -57,8 +57,8 @@ struct Case {
     kappa = std::make_unique<ConstantCoefficient>(kKappa);
     mu = std::make_unique<ConstantCoefficient>(kMu);
     rho = std::make_unique<ConstantCoefficient>(density);
-    rheology = std::make_unique<GeneralisedMaxwellRheology>(
-        GeneralisedMaxwellRheology::Elastic(dim, *kappa, *mu));
+    rheology = std::make_unique<IsotropicMaxwellRheology>(
+        IsotropicMaxwellRheology::Elastic(dim, *kappa, *mu));
     sigma = std::make_unique<FunctionCoefficient>(SurfaceLoad);
     surface = SurfaceMarker(*body);
   }
@@ -98,9 +98,7 @@ TEST_P(SelfGravitatingTest, SchurAndMinresAgree) {
   minres->AssembleForce(0.0);
   ASSERT_TRUE(minres->Solve());
 
-  // The difference is O(rigid-mode residual): 4e-6 / 2e-8 / 8e-5 measured
-  // for (2,1) / (2,2) / (3,2).
-  const double tol = order == 1 ? 1e-4 : (dim == 2 ? 1e-6 : 1e-3);
+  const double tol = 1e-7;
   EXPECT_GT(L2Norm(schur->Displacement()), 0.0);
   EXPECT_GT(L2Norm(schur->Potential()), 0.0);
   EXPECT_LT(RelDiff(schur->Displacement(), minres->Displacement()), tol);
@@ -250,31 +248,38 @@ TEST_P(SelfGravitatingTest, WarmStartsReproduceColdSolves) {
   }
 }
 
-TEST_P(SelfGravitatingTest, EffectiveShearModulus) {
+TEST_P(SelfGravitatingTest, RelaxationWeights) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
   auto p = s.Problem();
-  ASSERT_TRUE(p->SupportsEffectiveShearModulus());
   p->AssembleForce(0.0);
   ASSERT_TRUE(p->Solve());
   GridFunction u0(p->Displacement()), phi0(p->Potential());
 
-  ConstantCoefficient same(kMu);
-  p->SetEffectiveShearModulus(0, same);
-  ASSERT_TRUE(p->Solve());
-  EXPECT_LT(RelDiff(p->Displacement(), u0), 1e-8);
-  EXPECT_LT(RelDiff(p->Potential(), phi0), 1e-8);
+  ConstantCoefficient tau(1.0);
+  auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, *s.kappa, *s.mu, tau);
+  auto q = std::make_unique<SelfGravitatingElasticProblem>(
+      s.fes_u.get(), s.fes_phi.get(), maxwell, *s.rho, kG, kDtNDegree);
+  q->SetSurfaceLoad(*s.sigma, s.surface);
+  q->SetRelTol(1e-11);
+  ASSERT_TRUE(q->SupportsRelaxationWeights());
 
-  ConstantCoefficient softer(0.5 * kMu);
-  p->SetEffectiveShearModulus(0, softer);
-  ASSERT_TRUE(p->Solve());
-  EXPECT_GT(RelDiff(p->Displacement(), u0), 1e-2);
+  ConstantCoefficient one(1.0), half(0.5);
+  q->SetRelaxationWeights(0, {&one});
+  q->AssembleForce(0.0);
+  ASSERT_TRUE(q->Solve());
+  EXPECT_LT(RelDiff(q->Displacement(), u0), 1e-8);
+  EXPECT_LT(RelDiff(q->Potential(), phi0), 1e-8);
 
-  p->ClearEffectiveShearModulus();
-  ASSERT_TRUE(p->Solve());
-  EXPECT_LT(RelDiff(p->Displacement(), u0), 1e-8);
-  EXPECT_LT(RelDiff(p->Potential(), phi0), 1e-8);
+  q->SetRelaxationWeights(0, {&half});
+  ASSERT_TRUE(q->Solve());
+  EXPECT_GT(RelDiff(q->Displacement(), u0), 1e-2);
+
+  q->ClearRelaxationWeights();
+  ASSERT_TRUE(q->Solve());
+  EXPECT_LT(RelDiff(q->Displacement(), u0), 1e-8);
+  EXPECT_LT(RelDiff(q->Potential(), phi0), 1e-8);
 }
 
 TEST_P(SelfGravitatingTest, SuppliedBackgroundPotential) {
@@ -305,8 +310,8 @@ TEST_P(SelfGravitatingTest, ViscoelasticCreep) {
   Case s(dim, order);
 
   ConstantCoefficient tau(1.0);
-  GeneralisedMaxwellRheology maxwell =
-      GeneralisedMaxwellRheology::Maxwell(dim, *s.kappa, *s.mu, tau);
+  IsotropicMaxwellRheology maxwell =
+      IsotropicMaxwellRheology::Maxwell(dim, *s.kappa, *s.mu, tau);
   SelfGravitatingElasticProblem p(s.fes_u.get(), s.fes_phi.get(), maxwell,
                                   *s.rho, kG, kDtNDegree);
   p.SetSurfaceLoad(*s.sigma, s.surface);

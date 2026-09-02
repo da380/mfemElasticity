@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
   H1_FECollection fec(order, dim);
   FiniteElementSpace fes(&mesh, &fec, dim);
   ConstantCoefficient kappa(1.0 + 2.0 / dim), mu(1.0);
-  auto rheology = GeneralisedMaxwellRheology::Elastic(dim, kappa, mu);
+  auto rheology = IsotropicMaxwellRheology::Elastic(dim, kappa, mu);
 
   // Loads. Problem 0: a time-scaled uniform traction t -> (0, 1 + t, ...)
   // on all external boundaries. Problem 1: boundary attribute 1 clamped,
@@ -113,7 +113,7 @@ int main(int argc, char* argv[]) {
     cerr << "Unknown problem type: " << problem_type << "\n";
     return 1;
   }
-  static_cast<ElasticProblemBase&>(*problem).SetPrintLevel(
+  static_cast<LinearElasticProblemBase&>(*problem).SetPrintLevel(
       IterativeSolver::PrintLevel().Summary());
   cout << "Displacement unknowns: "
        << problem->DisplacementSpace().GetTrueVSize() << "\n";

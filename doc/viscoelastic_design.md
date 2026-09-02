@@ -85,12 +85,12 @@ struct MaxwellBranch {
 /// Isotropic generalised Maxwell rheology: bulk modulus, long-term shear
 /// modulus and K Prony branches. Provides the unrelaxed shear modulus the
 /// elastic problem must be assembled with.
-class GeneralisedMaxwellRheology {
+class IsotropicMaxwellRheology {
  public:
-  GeneralisedMaxwellRheology(mfem::Coefficient &kappa, mfem::Coefficient &mu_inf,
+  IsotropicMaxwellRheology(mfem::Coefficient &kappa, mfem::Coefficient &mu_inf,
                              const std::vector<MaxwellBranch> &branches);
   /// Convenience for the classical Maxwell body: mu_inf = 0, one branch.
-  static GeneralisedMaxwellRheology Maxwell(mfem::Coefficient &kappa,
+  static IsotropicMaxwellRheology Maxwell(mfem::Coefficient &kappa,
                                             mfem::Coefficient &mu, mfem::Coefficient &tau);
 
   mfem::Coefficient &BulkModulus() const;
@@ -132,7 +132,7 @@ class QuasiStaticLinearElasticProblem {
   virtual bool Solve() = 0;
 
   /// The rheology the operator was assembled with (one per field, or shared).
-  virtual const GeneralisedMaxwellRheology &Rheology(int i = 0) const = 0;
+  virtual const IsotropicMaxwellRheology &Rheology(int i = 0) const = 0;
 
   /// Implicit / exponential-trapezoid stepping: reassemble the deviatoric
   /// part of field i's stiffness with shear modulus mu_eff (a nodal field on
@@ -153,16 +153,16 @@ Notes on the contract:
 - `SetEffectiveShearModulus` changes the operator; the implementation must invalidate its preconditioner/solver setup and, in coupled problems, any Schur-complement caches. `ClearEffectiveShearModulus` restores `μ_U`. Implementations may cache by the *identity* of `mu_eff`'s underlying `GridFunction` plus a version counter, but simplest is: reassemble on every call and let the viscoelastic layer call it only when `dt` changes.
 - `Rheology(i)` lets the viscoelastic layer verify consistency at construction (`&problem.Rheology(i) == &rheology` or, in debug, nodal sampling of `μ_U`).
 
-### 2.3 `ElasticProblemBase` — the shared implementation
+### 2.3 `LinearElasticProblemBase` — the shared implementation
 
 ```cpp
-class ElasticProblemBase : public QuasiStaticLinearElasticProblem {
+class LinearElasticProblemBase : public QuasiStaticLinearElasticProblem {
  protected:
   mfem::FiniteElementSpace *fes_;           // serial or parallel; owned or not
 #ifdef MFEM_USE_MPI
   mfem::ParFiniteElementSpace *pfes_ = nullptr;   // dynamic_cast of fes_, null in serial
 #endif
-  const GeneralisedMaxwellRheology *rheology_;
+  const IsotropicMaxwellRheology *rheology_;
 
   std::unique_ptr<mfem::BilinearForm> a_kappa_;   // κ div-div, assembled once      (Par variants via factory)
   std::unique_ptr<mfem::BilinearForm> a_dev_;     // 2μ dev:dev, reassembled on SetEffectiveShearModulus
@@ -182,7 +182,7 @@ class ElasticProblemBase : public QuasiStaticLinearElasticProblem {
   bool SetWarmStartTolerance(mfem::IterativeSolver &, mfem::Solver &prec, const mfem::Vector &B) const;
   void AssembleOperator();                                     // K = K_κ + K_dev(μ_current); sets operator_dirty_
  public:
-  ElasticProblemBase(mfem::FiniteElementSpace *fes, const GeneralisedMaxwellRheology &rh);
+  LinearElasticProblemBase(mfem::FiniteElementSpace *fes, const IsotropicMaxwellRheology &rh);
   // interface methods implemented once for serial and parallel:
   void AssembleForce(mfem::real_t t) override;
   void AddForce(int i, const mfem::Vector &f) override;
@@ -291,8 +291,8 @@ ImplicitSolve(dt,m,k): (t already set by the ODESolver)  mu_eff = μ_∞ + Σ μ
 ## 3. Class layout and files
 
 ```
-include/mfemElasticity/rheology.hpp          MaxwellBranch, GeneralisedMaxwellRheology
-include/mfemElasticity/elastic_problem.hpp   QuasiStaticLinearElasticProblem, ElasticProblemBase,
+include/mfemElasticity/rheology.hpp          MaxwellBranch, IsotropicMaxwellRheology
+include/mfemElasticity/elastic_problem.hpp   QuasiStaticLinearElasticProblem, LinearElasticProblemBase,
                                              TractionProblem, ClampedProblem (reference implementations)
 include/mfemElasticity/viscoelastic.hpp      ViscoelasticOperator, ExponentialEulerSolver, ExponentialTrapezoidSolver
 include/mfemElasticity/self_gravitating.hpp  SelfGravitatingElasticProblem (after the SubMesh work)
@@ -341,7 +341,7 @@ Dependencies: `viscoelastic.hpp` depends only on the interface and on `bilininte
 | 3 | `SelfGravitatingElasticProblem` implementing the interface (after SubMesh phases 1–2); test 8 | 3–5 d | **Done 2 Sep 2026** (`self_gravitating.hpp`; see `status_and_roadmap.md` step 4). Test 8 (viscoelastic self-gravitating sphere vs radial codes) still open; the operator runs on the problem (creep test in `TestSelfGravitating.cpp`). |
 | 4 | Anisotropic branches (`C_k`), nonlinear rheology hooks, adjoint stepping | later |
 
-**Status (2 Sep 2026): Phases 1 and 2 done.** Phase 1: `rheology.hpp/cpp` (`MaxwellBranch`, `GeneralisedMaxwellRheology` with `Elastic`/`Maxwell` factories) and `elastic_problem.hpp/cpp` (`QuasiStaticLinearElasticProblem`, `ElasticProblemBase`, `TractionProblem`, `ClampedProblem`) are in the library; `examples/elastic.hpp` and the stale `elasticity.hpp/cpp` are deleted and the two drivers use the library classes. Notes where the implementation differs from §2:
+**Status (2 Sep 2026): Phases 1 and 2 done.** Phase 1: `rheology.hpp/cpp` (`MaxwellBranch`, `IsotropicMaxwellRheology` with `Elastic`/`Maxwell` factories) and `elastic_problem.hpp/cpp` (`QuasiStaticLinearElasticProblem`, `LinearElasticProblemBase`, `TractionProblem`, `ClampedProblem`) are in the library; `examples/elastic.hpp` and the stale `elasticity.hpp/cpp` are deleted and the two drivers use the library classes. Notes where the implementation differs from §2:
 
 - The effective modulus is switched by a small `detail::RedirectableCoefficient` that the deviatoric `ElasticityIntegrator` holds; `SetEffectiveShearModulus` just retargets it and marks the operator dirty. On the next `Solve()` the base builds a *fresh* `BilinearForm` that borrows the integrators from a never-assembled template form (`StiffnessIntegrators()`), assembles, eliminates and calls `SetupSolver`. This avoids reusing a finalized sparsity pattern (MFEM's `Update()` only zeroes the matrix in place, and `Finalize(skip_zeros)` may have dropped exact zeros) at the cost of reassembling `K_κ` with `K_dev`, which is negligible next to the preconditioner setup. Both `K`s therefore live in one form, not two.
 - `SetupSolver`/`SolveLinearSystem` have working defaults in the base (warm-started PCG, Gauss–Seidel in serial, BoomerAMG with elasticity options in parallel); `TractionProblem` only wraps the CG in a `RigidBodySolver`. Loads are the caller's: the reference problems take a traction `VectorCoefficient` and a marker (and `ClampedProblem` an essential-boundary marker and optional Dirichlet coefficient); `ExternalLoad()` and `StiffnessIntegrators()` expose the forms for anything else. Solver output is quiet unless `SetPrintLevel` is called.

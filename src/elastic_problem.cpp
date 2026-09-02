@@ -1,6 +1,6 @@
 /**
  * @file elastic_problem.cpp
- * @brief Implementation of ElasticProblemBase, TractionProblem and
+ * @brief Implementation of LinearElasticProblemBase, TractionProblem and
  * ClampedProblem.
  */
 
@@ -14,18 +14,18 @@ namespace mfemElasticity {
 
 using namespace mfem;
 
-ElasticProblemBase::ElasticProblemBase(
-    FiniteElementSpace* fes, const GeneralisedMaxwellRheology& rheology)
+LinearElasticProblemBase::LinearElasticProblemBase(FiniteElementSpace* fes,
+                                       const mfemElasticity::Rheology& rheology)
     : fes_(fes),
       rheology_(&rheology),
-      mu_current_(&rheology.UnrelaxedShearModulus()),
+      stiffness_(rheology.MakeStiffness()),
       A_(Operator::MFEM_SPARSEMAT) {
   const int dim = fes_->GetMesh()->Dimension();
   MFEM_VERIFY(fes_->GetVDim() == dim,
-              "ElasticProblemBase: the displacement space must have vdim "
+              "LinearElasticProblemBase: the displacement space must have vdim "
               "equal to the space dimension.");
   MFEM_VERIFY(rheology.SpaceDim() == dim,
-              "ElasticProblemBase: rheology and mesh dimensions differ.");
+              "LinearElasticProblemBase: rheology and mesh dimensions differ.");
 #ifdef MFEM_USE_MPI
   pfes_ = dynamic_cast<ParFiniteElementSpace*>(fes_);
   if (pfes_) {
@@ -35,12 +35,9 @@ ElasticProblemBase::ElasticProblemBase(
 
   // The stiffness integrators live in a template form that is never
   // assembled; each assembly builds a fresh form borrowing them, so that a
-  // change of shear modulus never has to reuse a matrix pattern.
+  // change of modulus never has to reuse a matrix pattern.
   integrators_ = detail::MakeBilinearForm(fes_);
-  integrators_->AddDomainIntegrator(
-      new ElasticityIntegrator(rheology.BulkModulus(), 1.0, 0.0));
-  integrators_->AddDomainIntegrator(
-      new ElasticityIntegrator(mu_current_, -2.0 / dim, 1.0));
+  stiffness_->AddIntegrators(*integrators_);
 
   b_ = detail::MakeLinearForm(fes_);
   u_ = detail::MakeGridFunction(fes_);
@@ -49,7 +46,7 @@ ElasticProblemBase::ElasticProblemBase(
   increment_ = 0.0;
 }
 
-bool ElasticProblemBase::IsParallel() const {
+bool LinearElasticProblemBase::IsParallel() const {
 #ifdef MFEM_USE_MPI
   return pfes_ != nullptr;
 #else
@@ -57,28 +54,28 @@ bool ElasticProblemBase::IsParallel() const {
 #endif
 }
 
-FiniteElementSpace& ElasticProblemBase::DisplacementSpace(int i) {
-  MFEM_VERIFY(i == 0, "ElasticProblemBase: single displacement field.");
+FiniteElementSpace& LinearElasticProblemBase::DisplacementSpace(int i) {
+  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
   return *fes_;
 }
 
-const GridFunction& ElasticProblemBase::Displacement(int i) const {
-  MFEM_VERIFY(i == 0, "ElasticProblemBase: single displacement field.");
+const GridFunction& LinearElasticProblemBase::Displacement(int i) const {
+  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
   return *u_;
 }
 
-const GeneralisedMaxwellRheology& ElasticProblemBase::Rheology(int i) const {
-  MFEM_VERIFY(i == 0, "ElasticProblemBase: single displacement field.");
+const mfemElasticity::Rheology& LinearElasticProblemBase::Rheology(int i) const {
+  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
   return *rheology_;
 }
 
-void ElasticProblemBase::SetEssentialBoundary(const Array<int>& ess_bdr) {
+void LinearElasticProblemBase::SetEssentialBoundary(const Array<int>& ess_bdr) {
   Array<int> marker(ess_bdr);
   fes_->GetEssentialTrueDofs(marker, ess_tdof_list_);
   operator_dirty_ = true;
 }
 
-void ElasticProblemBase::AssembleForce(real_t t) {
+void LinearElasticProblemBase::AssembleForce(real_t t) {
   t_ = t;
   for (auto* c : td_coefs_) {
     c->SetTime(t);
@@ -92,49 +89,69 @@ void ElasticProblemBase::AssembleForce(real_t t) {
   UpdateBoundaryValues(t);
 }
 
-void ElasticProblemBase::AddForce(int i, const Vector& f) {
-  MFEM_VERIFY(i == 0, "ElasticProblemBase: single displacement field.");
+void LinearElasticProblemBase::AddForce(int i, const Vector& f) {
+  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
   MFEM_VERIFY(f.Size() == increment_.Size(),
               "AddForce: expected a dual vector in the vdof layout of "
               "DisplacementSpace().");
   increment_ += f;
 }
 
-void ElasticProblemBase::SetEffectiveShearModulus(int i, Coefficient& mu_eff) {
-  MFEM_VERIFY(i == 0, "ElasticProblemBase: single displacement field.");
-  // Always reassemble: the same coefficient object may carry new values.
-  mu_current_.SetTarget(&mu_eff);
+void LinearElasticProblemBase::SetRelaxationWeights(
+    int i, const std::vector<Coefficient*>& beta) {
+  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
+  // Always reassemble: the same coefficient objects may carry new values.
+  stiffness_->SetRelaxationWeights(beta);
   operator_dirty_ = true;
 }
 
-void ElasticProblemBase::ClearEffectiveShearModulus() {
-  auto* mu_u = &rheology_->UnrelaxedShearModulus();
-  if (mu_current_.Target() != mu_u) {
-    mu_current_.SetTarget(mu_u);
+void LinearElasticProblemBase::ClearRelaxationWeights() {
+  if (stiffness_->IsRelaxed()) {
+    stiffness_->ClearRelaxationWeights();
     operator_dirty_ = true;
   }
 }
 
-void ElasticProblemBase::AssembleOperator() {
+void LinearElasticProblemBase::AssembleOperator() {
+  if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_) {
+    // The preconditioner was built on the current matrix and stays on it:
+    // keep that form and matrix alive while the preconditioner is reused.
+    // (Later reassemblies leave prec_form_ alone; their matrices go.)
+    prec_form_ = std::move(a_);
+    prec_A_ = A_;
+    prec_A_.SetOperatorOwner(A_.OwnsOperator());
+    A_.SetOperatorOwner(false);
+  }
   a_ = detail::MakeBilinearForm(fes_, integrators_.get());
   a_->Assemble();
   a_->FormSystemMatrix(ess_tdof_list_, A_);
   SetupSolver(A_);
   operator_dirty_ = false;
+  assemblies_++;
 }
 
-void ElasticProblemBase::EnsureOperator() {
+void LinearElasticProblemBase::NoteIterations(int its) {
+  total_its_ += its;
+  if (prec_baseline_its_ < 0) {
+    prec_baseline_its_ = its;
+  } else if (its > prec_reuse_ * prec_baseline_its_) {
+    prec_stale_ = true;
+  }
+}
+
+void LinearElasticProblemBase::EnsureOperator() {
   if (operator_dirty_) {
     AssembleOperator();
   }
 }
 
-const OperatorHandle& ElasticProblemBase::SystemMatrix() {
+const OperatorHandle& LinearElasticProblemBase::SystemMatrix() {
   EnsureOperator();
   return A_;
 }
 
-bool ElasticProblemBase::Solve() {
+bool LinearElasticProblemBase::Solve() {
+  solves_++;
   EnsureOperator();
   rhs_ = *b_;
   rhs_ += increment_;
@@ -147,22 +164,38 @@ bool ElasticProblemBase::Solve() {
   return ok;
 }
 
-void ElasticProblemBase::SetupDefaultCG(OperatorHandle& A) {
+void LinearElasticProblemBase::SetupDefaultCG(OperatorHandle& A) {
+  const bool rebuild = !prec_ || prec_stale_ || prec_reuse_ <= 1.0;
+  if (rebuild) {
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      auto amg = std::make_unique<HypreBoomerAMG>(*A.As<HypreParMatrix>());
+      amg->SetElasticityOptions(pfes_);
+      amg->SetPrintLevel(0);
+      prec_ = std::move(amg);
+    } else
+#endif
+    {
+      prec_ = std::make_unique<GSSmoother>(*A.As<SparseMatrix>());
+    }
+    prec_form_.reset();
+    prec_A_.Clear();
+    prec_stale_ = false;
+    prec_baseline_its_ = -1;
+    prec_setups_++;
+  }
 #ifdef MFEM_USE_MPI
   if (pfes_) {
-    auto amg = std::make_unique<HypreBoomerAMG>(*A.As<HypreParMatrix>());
-    amg->SetElasticityOptions(pfes_);
-    amg->SetPrintLevel(0);
-    prec_ = std::move(amg);
     cg_ = std::make_unique<CGSolver>(pfes_->GetComm());
   } else
 #endif
   {
-    prec_ = std::make_unique<GSSmoother>(*A.As<SparseMatrix>());
     cg_ = std::make_unique<CGSolver>();
   }
-  cg_->SetPreconditioner(*prec_);
+  // Operator before preconditioner: SetOperator would otherwise reset the
+  // (reused) preconditioner onto the new matrix.
   cg_->SetOperator(*A.Ptr());
+  cg_->SetPreconditioner(*prec_);
   cg_->SetRelTol(rel_tol_);
   cg_->SetAbsTol(0.0);
   cg_->SetMaxIter(10000);
@@ -170,18 +203,19 @@ void ElasticProblemBase::SetupDefaultCG(OperatorHandle& A) {
   cg_->iterative_mode = true;
 }
 
-void ElasticProblemBase::SetupSolver(OperatorHandle& A) { SetupDefaultCG(A); }
+void LinearElasticProblemBase::SetupSolver(OperatorHandle& A) { SetupDefaultCG(A); }
 
-bool ElasticProblemBase::SolveLinearSystem(const Vector& B, Vector& X) {
+bool LinearElasticProblemBase::SolveLinearSystem(const Vector& B, Vector& X) {
   if (!SetWarmStartTolerance(*cg_, *prec_, B)) {
     X = 0.0;
     return true;
   }
   cg_->Mult(B, X);
+  NoteIterations(cg_->GetNumIterations());
   return cg_->GetConverged();
 }
 
-real_t ElasticProblemBase::Dot(const Vector& x, const Vector& y) const {
+real_t LinearElasticProblemBase::Dot(const Vector& x, const Vector& y) const {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     return InnerProduct(pfes_->GetComm(), x, y);
@@ -190,7 +224,7 @@ real_t ElasticProblemBase::Dot(const Vector& x, const Vector& y) const {
   return InnerProduct(x, y);
 }
 
-bool ElasticProblemBase::SetWarmStartTolerance(IterativeSolver& solver,
+bool LinearElasticProblemBase::SetWarmStartTolerance(IterativeSolver& solver,
                                                Solver& prec,
                                                const Vector& B) const {
   Vector z(B.Size());
@@ -203,17 +237,17 @@ bool ElasticProblemBase::SetWarmStartTolerance(IterativeSolver& solver,
   return true;
 }
 
-void ElasticProblemBase::RegisterFields(DataCollection& dc) {
+void LinearElasticProblemBase::RegisterFields(DataCollection& dc) {
   dc.RegisterField("displacement", u_.get());
 }
 
 // ---------------------------------------------------------------------------
 
 TractionProblem::TractionProblem(FiniteElementSpace* fes,
-                                 const GeneralisedMaxwellRheology& rheology,
+                                 const mfemElasticity::Rheology& rheology,
                                  VectorCoefficient& traction,
                                  const Array<int>& bdr_marker)
-    : ElasticProblemBase(fes, rheology), marker_(bdr_marker) {
+    : LinearElasticProblemBase(fes, rheology), marker_(bdr_marker) {
   RegisterTimeDependent(traction);
   b_->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(traction), marker_);
 }
@@ -241,18 +275,19 @@ bool TractionProblem::SolveLinearSystem(const Vector& B, Vector& X) {
     return true;
   }
   rigid_->Mult(B, X);
+  NoteIterations(cg_->GetNumIterations());
   return cg_->GetConverged();
 }
 
 // ---------------------------------------------------------------------------
 
 ClampedProblem::ClampedProblem(FiniteElementSpace* fes,
-                               const GeneralisedMaxwellRheology& rheology,
+                               const mfemElasticity::Rheology& rheology,
                                const Array<int>& ess_bdr,
                                VectorCoefficient& traction,
                                const Array<int>& traction_marker,
                                VectorCoefficient* dirichlet)
-    : ElasticProblemBase(fes, rheology),
+    : LinearElasticProblemBase(fes, rheology),
       ess_bdr_(ess_bdr),
       marker_(traction_marker),
       dirichlet_(dirichlet) {

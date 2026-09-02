@@ -6,9 +6,13 @@
 // (mfemElasticity/elastic_problem.hpp, viscoelastic.hpp).
 //
 // The rheology is a Maxwell body (mu_inf = 0, one branch) or, with -mu-inf,
-// a standard linear solid (mu_inf > 0, one branch). The elastic problem is
-// assembled with the unrelaxed modulus from the same rheology object the
-// viscoelastic operator reads its branch data from.
+// a standard linear solid (mu_inf > 0, one branch). With -ti the body is
+// transversely isotropic instead (AnisotropicMaxwellRheology, Love's
+// constants from the isotropic moduli with an anisotropy factor, symmetry
+// axis e_d), relaxing the deviatoric part of the tensor; -ti 1 reproduces
+// the isotropic run. The elastic problem is assembled with the unrelaxed
+// modulus from the same rheology object the viscoelastic operator reads its
+// branch data from.
 //
 // Time integrators (-s): exponential trapezoid (default; second order, one
 // solve per step, no step restriction), exponential Euler, backward Euler
@@ -20,6 +24,14 @@
 //    ./viscoelasticity -m ../data/star.mesh -o 2 -r 2 -s 4 -n 200
 //    ./viscoelasticity -m ../data/beam-quad.mesh -p 1 -o 2 -r 1 -tau 0.5
 //    ./viscoelasticity -m ../data/beam-quad.mesh -p 1 -mu-inf 0.5 -tf 20
+//    ./viscoelasticity -m ../data/beam-quad.mesh -p 1 -ti 1.3
+//    ./viscoelasticity -m ../data/beam-quad.mesh -p 1 -gamma 5 -rtol 1e-3
+//
+// -gamma g (with -nexp n) puts the composite Newtonian / power-law
+// relaxation law of Crawford et al. (2017, App. A) on the Maxwell branch,
+// tau = tau0 / (1 + g (|dev sigma| / 2 mu0)^(n-1)) with mu0 the unrelaxed
+// shear modulus; -rtol r > 0 replaces the fixed steps by the adaptive
+// exponential trapezoid solver with that relative tolerance.
 // ============================================================================
 
 #include <cmath>
@@ -38,6 +50,8 @@ int main(int argc, char* argv[]) {
   const char* mesh_file = "../data/star.mesh";
   int order = 2;
   int m_order = -1;  // internal-variable order; < 0 means order - 1
+  real_t ti_factor = 0.0;
+  real_t gamma0 = 0.0, nexp = 3.0, rtol = 0.0;
   int ref_levels = 1;
   int problem_type = 0;
   int solver_type = 0;
@@ -73,6 +87,15 @@ int main(int argc, char* argv[]) {
                  "Maxwell relaxation time tau = eta / mu.");
   args.AddOption(&mu_inf0, "-mu-inf", "--long-term-modulus",
                  "Long-term shear modulus (0: Maxwell body).");
+  args.AddOption(&gamma0, "-gamma", "--power-law-gamma",
+                 "Nonlinearity of the power-law relaxation (0: linear).");
+  args.AddOption(&nexp, "-nexp", "--power-law-exponent",
+                 "Exponent n of the power-law relaxation.");
+  args.AddOption(&rtol, "-rtol", "--adaptive-rtol",
+                 "Relative tolerance of adaptive stepping (0: fixed dt).");
+  args.AddOption(&ti_factor, "-ti", "--transversely-isotropic",
+                 "Anisotropy factor of a transversely isotropic body (0: "
+                 "isotropic; 1: isotropic through the anisotropic path).");
   args.AddOption(&paraview, "-pv", "--paraview", "-no-pv", "--no-paraview",
                  "Save time slices to a ParaView data collection.");
   args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
@@ -98,8 +121,39 @@ int main(int argc, char* argv[]) {
   FiniteElementSpace fes(&mesh, &fec, dim);
   ConstantCoefficient kappa(1.0 + 2.0 / dim), mu_inf(mu_inf0),
       mu1(1.0 - mu_inf0), tau(tau0);
-  std::vector<MaxwellBranch> branches{{&mu1, &tau}};
-  GeneralisedMaxwellRheology rheology(dim, kappa, mu_inf, branches);
+  ConstantCoefficient gamma_c(gamma0), n_c(nexp), mu0_c(1.0);
+  PowerLawRelaxation power_law(gamma_c, n_c, mu0_c);
+  const RelaxationLaw* law = gamma0 > 0.0 ? &power_law : nullptr;
+  std::vector<MaxwellBranch> branches{{&mu1, &tau, law}};
+  IsotropicMaxwellRheology isotropic(dim, kappa, mu_inf, branches);
+
+  // Transversely isotropic alternative: Love's constants of the isotropic
+  // unrelaxed body (lambda = mu = 1: A = C = 3, F = 1, L = N = 1) with the
+  // axis-parallel P and S moduli scaled by the factor, axis e_d, relaxing
+  // the deviatoric part with mu_inf / (mu_inf + mu_1) of it retained.
+  unique_ptr<AnisotropicMaxwellRheology> anisotropic;
+  ConstantCoefficient A(3.0), C(3.0 * ti_factor), F(1.0), L(ti_factor),
+      N(1.0), tau_ti(tau0);
+  Vector axis(dim);
+  axis = 0.0;
+  axis[dim - 1] = 1.0;
+  VectorConstantCoefficient axis_coef(axis);
+  TransverselyIsotropicElasticTensorCoefficient C_ti(dim, A, C, F, L, N,
+                                                     axis_coef);
+  DeviatoricProjectionElasticTensorCoefficient C_dev(dim, C_ti, true),
+      C_vol(dim, C_ti, false);
+  ConstantCoefficient retained(mu_inf0), relaxable(1.0 - mu_inf0);
+  ScalarMatrixProductCoefficient C_inf_dev(retained, C_dev),
+      C_1(relaxable, C_dev);
+  MatrixSumCoefficient C_inf(C_vol, C_inf_dev, 1.0, 1.0);
+  std::vector<AnisotropicBranch> ti_branches{{&C_1, &tau_ti, law}};
+  if (ti_factor > 0.0) {
+    anisotropic =
+        make_unique<AnisotropicMaxwellRheology>(dim, C_inf, ti_branches);
+  }
+  const Rheology& rheology =
+      anisotropic ? static_cast<const Rheology&>(*anisotropic)
+                  : static_cast<const Rheology&>(isotropic);
 
   // Loads. Problem 0: a time-scaled uniform traction t -> (0, 1 + t, ...)
   // on all external boundaries. Problem 1: boundary attribute 1 clamped,
@@ -116,7 +170,7 @@ int main(int argc, char* argv[]) {
   Array<int> marker(mesh.bdr_attributes.Max()), ess_bdr;
   marker = 0;
 
-  unique_ptr<ElasticProblemBase> problem;
+  unique_ptr<LinearElasticProblemBase> problem;
   if (problem_type == 0) {
     mesh.MarkExternalBoundaries(marker);
     problem = make_unique<TractionProblem>(&fes, rheology, traction, marker);
@@ -169,9 +223,17 @@ int main(int argc, char* argv[]) {
       return 1;
   }
   ode->Init(visco);
+  // Adaptive stepping (-rtol > 0): the n_steps become output times between
+  // which the adaptive solver chooses its own steps.
+  AdaptiveExponentialTrapezoidSolver adaptive;
+  if (rtol > 0.0) {
+    adaptive.Init(visco);
+    adaptive.SetTolerances(rtol, 1e-12);
+  }
 
   real_t t = 0.0;
   real_t dt = t_final / n_steps;
+  real_t dt_adaptive = dt;
   Vector m(visco.Height());
   m = 0.0;
 
@@ -208,7 +270,14 @@ int main(int argc, char* argv[]) {
   // it is free after a trapezoid or implicit step and costs one solve after
   // an explicit or exponential-Euler one.
   for (int step = 1; step <= n_steps; step++) {
-    ode->Step(m, t, dt);
+    if (rtol > 0.0) {
+      const real_t t_target = step * t_final / n_steps;
+      const int n = adaptive.Integrate(m, t, t_target, dt_adaptive);
+      cout << "  adaptive: " << n << " steps to t = " << t << ", next dt "
+           << dt_adaptive << "\n";
+    } else {
+      ode->Step(m, t, dt);
+    }
 
     if (!visco.SolveElastic(m, t)) {
       cerr << "Elastic solve failed at t = " << t << "\n";
@@ -223,6 +292,21 @@ int main(int argc, char* argv[]) {
       dc.SetTime(t);
       dc.Save();
     }
+  }
+
+  {
+    Vector zero(dim);
+    zero = 0.0;
+    VectorConstantCoefficient z(zero);
+    cout.precision(10);
+    cout << "Final ||u||_L2 = " << problem->Displacement().ComputeL2Error(z)
+         << "\n";
+    if (rtol > 0.0) {
+      cout << "Adaptive steps: " << adaptive.NumAcceptedSteps()
+           << " accepted, " << adaptive.NumRejectedSteps() << " rejected\n";
+    }
+    cout << "Preconditioner setups: " << problem->NumPreconditionerSetups()
+         << "\n";
   }
 
   // Save the final state in MFEM's native format.

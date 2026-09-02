@@ -2,14 +2,19 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for ElasticProblemBase, TractionProblem and ClampedProblem (design
+  Tests for LinearElasticProblemBase, TractionProblem and ClampedProblem (design
   doc doc/viscoelastic_design.md, section 5, test 2 and the elastic parts
   of the interface contract).
 
   - The bulk/deviatoric split assembled by the base class equals MFEM's
     ElasticityIntegrator(lambda, mu) with lambda = kappa - 2 mu / d.
   - ClampedProblem reproduces a direct MFEM assembly and solve.
-  - SetEffectiveShearModulus (constant and piecewise-constant L2 field)
+  - SetRelaxationWeights (constant and piecewise-constant L2 field) on a
+    Maxwell rheology, and Clear restoring the unrelaxed modulus
+  - The anisotropic rheology with an isotropic tensor reproduces the
+    isotropic problem, relaxed or not
+  - Preconditioner reuse across reassemblies keeps the solutions exact and
+    reduces the number of setups
     reproduces a direct assembly with that modulus; Clear restores mu_U.
   - TractionProblem under uniaxial stress gives the exact constant strain.
   - Loads scale with time through the registered coefficients, and
@@ -33,8 +38,8 @@ class ElasticProblemTest : public testing::TestWithParam<Param> {
     kappa = std::make_unique<ConstantCoefficient>(Kappa(dim));
     mu = std::make_unique<ConstantCoefficient>(kMu);
     lambda = std::make_unique<ConstantCoefficient>(kLambda);
-    rheology = std::make_unique<GeneralisedMaxwellRheology>(
-        GeneralisedMaxwellRheology::Elastic(dim, *kappa, *mu));
+    rheology = std::make_unique<IsotropicMaxwellRheology>(
+        IsotropicMaxwellRheology::Elastic(dim, *kappa, *mu));
     x0_attr = BdrAttributeAt(*mesh, 0, 0.0);
     x1_attr = BdrAttributeAt(*mesh, 0, 1.0);
     nbdr = mesh->bdr_attributes.Max();
@@ -79,7 +84,7 @@ class ElasticProblemTest : public testing::TestWithParam<Param> {
   std::unique_ptr<FiniteElementCollection> fec;
   std::unique_ptr<FiniteElementSpace> fes;
   std::unique_ptr<ConstantCoefficient> kappa, mu, lambda;
-  std::unique_ptr<GeneralisedMaxwellRheology> rheology;
+  std::unique_ptr<IsotropicMaxwellRheology> rheology;
 };
 
 TEST_P(ElasticProblemTest, SplitIdentity) {
@@ -107,7 +112,7 @@ TEST_P(ElasticProblemTest, ClampedMatchesDirect) {
   EXPECT_EQ(problem.NumDisplacementFields(), 1);
   EXPECT_EQ(&problem.DisplacementSpace(), fes.get());
   EXPECT_EQ(&problem.Rheology(), rheology.get());
-  EXPECT_TRUE(problem.SupportsEffectiveShearModulus());
+  EXPECT_TRUE(problem.SupportsRelaxationWeights());
   EXPECT_FALSE(problem.IsParallel());
 
   problem.AssembleForce(0.0);
@@ -128,11 +133,15 @@ TEST_P(ElasticProblemTest, ClampedMatchesDirect) {
   EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref), 1e-8);
 }
 
-TEST_P(ElasticProblemTest, EffectiveShearModulus) {
+TEST_P(ElasticProblemTest, RelaxationWeights) {
   auto ess_bdr = Marker(nbdr, {x0_attr});
   auto pull_marker = Marker(nbdr, {x1_attr});
   VectorFunctionCoefficient traction(dim, PullTraction);
-  ClampedProblem problem(fes.get(), *rheology, ess_bdr, traction, pull_marker);
+  // Maxwell body: mu_inf = 0, one branch mu, so mu_eff = beta mu.
+  ConstantCoefficient tau(1.0);
+  auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, tau);
+  ClampedProblem problem(fes.get(), maxwell, ess_bdr, traction, pull_marker);
+  EXPECT_FALSE(problem.Stiffness().IsRelaxed());
 
   LinearForm b(fes.get());
   traction.SetTime(0.0);
@@ -140,27 +149,27 @@ TEST_P(ElasticProblemTest, EffectiveShearModulus) {
                           pull_marker);
   b.Assemble();
 
-  // Constant effective modulus.
-  ConstantCoefficient mu_eff(0.4 * kMu);
+  // Constant weight.
+  ConstantCoefficient beta(0.4), mu_eff(0.4 * kMu);
   SumCoefficient lambda_eff(*kappa, mu_eff, 1.0, -2.0 / dim);
-  problem.SetEffectiveShearModulus(0, mu_eff);
-  EXPECT_EQ(&problem.CurrentShearModulus(), &mu_eff);
+  problem.SetRelaxationWeights(0, {&beta});
+  EXPECT_TRUE(problem.Stiffness().IsRelaxed());
   problem.AssembleForce(0.0);
   ASSERT_TRUE(problem.Solve());
   auto u_ref = DirectClamped(lambda_eff, mu_eff, ess_bdr, b);
   EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref), 1e-8);
 
-  // Piecewise-constant effective modulus given as a GridFunctionCoefficient
-  // on an L2 space, as the viscoelastic layer will supply it.
+  // Piecewise-constant weight given as a GridFunctionCoefficient on an L2
+  // space, as the viscoelastic layer supplies it.
   L2_FECollection l2fec(0, dim);
   FiniteElementSpace sfes(mesh.get(), &l2fec);
-  GridFunction mu_field(&sfes);
-  FunctionCoefficient mu_var(
-      [](const Vector& x) { return kMu * (0.3 + 0.6 * x[0]); });
-  mu_field.ProjectCoefficient(mu_var);
-  GridFunctionCoefficient mu_eff_gf(&mu_field);
+  GridFunction beta_field(&sfes);
+  FunctionCoefficient beta_var([](const Vector& x) { return 0.3 + 0.6 * x[0]; });
+  beta_field.ProjectCoefficient(beta_var);
+  GridFunctionCoefficient beta_gf(&beta_field);
+  ProductCoefficient mu_eff_gf(beta_gf, *mu);
   SumCoefficient lambda_eff_gf(*kappa, mu_eff_gf, 1.0, -2.0 / dim);
-  problem.SetEffectiveShearModulus(0, mu_eff_gf);
+  problem.SetRelaxationWeights(0, {&beta_gf});
   problem.AssembleForce(0.0);
   ASSERT_TRUE(problem.Solve());
   auto u_ref_gf = DirectClamped(lambda_eff_gf, mu_eff_gf, ess_bdr, b);
@@ -168,12 +177,86 @@ TEST_P(ElasticProblemTest, EffectiveShearModulus) {
   EXPECT_GT(RelMaxDiff(u_ref_gf, u_ref), 1e-3);  // the two cases differ
 
   // Clear restores mu_U.
-  problem.ClearEffectiveShearModulus();
-  EXPECT_EQ(&problem.CurrentShearModulus(), &rheology->UnrelaxedShearModulus());
+  problem.ClearRelaxationWeights();
+  EXPECT_FALSE(problem.Stiffness().IsRelaxed());
   problem.AssembleForce(0.0);
   ASSERT_TRUE(problem.Solve());
   auto u_ref_u = DirectClamped(*lambda, *mu, ess_bdr, b);
   EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref_u), 1e-8);
+}
+
+TEST_P(ElasticProblemTest, PreconditionerReuse) {
+  auto ess_bdr = Marker(nbdr, {x0_attr});
+  auto pull_marker = Marker(nbdr, {x1_attr});
+  VectorFunctionCoefficient traction(dim, PullTraction);
+  ConstantCoefficient tau(1.0);
+  auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, tau);
+  LinearForm b(fes.get());
+  traction.SetTime(0.0);
+  b.AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(traction),
+                          pull_marker);
+  b.Assemble();
+
+  for (double reuse : {2.0, 1.0}) {
+    ClampedProblem problem(fes.get(), maxwell, ess_bdr, traction, pull_marker);
+    problem.SetPreconditionerReuse(reuse);
+    problem.AssembleForce(0.0);
+    ASSERT_TRUE(problem.Solve());
+    EXPECT_EQ(problem.NumPreconditionerSetups(), 1);
+    // Small drifts of the weights: the preconditioner is kept (or rebuilt
+    // every time without reuse); the solutions are the exact ones.
+    int assemblies = 1;
+    for (double bv : {0.9, 0.8, 0.7}) {
+      ConstantCoefficient beta(bv), mu_eff(bv * kMu);
+      SumCoefficient lambda_eff(*kappa, mu_eff, 1.0, -2.0 / dim);
+      problem.SetRelaxationWeights(0, {&beta});
+      ASSERT_TRUE(problem.Solve());
+      assemblies++;
+      auto u_ref = DirectClamped(lambda_eff, mu_eff, ess_bdr, b);
+      EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref), 1e-8);
+    }
+    if (reuse > 1.0) {
+      EXPECT_LT(problem.NumPreconditionerSetups(), assemblies);
+    } else {
+      EXPECT_EQ(problem.NumPreconditionerSetups(), assemblies);
+    }
+    // A large drift makes the count grow: with reuse the preconditioner is
+    // rebuilt at the following assembly.
+    ConstantCoefficient tiny(0.01), mu_tiny(0.01 * kMu);
+    SumCoefficient lambda_tiny(*kappa, mu_tiny, 1.0, -2.0 / dim);
+    problem.SetRelaxationWeights(0, {&tiny});
+    ASSERT_TRUE(problem.Solve());
+    auto u_ref = DirectClamped(lambda_tiny, mu_tiny, ess_bdr, b);
+    EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref), 1e-8);
+  }
+}
+
+TEST_P(ElasticProblemTest, AnisotropicMatchesIsotropic) {
+  auto ess_bdr = Marker(nbdr, {x0_attr});
+  auto pull_marker = Marker(nbdr, {x1_attr});
+  VectorFunctionCoefficient traction(dim, PullTraction);
+  ConstantCoefficient tau(1.0), beta(0.4);
+
+  auto iso = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, tau);
+  auto C = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, *kappa, *mu);
+  auto aniso = AnisotropicMaxwellRheology::DeviatoricMaxwell(dim, C, tau);
+  EXPECT_FALSE(aniso.TraceFreeInternalVariables());
+  EXPECT_EQ(aniso.NumBranches(), 1);
+
+  ClampedProblem a(fes.get(), iso, ess_bdr, traction, pull_marker);
+  ClampedProblem b(fes.get(), aniso, ess_bdr, traction, pull_marker);
+  for (int relaxed = 0; relaxed < 2; relaxed++) {
+    if (relaxed) {
+      a.SetRelaxationWeights(0, {&beta});
+      b.SetRelaxationWeights(0, {&beta});
+    }
+    a.AssembleForce(0.0);
+    b.AssembleForce(0.0);
+    ASSERT_TRUE(a.Solve());
+    ASSERT_TRUE(b.Solve());
+    EXPECT_GT(a.Displacement().Normlinf(), 0.0);
+    EXPECT_LT(RelMaxDiff(b.Displacement(), a.Displacement()), 1e-10);
+  }
 }
 
 TEST_P(ElasticProblemTest, TractionUniaxialStrain) {

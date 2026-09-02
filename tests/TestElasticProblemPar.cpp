@@ -1,5 +1,5 @@
 /*
-  Parallel tests for ElasticProblemBase / TractionProblem / ClampedProblem
+  Parallel tests for LinearElasticProblemBase / TractionProblem / ClampedProblem
   on ParFiniteElementSpaces. Run with 1, 2 and 4 ranks; a standalone MPI
   program returning the number of failed checks.
 
@@ -68,8 +68,10 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
   FiniteElementSpace sfes(&smesh, &fec, dim);
   ParFiniteElementSpace pfes(&pmesh, &fec, dim);
 
-  ConstantCoefficient kappa(Kappa(dim)), mu(kMu);
-  auto rheology = GeneralisedMaxwellRheology::Elastic(dim, kappa, mu);
+  ConstantCoefficient kappa(Kappa(dim)), mu(kMu), tau(1.0);
+  // Maxwell body (mu_inf = 0, one branch): the unrelaxed modulus is mu and
+  // a relaxation weight beta gives mu_eff = beta mu.
+  auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
   auto ess_bdr = Marker(nbdr, {x0_attr});
   auto pull_marker = Marker(nbdr, {x1_attr});
   auto uni_marker = Marker(nbdr, {x0_attr, x1_attr});
@@ -95,14 +97,14 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     FiniteElementSpace ssfes(&smesh, &l2fec);
     ParFiniteElementSpace psfes(&pmesh, &l2fec);
     FunctionCoefficient mu_var(
-        [](const Vector& x) { return kMu * (0.3 + 0.6 * x[0]); });
+        [](const Vector& x) { return 0.3 + 0.6 * x[0]; });
     GridFunction smu(&ssfes);
     ParGridFunction pmu(&psfes);
     smu.ProjectCoefficient(mu_var);
     pmu.ProjectCoefficient(mu_var);
     GridFunctionCoefficient smu_c(&smu), pmu_c(&pmu);
-    serial.SetEffectiveShearModulus(0, smu_c);
-    par.SetEffectiveShearModulus(0, pmu_c);
+    serial.SetRelaxationWeights(0, {&smu_c});
+    par.SetRelaxationWeights(0, {&pmu_c});
     serial.AssembleForce(0.25);
     Check(serial.Solve() ? 0.0 : 1.0, 0.0, label + ": serial solve (eff)");
     par.AssembleForce(0.25);
@@ -114,7 +116,7 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     Check(std::abs(ns_e - ns) / ns > 1e-3 ? 0.0 : 1.0, 0.0,
           label + ": effective modulus changed the solution");
 
-    par.ClearEffectiveShearModulus();
+    par.ClearRelaxationWeights();
     par.AssembleForce(0.25);
     Check(par.Solve() ? 0.0 : 1.0, 0.0, label + ": parallel solve (clear)");
     Check(GlobalMax(std::abs(L2Norm(par.Displacement()) - ns) / ns), 1e-8,

@@ -83,11 +83,13 @@ has `-h` for its options.
 | `submesh_injection` / `_p` | Tour of `SubMeshDofInjection`: moving fields and assembling coupling blocks between a mesh and a submesh |
 | `coupled_poisson` / `_p` | Two Poisson equations, one on a submesh, coupled and solved monolithically |
 | `elastogravity` / `_p` | Self-gravitating elastic body under a surface load: block MINRES with the DtN outer condition |
-| `elastogravity_two_layer` / `_p` | The same with a liquid core and solid mantle |
-| `elastogravity_three_layer` / `_p` | The same with solid inner core, liquid outer core and mantle |
+| `elastogravity_layered` / `_p` | `SelfGravitatingElasticProblem` with a fluid outer core (two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
+| `self_gravitating_relaxation` | Viscoelastic relaxation of the layered self-gravitating model with a fluid core under a Heaviside surface load (Maxwell mantle, elastic inner core) |
 | `quasi_static_elasticity` | Driver for the `QuasiStaticLinearElasticProblem` interface |
 | `self_gravitating_elasticity` / `_p` | `SelfGravitatingElasticProblem`: self-gravitating body under a surface mass load, Schur CG and block MINRES solvers compared, rigid-mode diagnostics |
 | `viscoelasticity` | Generalised Maxwell viscoelasticity with `ViscoelasticOperator` |
+| `viscoelastic_schemes` | Cost and accuracy table of every time integrator (ETD1, exponential trapezoid, BE, SDIRK23, RK4, adaptive) on a clamped beam, linear or power-law |
+| `viscoelastic_loading` | GIA-style loading and rebound of a layered Cartesian box with a low-viscosity channel |
 | `anisotropic_elasticity` | Radially anisotropic (transversely isotropic) elasticity with `ElasticTensorIntegrator` |
 
 The gmsh meshes in `data/` were produced with the tools in `meshing/`; the

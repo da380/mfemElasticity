@@ -164,7 +164,7 @@ Checked from the new venv: `load_deck('data/prem.nocrust', columns=('rho','vp','
 
 ### 6.6 New questions (non-blocking for step 2, but wanted before step 3)
 
-1. **Name and location OK?** `sphmesh/` at the repo root, package `sphmesh`, path-dependency on a sibling `~/dev/sphmod` checkout (the postdoc will need that clone, or we switch to a git dependency).
+1. **Name and location OK?** `sphmesh/` at the repo root, package `sphmesh`, path-dependency on a sibling `~/dev/sphmod` checkout (other users will need that clone, or we switch to a git dependency).
 2. **Formats OK?** Sidecar = JSON (machine-written, read from C++ eventually); recipe = TOML (human-written, optional next to the API).
 3. **Topography's home**: lon–lat surface grids start in `sphmesh.surface`; agreed that their long-term home is sphmod (as fields on the reference body), to be settled in the joint session?
 4. **Deck reading for `prem.nocrust`-style files**: worth adding a named convenience in sphmod (e.g. an isotropic-deck class alongside `MineosDeck`), or is `load_deck(..., columns=(...), header_lines=3)` fine as the documented idiom?

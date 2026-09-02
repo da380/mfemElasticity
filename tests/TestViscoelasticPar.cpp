@@ -6,7 +6,9 @@
   The checks are the partition-independent analytic ones of the serial
   test: Maxwell creep under constant uniaxial stress (exponential
   trapezoid, exact) and relaxation under a prescribed uniform strain
-  (exponential Euler and backward Euler, exact at their discrete levels).
+  (exponential Euler and backward Euler, exact at their discrete levels),
+  and the same creep through the anisotropic rheology (full symmetric
+  internal variables, tensor branch moduli) with an isotropic tensor.
 */
 
 #include <mpi.h>
@@ -90,7 +92,7 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
 
   // Creep, exponential trapezoid at dt = 2 tau.
   {
-    auto rheology = GeneralisedMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+    auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
     auto marker = Marker(nbdr, {x0_attr, x1_attr});
     VectorFunctionCoefficient traction(dim, ConstantUniaxial);
     TractionProblem problem(&pfes, rheology, traction, marker);
@@ -113,11 +115,72 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
           1e-8, label + ": creep strain");
   }
 
+  // The same creep through the anisotropic path (tensor branch moduli
+  // sampled at the internal nodes of every rank).
+  {
+    auto C = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
+    auto rheology = AnisotropicMaxwellRheology::DeviatoricMaxwell(dim, C, tau);
+    auto marker = Marker(nbdr, {x0_attr, x1_attr});
+    VectorFunctionCoefficient traction(dim, ConstantUniaxial);
+    TractionProblem problem(&pfes, rheology, traction, marker);
+    ViscoelasticOperator visco(problem);
+    Check(visco.TraceFree(0) ? 1.0 : 0.0, 0.0, label + ": full tensors");
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    double t = 0.0, dt = 2.0;
+    for (int step = 0; step < 3; step++) {
+      ode.Step(m, t, dt);
+    }
+    Check(visco.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
+          label + ": anisotropic creep solve");
+    double exx0 = 0.0, eyy0 = 0.0;
+    UniaxialStrain(dim, kSigma, exx0, eyy0);
+    const double eta = kMu * 1.0;
+    const double exx = exx0 + kSigma * (1.0 - 1.0 / dim) * t / (2.0 * eta);
+    const double eyy = eyy0 - kSigma / dim * t / (2.0 * eta);
+    Check(GlobalMax(MaxStrainError(problem.Displacement(), exx, eyy)) / exx0,
+          1e-8, label + ": anisotropic creep strain");
+  }
+
+  // Power-law creep under constant stress: tau = tau0 F(|dev sigma_0|) is
+  // constant, so the linear creep formula at that tau is exact.
+  {
+    ConstantCoefficient gamma(3.0), n3(3.0), mu0(kMu);
+    PowerLawRelaxation law(gamma, n3, mu0);
+    auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau, &law);
+    auto marker = Marker(nbdr, {x0_attr, x1_attr});
+    VectorFunctionCoefficient traction(dim, ConstantUniaxial);
+    TractionProblem problem(&pfes, rheology, traction, marker);
+    ViscoelasticOperator visco(problem);
+    Check(visco.IsLinear() ? 1.0 : 0.0, 0.0, label + ": nonlinear operator");
+    ExponentialTrapezoidSolver ode;
+    ode.Init(visco);
+    Vector m(visco.Height());
+    m = 0.0;
+    double t = 0.0, dt = 2.0;
+    for (int step = 0; step < 3; step++) {
+      ode.Step(m, t, dt);
+    }
+    Check(visco.SolveElastic(m, t) ? 0.0 : 1.0, 0.0,
+          label + ": power-law creep solve");
+    const double T = kSigma * std::sqrt(1.0 - 1.0 / dim);
+    const double F = 1.0 / (1.0 + 3.0 * std::pow(T / (2.0 * kMu), 2.0));
+    const double eta = kMu * 1.0 * F;
+    double exx0 = 0.0, eyy0 = 0.0;
+    UniaxialStrain(dim, kSigma, exx0, eyy0);
+    const double exx = exx0 + kSigma * (1.0 - 1.0 / dim) * t / (2.0 * eta);
+    const double eyy = eyy0 - kSigma / dim * t / (2.0 * eta);
+    Check(GlobalMax(MaxStrainError(problem.Displacement(), exx, eyy)) / exx0,
+          1e-8, label + ": power-law creep strain");
+  }
+
   // Relaxation under a prescribed uniform strain, two branches.
   {
     ConstantCoefficient mu_inf(0.3), mu1(0.7), mu2(0.5), tau1(1.0), tau2(100.0);
     std::vector<MaxwellBranch> branches{{&mu1, &tau1}, {&mu2, &tau2}};
-    GeneralisedMaxwellRheology rheology(dim, kappa, mu_inf, branches);
+    IsotropicMaxwellRheology rheology(dim, kappa, mu_inf, branches);
     DenseMatrix A(dim);
     A = 0.0;
     A(0, 0) = 0.01;
