@@ -38,7 +38,7 @@ struct Case {
   std::unique_ptr<FiniteElementSpace> fes_u, fes_phi;
   ConstantCoefficient kappa{kKappa}, mu{kMu};
   FunctionCoefficient rho_s{SolidDensity}, rho_f{FluidDensity};
-  std::unique_ptr<IsotropicMaxwellRheology> rheology;
+  std::unique_ptr<IsotropicElasticRheology> rheology;
   FunctionCoefficient sigma{SurfaceLoad};
   Array<int> surface;
   std::vector<FluidRegion> fluids;
@@ -52,8 +52,7 @@ struct Case {
     fec = std::make_unique<H1_FECollection>(order, dim);
     fes_u = std::make_unique<FiniteElementSpace>(solid.get(), fec.get(), dim);
     fes_phi = std::make_unique<FiniteElementSpace>(parent.get(), fec.get());
-    rheology = std::make_unique<IsotropicMaxwellRheology>(
-        IsotropicMaxwellRheology::Elastic(dim, kappa, mu));
+    rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
     surface = SurfaceMarker(*solid);
     fluids.push_back(OuterCore(*solid, rho_f));
   }
@@ -331,7 +330,7 @@ TEST(SelfGravitatingFluidTwoLayer, SchurAndMinresAgree) {
   FiniteElementSpace fes_u(&mantle, &fec, 2), fes_phi(&parent, &fec);
   ConstantCoefficient kappa(kKappa), mu(kMu), rho_s(1.0);
   FunctionCoefficient rho_f(FluidDensity), sigma(SurfaceLoad);
-  auto rheology = IsotropicMaxwellRheology::Elastic(2, kappa, mu);
+  auto rheology = IsotropicElasticRheology(2, kappa, mu);
   FluidRegion core;
   core.attributes = Array<int>({1});
   core.density = &rho_f;

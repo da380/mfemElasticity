@@ -328,15 +328,14 @@ TEST_P(ViscoelasticTest, LongTimeLimit) {
   }
   ASSERT_TRUE(visco.SolveElastic(m, t));
 
-  auto relaxed = IsotropicMaxwellRheology::Elastic(dim, *kappa, mu_inf);
+  auto relaxed = rheology.LongTermElastic();
   ClampedProblem limit(fes.get(), relaxed, ess_bdr, pull, pull_marker);
   limit.AssembleForce(t);
   ASSERT_TRUE(limit.Solve());
   EXPECT_LT(RelMaxDiff(problem.Displacement(), limit.Displacement()), 1e-6);
 
   // And the unrelaxed (t = 0) response differs from it.
-  auto unrelaxed = IsotropicMaxwellRheology::Elastic(
-      dim, *kappa, rheology.UnrelaxedShearModulus());
+  auto unrelaxed = rheology.UnrelaxedElastic();
   ClampedProblem initial(fes.get(), unrelaxed, ess_bdr, pull, pull_marker);
   initial.AssembleForce(0.0);
   ASSERT_TRUE(initial.Solve());
@@ -963,6 +962,68 @@ TEST(ViscoelasticTwoField, RoutesForcesPerField) {
     }
     ASSERT_GT(m_a.Normlinf(), 0.0);
     ASSERT_GT(m_b.Normlinf(), 0.0);
+  }
+}
+
+// An elastic field alongside a Maxwell one: the elastic field carries no
+// internal state and its displacement is the static solution at every
+// time, while the Maxwell field evolves as it would alone.
+TEST(ViscoelasticTwoField, ElasticFieldHasNoState) {
+  const int dim = 2;
+  Mesh mesh = Mesh::MakeCartesian2D(3, 3, Element::QUADRILATERAL);
+  H1_FECollection fec(1, dim);
+  FiniteElementSpace fes(&mesh, &fec, dim);
+  ConstantCoefficient kappa(Kappa(dim)), mu(kMu), tau(1.0);
+  IsotropicElasticRheology elastic(dim, kappa, mu);
+  auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+  const int x0 = BdrAttributeAt(mesh, 0, 0.0),
+            x1 = BdrAttributeAt(mesh, 0, 1.0);
+  auto ess = Marker(mesh.bdr_attributes.Max(), {x0});
+  auto pull_marker = Marker(mesh.bdr_attributes.Max(), {x1});
+  VectorFunctionCoefficient pull(dim, PullTraction);
+
+  ClampedProblem a1(&fes, elastic, ess, pull, pull_marker);
+  ClampedProblem b1(&fes, maxwell, ess, pull, pull_marker);
+  TwoFieldProblem two(a1, b1);
+  ViscoelasticOperator visco_two(two);
+  ASSERT_EQ(visco_two.NumFields(), 2);
+  ASSERT_EQ(visco_two.NumBranches(0), 0);
+  ASSERT_EQ(visco_two.NumBranches(1), 1);
+  ASSERT_EQ(visco_two.Height(), visco_two.BranchSize(1));
+  EXPECT_EQ(visco_two.BranchOffset(1, 0), 0);
+  EXPECT_TRUE(visco_two.IsLinear());
+
+  ClampedProblem b2(&fes, maxwell, ess, pull, pull_marker);
+  ViscoelasticOperator visco_b(b2);
+  ClampedProblem static_problem(&fes, elastic, ess, pull, pull_marker);
+
+  for (int scheme = 0; scheme < 2; scheme++) {
+    auto make = [scheme]() -> std::unique_ptr<ODESolver> {
+      if (scheme == 0) {
+        return std::make_unique<ExponentialTrapezoidSolver>();
+      }
+      return std::make_unique<RK4Solver>();
+    };
+    auto ode_two = make(), ode_b = make();
+    ode_two->Init(visco_two);
+    ode_b->Init(visco_b);
+    Vector m_two(visco_two.Height()), m_b(visco_b.Height());
+    m_two = 0.0;
+    m_b = 0.0;
+    double t_two = 0.0, t_b = 0.0, dt = 0.4;
+    for (int step = 0; step < 3; step++) {
+      ode_two->Step(m_two, t_two, dt);
+      ode_b->Step(m_b, t_b, dt);
+    }
+    EXPECT_LT(RelMaxDiff(visco_two.Branch(m_two, 1, 0), m_b), 1e-12);
+    ASSERT_GT(m_b.Normlinf(), 0.0);
+
+    ASSERT_TRUE(visco_two.SolveElastic(m_two, t_two));
+    static_problem.AssembleForce(t_two);
+    ASSERT_TRUE(static_problem.Solve());
+    EXPECT_GT(static_problem.Displacement().Normlinf(), 0.0);
+    EXPECT_LT(RelMaxDiff(a1.Displacement(), static_problem.Displacement()),
+              1e-12);
   }
 }
 

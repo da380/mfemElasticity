@@ -38,8 +38,7 @@ class ElasticProblemTest : public testing::TestWithParam<Param> {
     kappa = std::make_unique<ConstantCoefficient>(Kappa(dim));
     mu = std::make_unique<ConstantCoefficient>(kMu);
     lambda = std::make_unique<ConstantCoefficient>(kLambda);
-    rheology = std::make_unique<IsotropicMaxwellRheology>(
-        IsotropicMaxwellRheology::Elastic(dim, *kappa, *mu));
+    rheology = std::make_unique<IsotropicElasticRheology>(dim, *kappa, *mu);
     x0_attr = BdrAttributeAt(*mesh, 0, 0.0);
     x1_attr = BdrAttributeAt(*mesh, 0, 1.0);
     nbdr = mesh->bdr_attributes.Max();
@@ -84,7 +83,7 @@ class ElasticProblemTest : public testing::TestWithParam<Param> {
   std::unique_ptr<FiniteElementCollection> fec;
   std::unique_ptr<FiniteElementSpace> fes;
   std::unique_ptr<ConstantCoefficient> kappa, mu, lambda;
-  std::unique_ptr<IsotropicMaxwellRheology> rheology;
+  std::unique_ptr<IsotropicElasticRheology> rheology;
 };
 
 TEST_P(ElasticProblemTest, SplitIdentity) {
@@ -96,7 +95,7 @@ TEST_P(ElasticProblemTest, SplitIdentity) {
 
   BilinearForm ref(fes.get());
   ref.AddDomainIntegrator(
-      new ElasticityIntegrator(rheology->UnrelaxedLame(), *mu));
+      new ElasticityIntegrator(rheology->Lame(), *mu));
   ref.Assemble();
   ref.Finalize();
 

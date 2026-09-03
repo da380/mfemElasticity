@@ -5,6 +5,9 @@
 
 #include "mfemElasticity/rheology.hpp"
 
+#include <cstdlib>
+#include <functional>
+
 namespace mfemElasticity {
 
 using namespace mfem;
@@ -26,7 +29,135 @@ Coefficient& Rheology::BranchShearModulus(int /*k*/) const {
 }
 
 // ---------------------------------------------------------------------------
-// Isotropic
+// Shared pieces
+
+namespace {
+
+/// The branch methods of a branchless rheology.
+[[noreturn]] void NoBranches(const char* cls, const char* method) {
+  MFEM_ABORT(cls << "::" << method
+                 << ": a purely elastic rheology has no branches.");
+  std::abort();
+}
+
+/// kappa div-div + 2 mu dev-dev.
+void AddIsotropicIntegrators(BilinearForm& form, int dim, Coefficient& kappa,
+                             Coefficient& mu) {
+  form.AddDomainIntegrator(new ElasticityIntegrator(kappa, 1.0, 0.0));
+  form.AddDomainIntegrator(new ElasticityIntegrator(mu, -2.0 / dim, 1.0));
+}
+
+/// lambda 1 1^T + 2 mu I in Mandel form, 1 1^T = d P_vol.
+void IsotropicMandelTensor(int dim, real_t lambda, real_t mu, DenseMatrix& C) {
+  const int ns = SymmetricTensorBasis::Size(dim);
+  SymmetricTensorBasis::VolumetricProjector(dim, C);
+  C *= dim * lambda;
+  for (int i = 0; i < ns; i++) {
+    C(i, i) += 2.0 * mu;
+  }
+}
+
+/// Stiffness of a branchless rheology: fixed integrators, weights no-ops.
+class ElasticOnlyStiffness : public ElasticStiffness {
+ public:
+  explicit ElasticOnlyStiffness(std::function<void(BilinearForm&)> add)
+      : add_(std::move(add)) {}
+
+  void AddIntegrators(BilinearForm& form) override { add_(form); }
+
+  void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
+    MFEM_VERIFY(beta.empty(),
+                "SetRelaxationWeights: a purely elastic rheology takes no "
+                "weights.");
+  }
+
+  void ClearRelaxationWeights() override {}
+
+  bool IsRelaxed() const override { return false; }
+
+ private:
+  std::function<void(BilinearForm&)> add_;
+};
+
+}  // namespace
+
+// ---------------------------------------------------------------------------
+// Isotropic elastic
+
+IsotropicElasticRheology::IsotropicElasticRheology(int dim, Coefficient& kappa,
+                                                   Coefficient& mu)
+    : dim_(dim), kappa_(&kappa), mu_(&mu) {
+  MFEM_VERIFY(dim == 2 || dim == 3,
+              "IsotropicElasticRheology: dim must be 2 or 3.");
+  lambda_ = std::make_unique<SumCoefficient>(*kappa_, *mu_, 1.0,
+                                             -2.0 / static_cast<real_t>(dim_));
+}
+
+Coefficient& IsotropicElasticRheology::RelaxationTime(int /*k*/) const {
+  NoBranches("IsotropicElasticRheology", "RelaxationTime");
+}
+
+const RelaxationLaw* IsotropicElasticRheology::Law(int /*k*/) const {
+  NoBranches("IsotropicElasticRheology", "Law");
+}
+
+void IsotropicElasticRheology::BranchModulus(int /*k*/,
+                                             ElementTransformation& /*T*/,
+                                             const IntegrationPoint& /*ip*/,
+                                             DenseMatrix& /*Ck*/) const {
+  NoBranches("IsotropicElasticRheology", "BranchModulus");
+}
+
+void IsotropicElasticRheology::UnrelaxedModulus(ElementTransformation& T,
+                                                const IntegrationPoint& ip,
+                                                DenseMatrix& CU) const {
+  IsotropicMandelTensor(dim_, lambda_->Eval(T, ip), mu_->Eval(T, ip), CU);
+}
+
+std::unique_ptr<ElasticStiffness> IsotropicElasticRheology::MakeStiffness()
+    const {
+  return std::make_unique<ElasticOnlyStiffness>([this](BilinearForm& form) {
+    AddIsotropicIntegrators(form, dim_, *kappa_, *mu_);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Anisotropic elastic
+
+AnisotropicElasticRheology::AnisotropicElasticRheology(int dim,
+                                                       MatrixCoefficient& C)
+    : dim_(dim), C_(&C) {
+  MFEM_VERIFY(dim == 2 || dim == 3,
+              "AnisotropicElasticRheology: dim must be 2 or 3.");
+  const int ns = SymmetricTensorBasis::Size(dim);
+  MFEM_VERIFY(C.GetHeight() == ns && C.GetWidth() == ns,
+              "AnisotropicElasticRheology: C must be n_s x n_s.");
+}
+
+Coefficient& AnisotropicElasticRheology::RelaxationTime(int /*k*/) const {
+  NoBranches("AnisotropicElasticRheology", "RelaxationTime");
+}
+
+const RelaxationLaw* AnisotropicElasticRheology::Law(int /*k*/) const {
+  NoBranches("AnisotropicElasticRheology", "Law");
+}
+
+void AnisotropicElasticRheology::BranchModulus(int /*k*/,
+                                               ElementTransformation& /*T*/,
+                                               const IntegrationPoint& /*ip*/,
+                                               DenseMatrix& /*Ck*/) const {
+  NoBranches("AnisotropicElasticRheology", "BranchModulus");
+}
+
+std::unique_ptr<ElasticStiffness> AnisotropicElasticRheology::MakeStiffness()
+    const {
+  return std::make_unique<ElasticOnlyStiffness>([this](BilinearForm& form) {
+    form.AddDomainIntegrator(new ElasticTensorIntegrator(*C_));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Isotropic Maxwell
 
 namespace {
 
@@ -38,11 +169,8 @@ class IsotropicStiffness : public ElasticStiffness {
       : r_(&r), mu_current_(&r.UnrelaxedShearModulus()) {}
 
   void AddIntegrators(BilinearForm& form) override {
-    const int dim = r_->SpaceDim();
-    form.AddDomainIntegrator(
-        new ElasticityIntegrator(r_->BulkModulus(), 1.0, 0.0));
-    form.AddDomainIntegrator(
-        new ElasticityIntegrator(mu_current_, -2.0 / dim, 1.0));
+    AddIsotropicIntegrators(form, r_->SpaceDim(), r_->BulkModulus(),
+                            mu_current_);
   }
 
   void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
@@ -104,11 +232,6 @@ IsotropicMaxwellRheology::IsotropicMaxwellRheology(
   lambda_u_ = owned_.back().get();
 }
 
-IsotropicMaxwellRheology IsotropicMaxwellRheology::Elastic(
-    int dim, Coefficient& kappa, Coefficient& mu) {
-  return IsotropicMaxwellRheology(dim, kappa, mu);
-}
-
 IsotropicMaxwellRheology IsotropicMaxwellRheology::Maxwell(
     int dim, Coefficient& kappa, Coefficient& mu, Coefficient& tau,
     const RelaxationLaw* law) {
@@ -133,14 +256,7 @@ void IsotropicMaxwellRheology::BranchModulus(int k, ElementTransformation& T,
 void IsotropicMaxwellRheology::UnrelaxedModulus(ElementTransformation& T,
                                                 const IntegrationPoint& ip,
                                                 DenseMatrix& CU) const {
-  // lambda_U 1 1^T + 2 mu_U I in Mandel form, 1 1^T = d P_vol.
-  const int ns = SymmetricTensorBasis::Size(dim_);
-  SymmetricTensorBasis::VolumetricProjector(dim_, CU);
-  CU *= dim_ * lambda_u_->Eval(T, ip);
-  const real_t two_mu = 2.0 * mu_u_->Eval(T, ip);
-  for (int i = 0; i < ns; i++) {
-    CU(i, i) += two_mu;
-  }
+  IsotropicMandelTensor(dim_, lambda_u_->Eval(T, ip), mu_u_->Eval(T, ip), CU);
 }
 
 std::unique_ptr<ElasticStiffness> IsotropicMaxwellRheology::MakeStiffness()
@@ -148,8 +264,16 @@ std::unique_ptr<ElasticStiffness> IsotropicMaxwellRheology::MakeStiffness()
   return std::make_unique<IsotropicStiffness>(*this);
 }
 
+IsotropicElasticRheology IsotropicMaxwellRheology::UnrelaxedElastic() const {
+  return IsotropicElasticRheology(dim_, *kappa_, *mu_u_);
+}
+
+IsotropicElasticRheology IsotropicMaxwellRheology::LongTermElastic() const {
+  return IsotropicElasticRheology(dim_, *kappa_, *mu_inf_);
+}
+
 // ---------------------------------------------------------------------------
-// Anisotropic
+// Anisotropic Maxwell
 
 namespace {
 
@@ -221,11 +345,6 @@ AnisotropicMaxwellRheology::AnisotropicMaxwellRheology(
   }
 }
 
-AnisotropicMaxwellRheology AnisotropicMaxwellRheology::Elastic(
-    int dim, MatrixCoefficient& C) {
-  return AnisotropicMaxwellRheology(dim, C);
-}
-
 AnisotropicMaxwellRheology AnisotropicMaxwellRheology::DeviatoricMaxwell(
     int dim, MatrixCoefficient& C, Coefficient& tau, const RelaxationLaw* law) {
   auto dev = std::make_unique<DeviatoricProjectionElasticTensorCoefficient>(
@@ -243,6 +362,16 @@ AnisotropicMaxwellRheology AnisotropicMaxwellRheology::DeviatoricMaxwell(
 std::unique_ptr<ElasticStiffness> AnisotropicMaxwellRheology::MakeStiffness()
     const {
   return std::make_unique<AnisotropicStiffness>(*this);
+}
+
+AnisotropicElasticRheology AnisotropicMaxwellRheology::UnrelaxedElastic()
+    const {
+  return AnisotropicElasticRheology(dim_, *C_u_);
+}
+
+AnisotropicElasticRheology AnisotropicMaxwellRheology::LongTermElastic()
+    const {
+  return AnisotropicElasticRheology(dim_, *C_inf_);
 }
 
 }  // namespace mfemElasticity

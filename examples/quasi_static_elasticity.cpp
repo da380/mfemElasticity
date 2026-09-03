@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
   H1_FECollection fec(order, dim);
   FiniteElementSpace fes(&mesh, &fec, dim);
   ConstantCoefficient kappa(1.0 + 2.0 / dim), mu(1.0);
-  auto rheology = IsotropicMaxwellRheology::Elastic(dim, kappa, mu);
+  auto rheology = IsotropicElasticRheology(dim, kappa, mu);
 
   // Loads. Problem 0: a time-scaled uniform traction t -> (0, 1 + t, ...)
   // on all external boundaries. Problem 1: boundary attribute 1 clamped,

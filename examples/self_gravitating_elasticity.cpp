@@ -144,7 +144,7 @@ int main(int argc, char* argv[]) {
 
   ConstantCoefficient kappa_coeff(kappa), mu_coeff(mu), rho_coeff(rho);
   auto rheology =
-      IsotropicMaxwellRheology::Elastic(dim, kappa_coeff, mu_coeff);
+      IsotropicElasticRheology(dim, kappa_coeff, mu_coeff);
   FunctionCoefficient sigma(SurfaceLoad);
   Array<int> surface(body.bdr_attributes.Max());
   surface = 0;

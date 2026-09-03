@@ -136,7 +136,7 @@ int main(int argc, char* argv[]) {
   FunctionCoefficient rho(Density), rho_f(FluidDensity), kappa(BulkModulus),
       mu(ShearModulus), sigma(SurfaceLoad), psi(TidalPotential);
   ConstantCoefficient zero_gradient(0.0);
-  auto rheology = IsotropicMaxwellRheology::Elastic(dim, kappa, mu);
+  auto rheology = IsotropicElasticRheology(dim, kappa, mu);
   std::vector<FluidRegion> fluids;
   if (!solid_core) {
     FluidRegion f;

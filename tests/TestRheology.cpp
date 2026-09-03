@@ -4,6 +4,10 @@
   Tests for IsotropicMaxwellRheology (design doc
   doc/viscoelastic_design.md, section 5, test 1): the derived coefficients
   evaluate to the right combinations of the inputs at quadrature points.
+  For the purely elastic IsotropicElasticRheology and
+  AnisotropicElasticRheology: unrelaxed moduli and stiffness against MFEM's
+  ElasticityIntegrator, a branchless Maxwell body and each other, with the
+  (no-op) relaxation weights; and the elastic limits of the Maxwell bodies.
   And for AnisotropicMaxwellRheology (doc/fluid_solid_design.md section 7):
   the unrelaxed tensor, the branch moduli, and the stiffness objects of the
   two rheologies assembling the same matrix for an isotropic tensor, with
@@ -70,12 +74,132 @@ TEST_P(RheologyTest, UnrelaxedModuli) {
                          });
 }
 
-TEST_P(RheologyTest, ElasticFactory) {
-  auto r = IsotropicMaxwellRheology::Elastic(dim, kappa, mu1);
+TEST_P(RheologyTest, IsotropicElastic) {
+  IsotropicElasticRheology r(dim, kappa, mu1);
+  EXPECT_EQ(r.SpaceDim(), dim);
   EXPECT_EQ(r.NumBranches(), 0);
-  ForEachQuadraturePoint(
-      *mesh, r.UnrelaxedShearModulus(),
-      [](double v, const Vector& x) { EXPECT_NEAR(v, Mu1(x), 1e-14); });
+  EXPECT_TRUE(r.IsLinear());
+  EXPECT_TRUE(r.TraceFreeInternalVariables());
+  EXPECT_EQ(&r.BulkModulus(), &kappa);
+  EXPECT_EQ(&r.ShearModulus(), &mu1);
+  ForEachQuadraturePoint(*mesh, r.Lame(), [this](double v, const Vector& x) {
+    EXPECT_NEAR(v, Kappa(x) - 2.0 * Mu1(x) / dim, 1e-14);
+  });
+
+  // The unrelaxed modulus is the isotropic Mandel tensor, and equals that
+  // of a branchless Maxwell body with the same moduli.
+  IsotropicMaxwellRheology maxwell(dim, kappa, mu1, {});
+  auto C_ref =
+      IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu1);
+  const int ns = SymmetricTensorBasis::Size(dim);
+  DenseMatrix Ca(ns), Cb(ns);
+  for (auto e = 0; e < mesh->GetNE(); e++) {
+    auto* T = mesh->GetElementTransformation(e);
+    const auto& ir = IntRules.Get(mesh->GetElementGeometry(e), 3);
+    for (auto q = 0; q < ir.GetNPoints(); q++) {
+      const auto& ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      r.UnrelaxedModulus(*T, ip, Ca);
+      C_ref.Eval(Cb, *T, ip);
+      Ca -= Cb;
+      EXPECT_LT(Ca.MaxMaxNorm(), 1e-13 * Cb.MaxMaxNorm());
+      maxwell.UnrelaxedModulus(*T, ip, Ca);
+      Ca -= Cb;
+      EXPECT_LT(Ca.MaxMaxNorm(), 1e-13 * Cb.MaxMaxNorm());
+    }
+  }
+}
+
+// Assemble the stiffness of `r` on `fes`, optionally after setting or
+// clearing (empty) relaxation weights, and return the matrix.
+SparseMatrix AssembleStiffness(FiniteElementSpace& fes, const Rheology& r,
+                               bool set_and_clear_weights = false) {
+  auto s = r.MakeStiffness();
+  EXPECT_FALSE(s->IsRelaxed());
+  if (set_and_clear_weights) {
+    s->SetRelaxationWeights({});
+    EXPECT_FALSE(s->IsRelaxed());
+    s->ClearRelaxationWeights();
+    EXPECT_FALSE(s->IsRelaxed());
+  }
+  BilinearForm a(&fes);
+  s->AddIntegrators(a);
+  a.Assemble();
+  a.Finalize();
+  return a.SpMat();
+}
+
+TEST_P(RheologyTest, ElasticStiffnessAgrees) {
+  H1_FECollection fec(2, dim);
+  FiniteElementSpace fes(mesh.get(), &fec, dim);
+
+  // Reference: MFEM's integrator in (lambda, mu) form.
+  IsotropicElasticRheology iso(dim, kappa, mu1);
+  BilinearForm ref(&fes);
+  ref.AddDomainIntegrator(new ElasticityIntegrator(iso.Lame(), mu1));
+  ref.Assemble();
+  ref.Finalize();
+  const double norm = ref.SpMat().MaxNorm();
+  EXPECT_GT(norm, 0.0);
+
+  EXPECT_LT(MaxDiff(AssembleStiffness(fes, iso, true), ref.SpMat()),
+            1e-13 * norm);
+
+  // The same solid as a branchless Maxwell body.
+  IsotropicMaxwellRheology maxwell(dim, kappa, mu1, {});
+  EXPECT_LT(MaxDiff(AssembleStiffness(fes, maxwell), ref.SpMat()),
+            1e-13 * norm);
+
+  // And as an anisotropic elastic body with an isotropic tensor.
+  auto C = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu1);
+  AnisotropicElasticRheology aniso(dim, C);
+  EXPECT_EQ(aniso.SpaceDim(), dim);
+  EXPECT_EQ(aniso.NumBranches(), 0);
+  EXPECT_TRUE(aniso.IsLinear());
+  EXPECT_FALSE(aniso.TraceFreeInternalVariables());
+  EXPECT_EQ(&aniso.Tensor(), &C);
+  EXPECT_LT(MaxDiff(AssembleStiffness(fes, aniso, true), ref.SpMat()),
+            1e-13 * norm);
+}
+
+TEST_P(RheologyTest, ElasticLimits) {
+  std::vector<MaxwellBranch> branches{{&mu1, &tau1}, {&mu2, &tau2}};
+  IsotropicMaxwellRheology r(dim, kappa, mu_inf, branches);
+  auto unrelaxed = r.UnrelaxedElastic();
+  auto relaxed = r.LongTermElastic();
+  EXPECT_EQ(unrelaxed.SpaceDim(), dim);
+  EXPECT_EQ(&unrelaxed.BulkModulus(), &kappa);
+  EXPECT_EQ(&unrelaxed.ShearModulus(), &r.UnrelaxedShearModulus());
+  EXPECT_EQ(&relaxed.BulkModulus(), &kappa);
+  EXPECT_EQ(&relaxed.ShearModulus(), &mu_inf);
+  ForEachQuadraturePoint(*mesh, unrelaxed.Lame(),
+                         [this](double v, const Vector& x) {
+                           const auto mu_u = MuInf(x) + Mu1(x) + Mu2(x);
+                           EXPECT_NEAR(v, Kappa(x) - 2.0 * mu_u / dim, 1e-14);
+                         });
+
+  auto C_inf =
+      IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu_inf);
+  ConstantCoefficient zero(0.0);
+  auto C_1 = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, zero, mu1);
+  auto C_2 = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, zero, mu2);
+  std::vector<AnisotropicBranch> abranches{{&C_1, &tau1}, {&C_2, &tau2}};
+  AnisotropicMaxwellRheology a(dim, C_inf, abranches);
+  auto a_unrelaxed = a.UnrelaxedElastic();
+  auto a_relaxed = a.LongTermElastic();
+  EXPECT_EQ(&a_unrelaxed.Tensor(), &a.UnrelaxedTensor());
+  EXPECT_EQ(&a_relaxed.Tensor(), &C_inf);
+
+  // Both limits assemble the same stiffness as their isotropic twins.
+  H1_FECollection fec(1, dim);
+  FiniteElementSpace fes(mesh.get(), &fec, dim);
+  auto Ku = AssembleStiffness(fes, unrelaxed),
+       Kr = AssembleStiffness(fes, relaxed);
+  const double nu = Ku.MaxNorm();
+  EXPECT_LT(MaxDiff(AssembleStiffness(fes, a_unrelaxed), Ku), 1e-13 * nu);
+  EXPECT_LT(MaxDiff(AssembleStiffness(fes, a_relaxed), Kr), 1e-13 * nu);
+  EXPECT_LT(MaxDiff(AssembleStiffness(fes, r), Ku), 1e-13 * nu);
+  EXPECT_GT(MaxDiff(Ku, Kr), 1e-3 * nu);
 }
 
 TEST_P(RheologyTest, MaxwellFactory) {

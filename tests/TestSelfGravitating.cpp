@@ -41,7 +41,7 @@ struct Case {
   std::unique_ptr<H1_FECollection> fec_u, fec_phi;
   std::unique_ptr<FiniteElementSpace> fes_u, fes_phi;
   std::unique_ptr<ConstantCoefficient> kappa, mu, rho;
-  std::unique_ptr<IsotropicMaxwellRheology> rheology;
+  std::unique_ptr<IsotropicElasticRheology> rheology;
   std::unique_ptr<FunctionCoefficient> sigma;
   Array<int> surface;
 
@@ -57,8 +57,7 @@ struct Case {
     kappa = std::make_unique<ConstantCoefficient>(kKappa);
     mu = std::make_unique<ConstantCoefficient>(kMu);
     rho = std::make_unique<ConstantCoefficient>(density);
-    rheology = std::make_unique<IsotropicMaxwellRheology>(
-        IsotropicMaxwellRheology::Elastic(dim, *kappa, *mu));
+    rheology = std::make_unique<IsotropicElasticRheology>(dim, *kappa, *mu);
     sigma = std::make_unique<FunctionCoefficient>(SurfaceLoad);
     surface = SurfaceMarker(*body);
   }

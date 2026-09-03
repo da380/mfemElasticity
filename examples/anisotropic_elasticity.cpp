@@ -141,6 +141,7 @@ int main(int argc, char* argv[]) {
     socketstream sol_sock(vishost, visport);
     sol_sock.precision(8);
     sol_sock << "solution\n" << mesh << u << flush;
+    sol_sock << (dim == 2 ? "keys Rjlmvvv\n" : "keys RRRilc\n") << std::flush;
   }
   return 0;
 }

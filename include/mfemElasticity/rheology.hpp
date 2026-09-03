@@ -3,7 +3,8 @@
  * @brief Material description shared by the elastic and viscoelastic layers:
  * the abstract Rheology (a generalised Maxwell body with branch moduli that
  * may be scalar or tensorial), the per-problem ElasticStiffness it creates,
- * the isotropic IsotropicMaxwellRheology and the
+ * the purely elastic IsotropicElasticRheology and
+ * AnisotropicElasticRheology, and the IsotropicMaxwellRheology and
  * AnisotropicMaxwellRheology.
  */
 
@@ -75,6 +76,8 @@ class RedirectableMatrixCoefficient : public mfem::MatrixCoefficient {
  * i.e. the unrelaxed @f$C_U@f$, when unset or cleared). Implementations
  * point the integrators at a redirectable coefficient, so that setting
  * weights never rebuilds integrators; the problem reassembles its matrix.
+ * For a purely elastic rheology (no branches) the two moduli coincide and
+ * the weight calls are no-ops.
  */
 class ElasticStiffness {
  public:
@@ -95,7 +98,8 @@ class ElasticStiffness {
   /** @brief Restore the unrelaxed modulus. */
   virtual void ClearRelaxationWeights() = 0;
 
-  /** @brief Whether relaxation weights are currently set. */
+  /** @brief Whether relaxation weights are currently set (never for a
+   * purely elastic rheology). */
   virtual bool IsRelaxed() const = 0;
 };
 
@@ -113,7 +117,9 @@ class ElasticStiffness {
  * @f$\tau_k@f$ depend on the local stress, strain and internal variable
  * (Crawford et al. 2017, Appendix A); without one, or with a
  * state-independent one, the branch is linear. The elastic part is always
- * linear. A purely elastic solid has no branches.
+ * linear. A purely elastic solid has no branches
+ * (IsotropicElasticRheology, AnisotropicElasticRheology); the branch
+ * methods must not be called on it.
  *
  * The material data has one owner: the elastic problem assembles its
  * operator with the integrators of MakeStiffness(), and the viscoelastic
@@ -166,6 +172,118 @@ class Rheology {
   virtual std::unique_ptr<ElasticStiffness> MakeStiffness() const = 0;
 };
 
+// ---------------------------------------------------------------------------
+// Purely elastic rheologies
+
+/**
+ * @brief Isotropic linear elastic solid, @f$\sigma = \kappa\,\mathrm{tr}
+ * (\varepsilon) I + 2\mu\,\mathrm{dev}\,\varepsilon@f$: a Rheology with no
+ * branches.
+ *
+ * The stiffness is the split form @f$\kappa\,\mathrm{div}\,u\,\mathrm{div}\,
+ * v + 2\mu\,\mathrm{dev}\,\varepsilon(u) : \mathrm{dev}\,\varepsilon(v)@f$
+ * with two mfem::ElasticityIntegrators; relaxation weights are no-ops. In
+ * 2-D the deviator is the two-dimensional one, @f$\lambda = \kappa -
+ * \mu@f$ (see IsotropicMaxwellRheology).
+ *
+ * Holds pointers to the caller's coefficients, which must outlive it, plus
+ * the @f$\lambda@f$ it builds. Movable, not copyable. A field with this
+ * rheology passes through the viscoelastic operator with an empty internal
+ * state, so an elastic layer may be coupled to a viscoelastic one in a
+ * multi-field problem.
+ */
+class IsotropicElasticRheology : public Rheology {
+ public:
+  /**
+   * @param dim Space dimension (2 or 3).
+   * @param kappa Bulk modulus.
+   * @param mu Shear modulus.
+   */
+  IsotropicElasticRheology(int dim, mfem::Coefficient& kappa,
+                           mfem::Coefficient& mu);
+
+  IsotropicElasticRheology(IsotropicElasticRheology&&) = default;
+  IsotropicElasticRheology& operator=(IsotropicElasticRheology&&) = default;
+  IsotropicElasticRheology(const IsotropicElasticRheology&) = delete;
+  IsotropicElasticRheology& operator=(const IsotropicElasticRheology&) = delete;
+
+  int SpaceDim() const override { return dim_; }
+  int NumBranches() const override { return 0; }
+  mfem::Coefficient& RelaxationTime(int k) const override;
+  const RelaxationLaw* Law(int k) const override;
+  bool TraceFreeInternalVariables() const override { return true; }
+  void BranchModulus(int k, mfem::ElementTransformation& T,
+                     const mfem::IntegrationPoint& ip,
+                     mfem::DenseMatrix& Ck) const override;
+  void UnrelaxedModulus(mfem::ElementTransformation& T,
+                        const mfem::IntegrationPoint& ip,
+                        mfem::DenseMatrix& CU) const override;
+  std::unique_ptr<ElasticStiffness> MakeStiffness() const override;
+
+  mfem::Coefficient& BulkModulus() const { return *kappa_; }
+  mfem::Coefficient& ShearModulus() const { return *mu_; }
+
+  /** @brief @f$\lambda = \kappa - 2\mu/d@f$, for (lambda, mu) form. */
+  mfem::Coefficient& Lame() const { return *lambda_; }
+
+ private:
+  int dim_;
+  mfem::Coefficient* kappa_;
+  mfem::Coefficient* mu_;
+  std::unique_ptr<mfem::Coefficient> lambda_;
+};
+
+/**
+ * @brief Anisotropic linear elastic solid, @f$\sigma = C\varepsilon@f$ with
+ * @f$C@f$ an @f$n_s \times n_s@f$ Mandel MatrixCoefficient in
+ * SymmetricTensorBasis ordering (see elastic_tensor.hpp): a Rheology with
+ * no branches.
+ *
+ * The stiffness is one ElasticTensorIntegrator; relaxation weights are
+ * no-ops. Holds a pointer to the caller's coefficient, which must outlive
+ * it. Movable, not copyable. As for IsotropicElasticRheology, a field with
+ * this rheology passes through the viscoelastic operator with an empty
+ * internal state.
+ */
+class AnisotropicElasticRheology : public Rheology {
+ public:
+  /**
+   * @param dim Space dimension (2 or 3).
+   * @param C Elastic tensor.
+   */
+  AnisotropicElasticRheology(int dim, mfem::MatrixCoefficient& C);
+
+  AnisotropicElasticRheology(AnisotropicElasticRheology&&) = default;
+  AnisotropicElasticRheology& operator=(AnisotropicElasticRheology&&) = default;
+  AnisotropicElasticRheology(const AnisotropicElasticRheology&) = delete;
+  AnisotropicElasticRheology& operator=(const AnisotropicElasticRheology&) =
+      delete;
+
+  int SpaceDim() const override { return dim_; }
+  int NumBranches() const override { return 0; }
+  mfem::Coefficient& RelaxationTime(int k) const override;
+  const RelaxationLaw* Law(int k) const override;
+  bool TraceFreeInternalVariables() const override { return false; }
+  void BranchModulus(int k, mfem::ElementTransformation& T,
+                     const mfem::IntegrationPoint& ip,
+                     mfem::DenseMatrix& Ck) const override;
+  void UnrelaxedModulus(mfem::ElementTransformation& T,
+                        const mfem::IntegrationPoint& ip,
+                        mfem::DenseMatrix& CU) const override {
+    C_->Eval(CU, T, ip);
+  }
+  std::unique_ptr<ElasticStiffness> MakeStiffness() const override;
+
+  mfem::MatrixCoefficient& Tensor() const { return *C_; }
+
+ private:
+  int dim_;
+  mfem::MatrixCoefficient* C_;
+};
+
+// ---------------------------------------------------------------------------
+// Generalised Maxwell rheologies
+
 /**
  * @brief One Prony branch of an isotropic generalised Maxwell body: a
  * relaxable shear modulus @f$\mu_k@f$ and its relaxation time @f$\tau_k =
@@ -186,8 +304,9 @@ struct MaxwellBranch {
  *          + \sum_k 2\mu_k (d - m_k), \qquad
  *   \dot m_k = (d - m_k)/\tau_k .
  * @f]
- * The classical Maxwell body is @f$\mu_\infty = 0@f$ with one branch; a
- * purely elastic solid has no branches.
+ * The classical Maxwell body is @f$\mu_\infty = 0@f$ with one branch. A
+ * purely elastic solid is IsotropicElasticRheology (an empty branch list
+ * here is legal but not the intended spelling).
  *
  * The stiffness is assembled in the split form @f$\kappa\,\mathrm{div}\,u\,
  * \mathrm{div}\,v + 2\mu\,\mathrm{dev}\,\varepsilon(u) :
@@ -209,15 +328,11 @@ class IsotropicMaxwellRheology : public Rheology {
    * @param dim Space dimension (2 or 3).
    * @param kappa Bulk modulus.
    * @param mu_inf Long-term (fully relaxed) shear modulus.
-   * @param branches Prony branches; may be empty.
+   * @param branches Prony branches.
    */
   IsotropicMaxwellRheology(int dim, mfem::Coefficient& kappa,
                              mfem::Coefficient& mu_inf,
-                             const std::vector<MaxwellBranch>& branches = {});
-
-  /** @brief Purely elastic solid: no branches, @f$\mu_U = \mu@f$. */
-  static IsotropicMaxwellRheology Elastic(int dim, mfem::Coefficient& kappa,
-                                            mfem::Coefficient& mu);
+                             const std::vector<MaxwellBranch>& branches);
 
   /** @brief Classical Maxwell body: @f$\mu_\infty = 0@f$ and one branch,
    * optionally with a relaxation law on it. */
@@ -264,6 +379,16 @@ class IsotropicMaxwellRheology : public Rheology {
   /** @brief @f$\lambda_U = \kappa - 2\mu_U/d@f$, for (lambda, mu) form. */
   mfem::Coefficient& UnrelaxedLame() const { return *lambda_u_; }
 
+  /** @brief The instantaneous (@f$t = 0^+@f$) elastic solid @f$(\kappa,
+   * \mu_U)@f$. Refers to this object's coefficients, which must outlive
+   * it. */
+  IsotropicElasticRheology UnrelaxedElastic() const;
+
+  /** @brief The fully relaxed (@f$t \to \infty@f$) elastic solid
+   * @f$(\kappa, \mu_\infty)@f$. Refers to this object's coefficients, which
+   * must outlive it. */
+  IsotropicElasticRheology LongTermElastic() const;
+
   const MaxwellBranch& Branch(int k) const { return branches_[k]; }
 
  private:
@@ -295,7 +420,8 @@ struct AnisotropicBranch {
  * @f$\sigma = C_U \varepsilon - \sum_k C_k m_k@f$ with @f$C_U = C_\infty +
  * \sum_k C_k@f$, all tensors given as Mandel MatrixCoefficients (see
  * elastic_tensor.hpp) and the internal variables full symmetric tensors
- * evolving as @f$\dot m_k = (\varepsilon - m_k)/\tau_k@f$.
+ * evolving as @f$\dot m_k = (\varepsilon - m_k)/\tau_k@f$. A purely
+ * elastic solid is AnisotropicElasticRheology.
  *
  * The stiffness is one ElasticTensorIntegrator with @f$C_U@f$ or, with
  * relaxation weights, @f$C_\infty + \sum_k \beta_k C_k@f$ through MFEM's
@@ -312,14 +438,10 @@ class AnisotropicMaxwellRheology : public Rheology {
   /**
    * @param dim Space dimension.
    * @param C_inf Long-term tensor @f$C_\infty@f$.
-   * @param branches Relaxable tensors and relaxation times; may be empty.
+   * @param branches Relaxable tensors and relaxation times.
    */
   AnisotropicMaxwellRheology(int dim, mfem::MatrixCoefficient& C_inf,
-                             const std::vector<AnisotropicBranch>& branches =
-                                 {});
-
-  /** @brief Purely elastic anisotropic solid. */
-  static AnisotropicMaxwellRheology Elastic(int dim, mfem::MatrixCoefficient& C);
+                             const std::vector<AnisotropicBranch>& branches);
 
   /**
    * @brief Maxwell body relaxing the deviatoric part of @p C: @f$C_1 =
@@ -361,6 +483,14 @@ class AnisotropicMaxwellRheology : public Rheology {
 
   /** @brief @f$C_U = C_\infty + \sum_k C_k@f$. */
   mfem::MatrixCoefficient& UnrelaxedTensor() const { return *C_u_; }
+
+  /** @brief The instantaneous elastic solid with tensor @f$C_U@f$. Refers
+   * to this object's coefficients, which must outlive it. */
+  AnisotropicElasticRheology UnrelaxedElastic() const;
+
+  /** @brief The fully relaxed elastic solid with tensor @f$C_\infty@f$.
+   * Refers to this object's coefficients, which must outlive it. */
+  AnisotropicElasticRheology LongTermElastic() const;
 
   const AnisotropicBranch& Branch(int k) const { return branches_[k]; }
 
