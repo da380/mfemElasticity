@@ -67,8 +67,8 @@ if(USE_MPI)
     target_link_libraries(TestSubMeshDofInjectionPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSubMeshMixedBilinearFormPar TestSubMeshMixedBilinearFormPar.cpp)
     target_link_libraries(TestSubMeshMixedBilinearFormPar PRIVATE mfemElasticity MPI::MPI_CXX)
-    add_executable(TestElasticProblemPar TestElasticProblemPar.cpp)
-    target_link_libraries(TestElasticProblemPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestQuasiStaticProblemPar TestQuasiStaticProblemPar.cpp)
+    target_link_libraries(TestQuasiStaticProblemPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
     target_link_libraries(TestViscoelasticPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSelfGravitatingPar TestSelfGravitatingPar.cpp)
@@ -77,6 +77,12 @@ if(USE_MPI)
     target_link_libraries(TestBoundaryNormalIntegratorsPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSelfGravitatingFluidPar TestSelfGravitatingFluidPar.cpp)
     target_link_libraries(TestSelfGravitatingFluidPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestSolversPar TestSolversPar.cpp)
+    target_link_libraries(TestSolversPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestCompositeRheologyPar TestCompositeRheologyPar.cpp)
+    target_link_libraries(TestCompositeRheologyPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestSphericalHarmonicsPar TestSphericalHarmonicsPar.cpp)
+    target_link_libraries(TestSphericalHarmonicsPar PRIVATE mfemElasticity MPI::MPI_CXX)
     foreach(np 1 2 4)
         add_test(NAME TestSubMeshDofInjectionPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
@@ -84,9 +90,9 @@ if(USE_MPI)
         add_test(NAME TestSubMeshMixedBilinearFormPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSubMeshMixedBilinearFormPar>)
-        add_test(NAME TestElasticProblemPar_np${np}
+        add_test(NAME TestQuasiStaticProblemPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
-                         $<TARGET_FILE:TestElasticProblemPar>)
+                         $<TARGET_FILE:TestQuasiStaticProblemPar>)
         add_test(NAME TestViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestViscoelasticPar>)
@@ -99,21 +105,42 @@ if(USE_MPI)
         add_test(NAME TestSelfGravitatingFluidPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSelfGravitatingFluidPar>)
+        add_test(NAME TestSolversPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSolversPar>)
+        add_test(NAME TestCompositeRheologyPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestCompositeRheologyPar>)
+        add_test(NAME TestSphericalHarmonicsPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSphericalHarmonicsPar>)
     endforeach()
 endif()
 
+
+add_executable(TestSolvers TestSolvers.cpp)
+target_link_libraries(TestSolvers PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSolvers)
 
 add_executable(TestRelaxationLaw TestRelaxationLaw.cpp)
 target_link_libraries(TestRelaxationLaw PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestRelaxationLaw)
 
+add_executable(TestSphericalHarmonics TestSphericalHarmonics.cpp)
+target_link_libraries(TestSphericalHarmonics PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSphericalHarmonics)
+
+add_executable(TestCompositeRheology TestCompositeRheology.cpp)
+target_link_libraries(TestCompositeRheology PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestCompositeRheology)
+
 add_executable(TestRheology TestRheology.cpp)
 target_link_libraries(TestRheology PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestRheology)
 
-add_executable(TestElasticProblem TestElasticProblem.cpp)
-target_link_libraries(TestElasticProblem PRIVATE mfemElasticity gtest_main)
-gtest_discover_tests(TestElasticProblem)
+add_executable(TestQuasiStaticProblem TestQuasiStaticProblem.cpp)
+target_link_libraries(TestQuasiStaticProblem PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestQuasiStaticProblem)
 
 add_executable(TestElasticTensor TestElasticTensor.cpp)
 target_link_libraries(TestElasticTensor PRIVATE mfemElasticity gtest_main)

@@ -1,5 +1,5 @@
 /*
-  Parallel tests for SelfGravitatingElasticProblem with fluid regions
+  Parallel tests for LinearQuasiStaticSelfGravitatingProblem with fluid regions
   (doc/fluid_solid_design.md section 5.1), on the three-layer meshes with
   ONE disconnected ParSubMesh for the inner core and the mantle and the
   outer core as a FluidRegion. Run with 1, 2 and 4 ranks; a standalone MPI
@@ -56,7 +56,7 @@ struct Setup {
   std::unique_ptr<IsotropicMaxwellRheology> rheology;
   std::vector<FluidRegion> fluids;
   Array<int> surface, inner_core{Array<int>({1})};
-  std::unique_ptr<SelfGravitatingElasticProblem> problem;
+  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> problem;
 
   Setup(FiniteElementSpace& fes_u, FiniteElementSpace& fes_phi,
         Mesh& solid) {
@@ -66,7 +66,7 @@ struct Setup {
         IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau));
     surface = SurfaceMarker(solid);
     fluids.push_back(OuterCore(solid, rho_f));
-    problem = std::make_unique<SelfGravitatingElasticProblem>(
+    problem = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
         &fes_u, &fes_phi, *rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
     problem->SetSurfaceLoad(sigma, surface);
     problem->SetTidalPotential(psi);
@@ -124,10 +124,11 @@ void RunCase(int dim, int order, const std::string& label) {
   Check(RelErr(hi, hi_ref), 0.2, label + " largest Ritz value");
   Check(lo < 3.0 * lo_ref ? 0.0 : 1.0, 0.0, label + " smallest Ritz value");
 
-  for (auto type : {SelfGravitatingElasticProblem::SolverType::BlockMINRES,
-                    SelfGravitatingElasticProblem::SolverType::SchurCG}) {
+  for (auto type :
+       {LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES,
+        LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG}) {
     const std::string name =
-        type == SelfGravitatingElasticProblem::SolverType::BlockMINRES
+        type == LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES
             ? " minres"
             : " schur";
     p.SetSolverType(type);
@@ -140,7 +141,8 @@ void RunCase(int dim, int order, const std::string& label) {
   }
 
   // Time scaling of both loads (surface and tidal), in parallel.
-  p.SetSolverType(SelfGravitatingElasticProblem::SolverType::BlockMINRES);
+  p.SetSolverType(
+      LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
   p.AssembleForce(2.0);
   Check(p.Solve() ? 0.0 : 1.0, 0.0, label + " solve at t = 2");
   Check(RelErr(L2Norm(p.Displacement()), 3.0 * u_ref), 1e-8,
@@ -150,10 +152,10 @@ void RunCase(int dim, int order, const std::string& label) {
 
   // Relaxation weight, compared with the serial problem.
   ConstantCoefficient softer(0.5);
-  ser.problem->SetRelaxationWeights(0, {&softer});
+  ser.problem->SetRelaxationWeights({&softer});
   Check(ser.problem->Solve() ? 0.0 : 1.0, 0.0, label + " serial soft solve");
   p.AssembleForce(0.0);
-  p.SetRelaxationWeights(0, {&softer});
+  p.SetRelaxationWeights({&softer});
   Check(p.Solve() ? 0.0 : 1.0, 0.0, label + " soft solve");
   Check(RelErr(L2Norm(p.Displacement()),
                L2Norm(ser.problem->Displacement())),

@@ -285,7 +285,7 @@ Worked examples for review: `examples/submesh_injection.cpp` and `examples/subme
 
 | 4 (optional) | Root-parent composition for sibling submeshes (only if a use appears); matrix-free `SubMeshMixedOperator` for partial assembly; a `SubMeshDiscreteLinearOperator` for things like `GradientInterpolator` parent→submesh-L2 (today done as `Transfer` + `Grad`, which is fine) | — |
 
-Phase 1 is independent of everything else in the roadmap and is the natural first coding task; Phases 2–3 unblock the `SelfGravitatingElasticProblem` (roadmap step 4).
+Phase 1 is independent of everything else in the roadmap and is the natural first coding task; Phases 2–3 unblock the `LinearQuasiStaticSelfGravitatingProblem` (roadmap step 4).
 
 ---
 

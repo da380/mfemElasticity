@@ -7,6 +7,7 @@
 
 #include <cstdlib>
 #include <functional>
+#include <string>
 
 namespace mfemElasticity {
 
@@ -20,6 +21,10 @@ bool Rheology::IsLinear() const {
     }
   }
   return true;
+}
+
+std::string Rheology::BranchLabel(int k) const {
+  return "branch" + std::to_string(k);
 }
 
 Coefficient& Rheology::BranchShearModulus(int /*k*/) const {
@@ -40,11 +45,21 @@ namespace {
   std::abort();
 }
 
+/// form.AddDomainIntegrator(integ[, *marker]).
+void AddDomain(BilinearForm& form, BilinearFormIntegrator* integ,
+               Array<int>* marker) {
+  if (marker) {
+    form.AddDomainIntegrator(integ, *marker);
+  } else {
+    form.AddDomainIntegrator(integ);
+  }
+}
+
 /// kappa div-div + 2 mu dev-dev.
 void AddIsotropicIntegrators(BilinearForm& form, int dim, Coefficient& kappa,
-                             Coefficient& mu) {
-  form.AddDomainIntegrator(new ElasticityIntegrator(kappa, 1.0, 0.0));
-  form.AddDomainIntegrator(new ElasticityIntegrator(mu, -2.0 / dim, 1.0));
+                             Coefficient& mu, Array<int>* marker) {
+  AddDomain(form, new ElasticityIntegrator(kappa, 1.0, 0.0), marker);
+  AddDomain(form, new ElasticityIntegrator(mu, -2.0 / dim, 1.0), marker);
 }
 
 /// lambda 1 1^T + 2 mu I in Mandel form, 1 1^T = d P_vol.
@@ -60,10 +75,13 @@ void IsotropicMandelTensor(int dim, real_t lambda, real_t mu, DenseMatrix& C) {
 /// Stiffness of a branchless rheology: fixed integrators, weights no-ops.
 class ElasticOnlyStiffness : public ElasticStiffness {
  public:
-  explicit ElasticOnlyStiffness(std::function<void(BilinearForm&)> add)
+  explicit ElasticOnlyStiffness(
+      std::function<void(BilinearForm&, Array<int>*)> add)
       : add_(std::move(add)) {}
 
-  void AddIntegrators(BilinearForm& form) override { add_(form); }
+  void AddIntegrators(BilinearForm& form, Array<int>* marker) override {
+    add_(form, marker);
+  }
 
   void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
     MFEM_VERIFY(beta.empty(),
@@ -76,7 +94,7 @@ class ElasticOnlyStiffness : public ElasticStiffness {
   bool IsRelaxed() const override { return false; }
 
  private:
-  std::function<void(BilinearForm&)> add_;
+  std::function<void(BilinearForm&, Array<int>*)> add_;
 };
 
 }  // namespace
@@ -116,9 +134,10 @@ void IsotropicElasticRheology::UnrelaxedModulus(ElementTransformation& T,
 
 std::unique_ptr<ElasticStiffness> IsotropicElasticRheology::MakeStiffness()
     const {
-  return std::make_unique<ElasticOnlyStiffness>([this](BilinearForm& form) {
-    AddIsotropicIntegrators(form, dim_, *kappa_, *mu_);
-  });
+  return std::make_unique<ElasticOnlyStiffness>(
+      [this](BilinearForm& form, Array<int>* marker) {
+        AddIsotropicIntegrators(form, dim_, *kappa_, *mu_, marker);
+      });
 }
 
 // ---------------------------------------------------------------------------
@@ -151,9 +170,10 @@ void AnisotropicElasticRheology::BranchModulus(int /*k*/,
 
 std::unique_ptr<ElasticStiffness> AnisotropicElasticRheology::MakeStiffness()
     const {
-  return std::make_unique<ElasticOnlyStiffness>([this](BilinearForm& form) {
-    form.AddDomainIntegrator(new ElasticTensorIntegrator(*C_));
-  });
+  return std::make_unique<ElasticOnlyStiffness>(
+      [this](BilinearForm& form, Array<int>* marker) {
+        AddDomain(form, new ElasticTensorIntegrator(*C_), marker);
+      });
 }
 
 // ---------------------------------------------------------------------------
@@ -168,9 +188,9 @@ class IsotropicStiffness : public ElasticStiffness {
   explicit IsotropicStiffness(const IsotropicMaxwellRheology& r)
       : r_(&r), mu_current_(&r.UnrelaxedShearModulus()) {}
 
-  void AddIntegrators(BilinearForm& form) override {
+  void AddIntegrators(BilinearForm& form, Array<int>* marker) override {
     AddIsotropicIntegrators(form, r_->SpaceDim(), r_->BulkModulus(),
-                            mu_current_);
+                            mu_current_, marker);
   }
 
   void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
@@ -284,8 +304,8 @@ class AnisotropicStiffness : public ElasticStiffness {
   explicit AnisotropicStiffness(const AnisotropicMaxwellRheology& r)
       : r_(&r), C_current_(&r.UnrelaxedTensor()) {}
 
-  void AddIntegrators(BilinearForm& form) override {
-    form.AddDomainIntegrator(new ElasticTensorIntegrator(C_current_));
+  void AddIntegrators(BilinearForm& form, Array<int>* marker) override {
+    AddDomain(form, new ElasticTensorIntegrator(C_current_), marker);
   }
 
   void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
@@ -372,6 +392,199 @@ AnisotropicElasticRheology AnisotropicMaxwellRheology::UnrelaxedElastic()
 AnisotropicElasticRheology AnisotropicMaxwellRheology::LongTermElastic()
     const {
   return AnisotropicElasticRheology(dim_, *C_inf_);
+}
+
+// ---------------------------------------------------------------------------
+// Composite
+
+namespace {
+
+/// A scalar coefficient equal to `inner` on the marked attributes and to a
+/// constant elsewhere.
+class RegionCoefficient : public Coefficient {
+ public:
+  RegionCoefficient(const Array<int>& marker, Coefficient& inner,
+                    real_t outside)
+      : marker_(&marker), inner_(&inner), outside_(outside) {}
+
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    const int a = T.Attribute;
+    if (a >= 1 && a <= marker_->Size() && (*marker_)[a - 1]) {
+      return inner_->Eval(T, ip);
+    }
+    return outside_;
+  }
+
+ private:
+  const Array<int>* marker_;
+  Coefficient* inner_;
+  real_t outside_;
+};
+
+/// The regions' stiffnesses, each restricted to its marker; weights sliced
+/// per region.
+class CompositeStiffness : public ElasticStiffness {
+ public:
+  explicit CompositeStiffness(const CompositeRheology& r) : r_(&r) {
+    for (int i = 0; i < r_->NumRegions(); i++) {
+      markers_.emplace_back(r_->RegionMarker(i));
+      parts_.push_back(r_->Region(i).MakeStiffness());
+    }
+  }
+
+  void AddIntegrators(BilinearForm& form, Array<int>* marker) override {
+    if (marker) {
+      // Nested composite: restrict every region to the outer marker.
+      for (auto& m : markers_) {
+        MFEM_VERIFY(m.Size() == marker->Size(),
+                    "CompositeRheology: marker sizes differ.");
+        for (int a = 0; a < m.Size(); a++) {
+          m[a] = m[a] && (*marker)[a];
+        }
+      }
+    } else {
+      r_->VerifyCoverage(*form.FESpace()->GetMesh());
+    }
+    for (int i = 0; i < r_->NumRegions(); i++) {
+      parts_[i]->AddIntegrators(form, &markers_[i]);
+    }
+  }
+
+  void SetRelaxationWeights(const std::vector<Coefficient*>& beta) override {
+    MFEM_VERIFY(static_cast<int>(beta.size()) == r_->NumBranches(),
+                "SetRelaxationWeights: one weight per (global) branch.");
+    for (int i = 0; i < r_->NumRegions(); i++) {
+      const int begin = r_->RegionBranchOffset(i);
+      const int end = begin + r_->Region(i).NumBranches();
+      parts_[i]->SetRelaxationWeights(
+          std::vector<Coefficient*>(beta.begin() + begin, beta.begin() + end));
+    }
+    relaxed_ = true;
+  }
+
+  void ClearRelaxationWeights() override {
+    for (auto& p : parts_) {
+      p->ClearRelaxationWeights();
+    }
+    relaxed_ = false;
+  }
+
+  bool IsRelaxed() const override { return relaxed_; }
+
+ private:
+  const CompositeRheology* r_;
+  std::vector<Array<int>> markers_;  ///< owned copies, referenced by forms
+  std::vector<std::unique_ptr<ElasticStiffness>> parts_;
+  bool relaxed_ = false;
+};
+
+}  // namespace
+
+CompositeRheology::CompositeRheology(int dim,
+                                     std::vector<RheologyRegion> regions)
+    : dim_(dim), regions_(std::move(regions)) {
+  MFEM_VERIFY(dim == 2 || dim == 3, "CompositeRheology: dim must be 2 or 3.");
+  MFEM_VERIFY(!regions_.empty(), "CompositeRheology: no regions.");
+  const int na = regions_[0].marker.Size();
+  MFEM_VERIFY(na > 0, "CompositeRheology: empty region marker.");
+  attribute_region_.assign(na, -1);
+  int k = 0;
+  for (int r = 0; r < NumRegions(); r++) {
+    auto& region = regions_[r];
+    MFEM_VERIFY(region.rheology, "CompositeRheology: region "
+                                     << r << " has no rheology.");
+    MFEM_VERIFY(region.rheology->SpaceDim() == dim_,
+                "CompositeRheology: region " << r
+                                             << " has the wrong dimension.");
+    MFEM_VERIFY(region.marker.Size() == na,
+                "CompositeRheology: region markers must have equal size.");
+    int marked = 0;
+    for (int a = 0; a < na; a++) {
+      if (region.marker[a]) {
+        MFEM_VERIFY(attribute_region_[a] < 0,
+                    "CompositeRheology: attribute " << a + 1
+                                                    << " is in two regions.");
+        attribute_region_[a] = r;
+        marked++;
+      }
+    }
+    MFEM_VERIFY(marked > 0, "CompositeRheology: region " << r << " is empty.");
+    if (region.name.empty()) {
+      region.name = "region" + std::to_string(r);
+    }
+    region_offset_.push_back(k);
+    for (int j = 0; j < region.rheology->NumBranches(); j++, k++) {
+      branch_region_.push_back(r);
+      local_branch_.push_back(j);
+    }
+    if (!region.rheology->TraceFreeInternalVariables()) {
+      tracefree_ = false;
+    }
+  }
+  for (int b = 0; b < NumBranches(); b++) {
+    const auto& region = regions_[branch_region_[b]];
+    tau_.push_back(std::make_unique<RegionCoefficient>(
+        region.marker, region.rheology->RelaxationTime(local_branch_[b]),
+        kOutsideRelaxationTime));
+    if (tracefree_) {
+      mu_.push_back(std::make_unique<RegionCoefficient>(
+          region.marker, region.rheology->BranchShearModulus(local_branch_[b]),
+          0.0));
+    }
+  }
+}
+
+int CompositeRheology::RegionOf(int attribute) const {
+  if (attribute < 1 || attribute > static_cast<int>(attribute_region_.size())) {
+    return -1;
+  }
+  return attribute_region_[attribute - 1];
+}
+
+void CompositeRheology::VerifyCoverage(const Mesh& mesh) const {
+  for (int i = 0; i < mesh.attributes.Size(); i++) {
+    const int a = mesh.attributes[i];
+    MFEM_VERIFY(RegionOf(a) >= 0, "CompositeRheology: element attribute "
+                                      << a << " belongs to no region.");
+  }
+}
+
+void CompositeRheology::UnrelaxedModulus(ElementTransformation& T,
+                                         const IntegrationPoint& ip,
+                                         DenseMatrix& CU) const {
+  const int r = RegionOf(T.Attribute);
+  MFEM_VERIFY(r >= 0, "CompositeRheology: element attribute "
+                          << T.Attribute << " belongs to no region.");
+  Region(r).UnrelaxedModulus(T, ip, CU);
+}
+
+Coefficient& CompositeRheology::BranchShearModulus(int k) const {
+  if (!tracefree_) {
+    return Rheology::BranchShearModulus(k);
+  }
+  return *mu_[k];
+}
+
+void CompositeRheology::BranchModulus(int k, ElementTransformation& T,
+                                      const IntegrationPoint& ip,
+                                      DenseMatrix& Ck) const {
+  const int r = branch_region_[k];
+  if (RegionOf(T.Attribute) == r) {
+    Region(r).BranchModulus(local_branch_[k], T, ip, Ck);
+  } else {
+    const int ns = SymmetricTensorBasis::Size(dim_);
+    Ck.SetSize(ns);
+    Ck = 0.0;
+  }
+}
+
+std::unique_ptr<ElasticStiffness> CompositeRheology::MakeStiffness() const {
+  return std::make_unique<CompositeStiffness>(*this);
+}
+
+std::string CompositeRheology::BranchLabel(int k) const {
+  const int r = branch_region_[k];
+  return regions_[r].name + "_" + Region(r).BranchLabel(local_branch_[k]);
 }
 
 }  // namespace mfemElasticity

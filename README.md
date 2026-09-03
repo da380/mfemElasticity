@@ -14,16 +14,22 @@ pieces are
   (`poisson.hpp`, `mesh.hpp`, `legendre.hpp`);
 - coupling of forms between a mesh and one of its `SubMesh`es through a
   boolean dof injection (`submesh.hpp`);
-- a quasi-static linear elastic problem interface with traction and clamped
+- a linear quasi-static problem interface with traction and clamped
   reference implementations, a generalised Maxwell rheology and a
-  viscoelastic time-dependent operator (`elastic_problem.hpp`,
+  viscoelastic time-dependent operator (`quasi_static_problem.hpp`,
   `rheology.hpp`, `viscoelastic.hpp`);
-- the self-gravitating elastic problem: displacement on a SubMesh of the
+- the self-gravitating problem: displacement on a SubMesh of the
   body coupled to the potential perturbation on the enclosing ball with the
   DtN outer condition, implementing the same interface so the viscoelastic
   layer runs on it unchanged (`self_gravitating.hpp`);
 - rigid-body and general null-space projectors for singular systems
-  (`solvers.hpp`).
+  (`solvers.hpp`);
+- real orthonormal harmonics on a circle or sphere, synthesis of surface
+  fields and interior harmonic potentials from coefficients, and the
+  analysis of a finite-element field (scalar, or the radial component of a
+  vector) on any spherical boundary into coefficients, serial and parallel
+  (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads load and
+  tidal Love numbers off one solve per degree).
 
 Serial and parallel (MPI) paths are provided throughout. Design notes and the
 roadmap are in `doc/`.
@@ -82,11 +88,11 @@ has `-h` for its options.
 | `transformed_diffusion` / `_p` | Laplace equation on a mapped domain solved on the reference domain with `TransformedDiffusionIntegrator` |
 | `submesh_injection` / `_p` | Tour of `SubMeshDofInjection`: moving fields and assembling coupling blocks between a mesh and a submesh |
 | `coupled_poisson` / `_p` | Two Poisson equations, one on a submesh, coupled and solved monolithically |
-| `elastogravity` / `_p` | Self-gravitating elastic body under a surface load: block MINRES with the DtN outer condition |
-| `elastogravity_layered` / `_p` | `SelfGravitatingElasticProblem` with a fluid outer core (two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
+| `elastogravity_layered` / `_p` | `LinearQuasiStaticSelfGravitatingProblem` with a fluid outer core (two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
 | `self_gravitating_relaxation` | Viscoelastic relaxation of the layered self-gravitating model with a fluid core under a Heaviside surface load (Maxwell mantle, elastic inner core) |
-| `quasi_static_elasticity` | Driver for the `QuasiStaticLinearElasticProblem` interface |
-| `self_gravitating_elasticity` / `_p` | `SelfGravitatingElasticProblem`: self-gravitating body under a surface mass load, Schur CG and block MINRES solvers compared, rigid-mode diagnostics |
+| `quasi_static_elasticity` | Driver for the `LinearQuasiStaticProblem` interface |
+| `self_gravitating_elasticity` / `_p` | `LinearQuasiStaticSelfGravitatingProblem`: self-gravitating body under a surface mass load, Schur CG and block MINRES solvers compared, rigid-mode diagnostics |
+| `love_numbers` | Load and tidal Love numbers of a homogeneous self-gravitating sphere (disc) by degree, one solve each, against the incompressible-sphere formulas |
 | `viscoelasticity` | Generalised Maxwell viscoelasticity with `ViscoelasticOperator` |
 | `viscoelastic_schemes` | Cost and accuracy table of every time integrator (ETD1, exponential trapezoid, BE, SDIRK23, RK4, adaptive) on a clamped beam, linear or power-law |
 | `viscoelastic_loading` | GIA-style loading and rebound of a layered Cartesian box with a low-viscosity channel |

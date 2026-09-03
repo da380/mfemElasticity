@@ -1,7 +1,7 @@
 #pragma once
 
 /*
-  Helpers shared by the elastic-problem tests (serial gtest and the MPI
+  Helpers shared by the quasi-static-problem tests (serial gtest and the MPI
   program): small Cartesian meshes, boundary-attribute lookup, the loads of
   the reference problems and the exact uniaxial-stress strain.
 */

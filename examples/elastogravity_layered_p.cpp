@@ -3,11 +3,12 @@
 //
 // Parallel version of elastogravity_layered.cpp: the same layered models
 // with a fluid outer core on a ParMesh / ParSubMesh, through
-// SelfGravitatingElasticProblem on ParFiniteElementSpaces.
+// LinearQuasiStaticSelfGravitatingProblem on ParFiniteElementSpaces.
 //
 // Sample runs:
 //    mpirun -np 4 ./elastogravity_layered_p -o 2
-//    mpirun -np 4 ./elastogravity_layered_p -m ../data/elastogravity_three_layer_3d.msh -o 1 -s 2 -diag
+//    mpirun -np 4 ./elastogravity_layered_p -m
+//    ../data/elastogravity_three_layer_3d.msh -o 1 -s 2 -diag
 // ============================================================================
 
 #include <mpi.h>
@@ -31,8 +32,8 @@ struct Result {
   double seconds = 0.0;
 };
 
-Result Run(SelfGravitatingElasticProblem& p,
-           SelfGravitatingElasticProblem::SolverType type) {
+Result Run(LinearQuasiStaticSelfGravitatingProblem& p,
+           LinearQuasiStaticSelfGravitatingProblem::SolverType type) {
   p.SetSolverType(type);
   p.AssembleForce(0.0);
   MPI_Barrier(MPI_COMM_WORLD);
@@ -44,7 +45,7 @@ Result Run(SelfGravitatingElasticProblem& p,
            p.LastOuterIterations(), p.LastInnerIterations(),
            std::chrono::duration<double>(t1 - t0).count()};
   const char* name =
-      type == SelfGravitatingElasticProblem::SolverType::SchurCG
+      type == LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG
           ? "Schur CG    "
           : "Block MINRES";
   const real_t u_norm = L2Norm(r.u), phi_norm = L2Norm(r.phi);
@@ -149,8 +150,8 @@ int main(int argc, char* argv[]) {
     fluids.push_back(f);
   }
 
-  SelfGravitatingElasticProblem problem(&fes_u, &fes_phi, rheology, rho, 1.0,
-                                        dtn_degree, nullptr, fluids);
+  LinearQuasiStaticSelfGravitatingProblem problem(
+      &fes_u, &fes_phi, rheology, rho, 1.0, dtn_degree, nullptr, fluids);
   if (load_factor != 0.0) {
     problem.SetSurfaceLoad(sigma, SurfaceMarker(solid));
   }
@@ -183,12 +184,13 @@ int main(int argc, char* argv[]) {
 
   std::unique_ptr<Result> schur, minres;
   if (solver == 0 || solver == 2) {
-    schur = std::make_unique<Result>(
-        Run(problem, SelfGravitatingElasticProblem::SolverType::SchurCG));
+    schur = std::make_unique<Result>(Run(
+        problem, LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG));
   }
   if (solver == 1 || solver == 2) {
     minres = std::make_unique<Result>(
-        Run(problem, SelfGravitatingElasticProblem::SolverType::BlockMINRES));
+        Run(problem,
+            LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES));
   }
   if (schur && minres) {
     ParGridFunction du(schur->u), dphi(schur->phi);

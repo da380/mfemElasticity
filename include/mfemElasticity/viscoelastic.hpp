@@ -1,7 +1,7 @@
 /**
  * @file viscoelastic.hpp
  * @brief Quasi-static generalised Maxwell viscoelasticity as a
- * TimeDependentOperator on top of a QuasiStaticLinearElasticProblem, with
+ * TimeDependentOperator on top of a LinearQuasiStaticProblem, with
  * explicit, implicit and exponential time stepping.
  */
 
@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "mfem.hpp"
-#include "mfemElasticity/elastic_problem.hpp"
+#include "mfemElasticity/quasi_static_problem.hpp"
 
 namespace mfemElasticity {
 
@@ -31,13 +31,12 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
 /**
  * @brief Generalised Maxwell viscoelastic evolution operator.
  *
- * For every displacement field @f$i@f$ of the elastic problem and every
- * Prony branch @f$k@f$ of its rheology, a symmetric tensor internal
- * variable @f$m_k@f$ lives on a discontinuous (L2) nodal space on the
- * field's mesh: trace-free when the rheology is isotropic
- * (Rheology::TraceFreeInternalVariables()), a full symmetric tensor for an
- * anisotropic one. The ODE state is the concatenation of all
- * @f$m_{ik}@f$; the displacement is slaved to it through the quasi-static
+ * For every Prony branch @f$k@f$ of the quasi-static problem's rheology, a
+ * symmetric tensor internal variable @f$m_k@f$ lives on a discontinuous
+ * (L2) nodal space on the displacement mesh: trace-free when the rheology
+ * is isotropic (Rheology::TraceFreeInternalVariables()), a full symmetric
+ * tensor for an anisotropic one. The ODE state is the concatenation of the
+ * @f$m_k@f$; the displacement is slaved to it through the quasi-static
  * solve
  * @f[
  *   K_U u = f_{ext}(t) + \sum_k B^T (C_k m_k), \qquad
@@ -47,7 +46,10 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  * strain in the trace-free case) assembled once with a unit coefficient,
  * all material weighting applied pointwise at the internal-variable nodes
  * (@f$C_k m_k = 2\mu_k m_k@f$ for the isotropic body, a sampled Mandel
- * tensor otherwise), and @f$D@f$ the strain map @f$u \mapsto
+ * tensor otherwise), the rows of @f$B@f$ restricted per branch to the
+ * nodes the branch lives on (Rheology::BranchMarker(): a branch of a
+ * CompositeRheology exists on its region only, and its state block holds
+ * just those nodes), and @f$D@f$ the strain map @f$u \mapsto
  * \varepsilon(u)@f$ (or its deviator) at those nodes, either the Galerkin
  * projection (default; adjoint-consistent) or nodal interpolation. The
  * projection is @f$(G^{-1} \otimes M^{-1}) B@f$ with @f$M@f$ the scalar L2
@@ -66,7 +68,7 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  * midpoint (trapezoid) or end (backward Euler) state and the step repeated,
  * SetCorrectorIterations() times or until the times stop changing. Each
  * pass is one elastic solve with a different effective operator (see
- * LinearElasticProblemBase::SetPreconditionerReuse()). A linear rheology
+ * LinearQuasiStaticProblemBase::SetPreconditionerReuse()). A linear rheology
  * (Rheology::IsLinear()) takes the old paths unchanged.
  *
  * Time stepping:
@@ -79,22 +81,22 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  *    step restriction. The recommended workhorse.
  *  - ImplicitSolve(): backward Euler / SDIRK stages through MFEM's implicit
  *    ODESolvers, also via an effective modulus.
- * The last two need the elastic problem to support SetRelaxationWeights()
+ * The last two need the quasi-static problem to support SetRelaxationWeights()
  * (the effective modulus is @f$C_\infty + \sum_k \beta_k C_k@f$ with nodal
  * weights @f$\beta_k@f$); the operator switches the problem between its
  * unrelaxed and effective operators lazily, so mixing schemes is allowed
  * but costs a reassembly at each switch.
  *
- * Observation: after a step the displacement held by the elastic problem is
- * consistent with the new state for the trapezoid and implicit schemes, but
+ * Observation: after a step the displacement held by the quasi-static problem
+ * is consistent with the new state for the trapezoid and implicit schemes, but
  * not after the explicit or exponential-Euler ones. SolveElastic() gives a
  * consistent displacement for any (m, t), re-solving only when needed;
  * SyncFields() copies the state into the registered output GridFunctions.
  *
  * The internal-variable spaces use Ordering::byNODES, so component @f$c@f$
  * of a branch occupies @f$[c\,n_d, (c+1)\,n_d)@f$, with the component
- * convention of TraceFreeSymmetricMatrixIndex / SymmetricMatrixIndex. Works on serial
- * and parallel problems alike (all operations are element-local; the
+ * convention of TraceFreeSymmetricMatrixIndex / SymmetricMatrixIndex. Works on
+ * serial and parallel problems alike (all operations are element-local; the
  * forces are L-vectors, which is what AddForce expects).
  */
 class ViscoelasticOperator : public mfem::TimeDependentOperator {
@@ -102,7 +104,7 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   enum class StrainMap { Galerkin, Interpolation };
 
   /**
-   * @param problem The elastic problem; must outlive this operator.
+   * @param problem The quasi-static problem; must outlive this operator.
    * @param internal_order Polynomial order of the L2 internal-variable
    * spaces; < 0 means the smallest order resolving eps(u) exactly:
    * displacement order - 1 on simplices, the displacement order on
@@ -111,40 +113,39 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * maps coincide, and the effective-modulus elimination is exact.
    * @param map The strain map u -> d at the internal-variable nodes.
    */
-  ViscoelasticOperator(QuasiStaticLinearElasticProblem& problem,
+  ViscoelasticOperator(LinearQuasiStaticProblem& problem,
                        int internal_order = -1,
                        StrainMap map = StrainMap::Galerkin);
 
   // --- state layout ---------------------------------------------------------
 
-  int NumFields() const { return static_cast<int>(fields_.size()); }
-  int NumBranches(int i) const {
-    return static_cast<int>(fields_[i].itau.size());
-  }
-  /** @brief Block offsets of the state, (field, branch) major. */
+  int NumBranches() const { return static_cast<int>(itau_.size()); }
+  /** @brief Block offsets of the state, one block per branch. */
   const mfem::Array<int>& Offsets() const { return offsets_; }
-  int BranchOffset(int i, int k) const;
-  /** @brief Size of one branch of field @p i (= components x scalar dofs). */
-  int BranchSize(int i) const { return fields_[i].nd * fields_[i].nc; }
-  /** @brief Tensor components of field @p i's internal variables (n_s - 1
+  int BranchOffset(int k) const { return offsets_[k]; }
+  /** @brief Size of branch @p k's state block: NumComponents() times its
+   * active nodes, laid out component-major (c * NumBranchNodes(k) + q). */
+  int BranchSize(int k) const { return offsets_[k + 1] - offsets_[k]; }
+  /** @brief The scalar dofs of InternalScalarSpace() branch @p k lives on:
+   * all of them unless the rheology restricts the branch to a region. */
+  const mfem::Array<int>& BranchNodes(int k) const { return nodes_[k]; }
+  int NumBranchNodes(int k) const { return nodes_[k].Size(); }
+  /** @brief Tensor components of the internal variables (n_s - 1
    * trace-free, n_s full). */
-  int NumComponents(int i) const { return fields_[i].nc; }
-  bool TraceFree(int i) const { return fields_[i].tracefree; }
-  /** @brief Aliasing view (no copy) of branch @p k of field @p i in @p m. */
-  mfem::Vector Branch(const mfem::Vector& m, int i, int k) const;
+  int NumComponents() const { return nc_; }
+  bool TraceFree() const { return tracefree_; }
+  /** @brief Aliasing view (no copy) of branch @p k in @p m. */
+  mfem::Vector Branch(const mfem::Vector& m, int k) const;
+  /** @brief Scatter branch @p k of @p m into the layout of
+   * InternalVariableSpace() (zero off its nodes). */
+  void BranchToFull(const mfem::Vector& m, int k, mfem::Vector& full) const;
 
-  mfem::FiniteElementSpace& InternalVariableSpace(int i) {
-    return *fields_[i].dfes;
-  }
-  mfem::FiniteElementSpace& InternalScalarSpace(int i) {
-    return *fields_[i].sfes;
-  }
-  /** @brief Output view of branch @p k of field @p i; see SyncFields(). */
-  const mfem::GridFunction& InternalVariable(int i, int k) const {
-    return *fields_[i].m_out[k];
-  }
+  mfem::FiniteElementSpace& InternalVariableSpace() { return *dfes_; }
+  mfem::FiniteElementSpace& InternalScalarSpace() { return *sfes_; }
+  /** @brief Output view of branch @p k; see SyncFields(). */
+  const mfem::GridFunction& InternalVariable(int k) const { return *m_out_[k]; }
   StrainMap Map() const { return map_; }
-  QuasiStaticLinearElasticProblem& Problem() { return problem_; }
+  LinearQuasiStaticProblem& Problem() { return problem_; }
 
   // --- ODE interface --------------------------------------------------------
 
@@ -187,19 +188,17 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   }
   int LastCorrectorPasses() const { return last_passes_; }
 
-  /** @brief True if every field's rheology is linear. */
+  /** @brief True if the rheology is linear (no state-dependent law). */
   bool IsLinear() const { return linear_; }
 
-  /** @brief Re-evaluate field @p i's relaxation times at the state
-   * (@p d strain, @p m full state vector); no-op for linear fields. */
-  void EvaluateRelaxationTimes(int i, const mfem::Vector& d,
+  /** @brief Re-evaluate the relaxation times at the state (@p d strain,
+   * @p m full state vector); no-op for a linear rheology. */
+  void EvaluateRelaxationTimes(const mfem::Vector& d,
                                const mfem::Vector& m) const;
 
-  /** @brief Current nodal @f$1/\tau_k@f$ of field @p i (state-dependent
-   * laws: as of the last evaluation). */
-  const mfem::Vector& InverseRelaxationTimes(int i, int k) const {
-    return fields_[i].itau[k];
-  }
+  /** @brief Current nodal @f$1/\tau_k@f$ (state-dependent laws: as of the
+   * last evaluation). */
+  const mfem::Vector& InverseRelaxationTimes(int k) const { return itau_[k]; }
 
   // --- observation ----------------------------------------------------------
 
@@ -217,13 +216,11 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * parallel); the explicit stability limit is a small multiple of it. */
   mfem::real_t MinRelaxationTime() const;
 
-  /** @brief The strain map of field @p i: d = D u at the internal nodes. */
-  void ComputeStrain(int i, const mfem::GridFunction& u, mfem::Vector& d) const;
+  /** @brief The strain map: d = D u at the internal nodes. */
+  void ComputeStrain(const mfem::GridFunction& u, mfem::Vector& d) const;
 
-  /** @brief The geometric coupling form B of field @p i. */
-  const mfem::MixedBilinearForm& CouplingForm(int i) const {
-    return *fields_[i].B;
-  }
+  /** @brief The geometric coupling form B. */
+  const mfem::MixedBilinearForm& CouplingForm() const { return *B_; }
 
   /** @brief Restore the problem's unrelaxed operator (done lazily anyway). */
   void UseUnrelaxedOperator() const;
@@ -231,85 +228,89 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
  protected:
   enum class Scheme { None, BackwardEuler, ExponentialTrapezoid };
 
-  struct Field {
-    mfem::FiniteElementSpace* ufes = nullptr;
-    std::unique_ptr<mfem::FiniteElementCollection> fec;
-    std::unique_ptr<mfem::FiniteElementSpace> dfes;  ///< tensor space
-    std::unique_ptr<mfem::FiniteElementSpace> sfes;  ///< scalar companion
-    std::unique_ptr<mfem::MixedBilinearForm> B;      ///< geometric coupling
-    std::unique_ptr<mfem::DiscreteLinearOperator> D_interp;
-    std::unique_ptr<mfem::SparseMatrix> Minv;  ///< block-diagonal L2 M^{-1}
-    mfem::DenseMatrix Ginv;  ///< inverse Frobenius metric of the basis tensors
-    bool tracefree = true;   ///< trace-free (isotropic) internal variables
-    int nd = 0;              ///< scalar dofs
-    int nc = 0;              ///< tensor components
-    int ns = 0;              ///< d(d+1)/2
-    /// Isotropic: nodal 2 mu_k. Anisotropic: per node the n_s x n_s matrix
-    /// W with sigma_s = sum_t W_st m_t on unscaled tensor components
-    /// (row-major, node-major: W(p)(s,t) at p ns ns + s ns + t).
-    std::vector<mfem::Vector> branch_modulus;
-    mfem::Vector CU;  ///< anisotropic: nodal W-form of C_U (for the stress)
-    std::vector<mfem::Vector> itau0;          ///< nodal 1 / tau_k0
-    mutable std::vector<mfem::Vector> itau;   ///< current nodal 1 / tau_k
-    bool linear = true;                       ///< no state-dependent law
-    std::vector<const RelaxationLaw*> law;    ///< per branch, may be null
-    std::vector<mfem::Vector> law_params;     ///< per branch, node-major
-    std::vector<int> num_params;
-    std::vector<std::unique_ptr<mfem::GridFunction>> beta;  ///< nodal weights
-    std::vector<std::unique_ptr<mfem::GridFunctionCoefficient>> beta_coef;
-    std::vector<mfem::Coefficient*> beta_ptrs;
-    std::vector<std::unique_ptr<mfem::GridFunction>> m_out;
-    mutable mfem::Vector d, d_prev, dual, force, zeta;  ///< scratch
-  };
-
   /** @brief Pointwise rate of branch @p k: (d - m_k) / tau_k. */
-  virtual void Rate(const Field& f, int k, const mfem::Vector& m_k,
-                    const mfem::Vector& d, mfem::Vector& k_out) const;
+  virtual void Rate(int k, const mfem::Vector& m_k, const mfem::Vector& d,
+                    mfem::Vector& k_out) const;
 
   /** @brief Exact relaxation of branch @p k over @p dt with @p d frozen. */
-  virtual void LocalExponentialUpdate(const Field& f, int k, mfem::real_t dt,
-                                      mfem::Vector& m_k,
+  virtual void LocalExponentialUpdate(int k, mfem::real_t dt, mfem::Vector& m_k,
                                       const mfem::Vector& d) const;
 
   /** @brief y = C_k x pointwise at the internal nodes (2 mu_k x for the
    * isotropic body, the sampled tensor otherwise). */
-  static void ApplyBranchModulus(const Field& f, int k, const mfem::Vector& x,
-                                 mfem::Vector& y);
+  void ApplyBranchModulus(int k, const mfem::Vector& x, mfem::Vector& y) const;
 
-  /** @brief Push B^T zeta (zeta in the internal layout) into field i. */
-  void AddCoupledForce(int i, const mfem::Vector& zeta) const;
+  /** @brief Push B_k^T zeta (zeta in branch @p k's layout) into the
+   * problem. */
+  void AddCoupledForce(int k, const mfem::Vector& zeta) const;
 
-  /** @brief AssembleForce(t), the branch forces sum_k B^T(2 mu_k m_k), and
+  /** @brief AssembleForce(t), the branch forces sum_k B^T(C_k m_k), and
    * Solve(). */
   bool ElasticUpdate(const mfem::Vector& m, mfem::real_t t) const;
 
-  /** @brief d_i = D u_i for every field, into fields_[i].d. */
-  void ComputeAllStrains() const;
+  /** @brief d_ = D u for the problem's current displacement. */
+  void ComputeCurrentStrain() const;
 
-  /** @brief Set the relaxation weights for (dt, scheme) on every field,
-   * reassembling only when they change. */
+  /** @brief Set the relaxation weights for (dt, scheme), reassembling only
+   * when they change. */
   void SetEffectiveModulus(mfem::real_t dt, Scheme scheme) const;
 
   bool CacheMatches(const mfem::Vector& m, mfem::real_t t) const;
   void UpdateCache(const mfem::Vector& m, mfem::real_t t) const;
 
-  /** @brief Max over fields and nodes of the relative change of 1/tau
+  /** @brief Max over nodes and branches of the relative change of 1/tau
    * between @p old_itau and the current values (global). */
   mfem::real_t RelaxationTimeChange(
-      const std::vector<std::vector<mfem::Vector>>& old_itau) const;
-  std::vector<std::vector<mfem::Vector>> SaveRelaxationTimes() const;
+      const std::vector<mfem::Vector>& old_itau) const;
   mfem::real_t GlobalMax(mfem::real_t v) const;
 
-  QuasiStaticLinearElasticProblem& problem_;
+  LinearQuasiStaticProblem& problem_;
   StrainMap map_;
-  std::vector<Field> fields_;
+
+  // Internal-variable discretisation.
+  mfem::FiniteElementSpace* ufes_ = nullptr;
+  std::unique_ptr<mfem::FiniteElementCollection> fec_;
+  std::unique_ptr<mfem::FiniteElementSpace> dfes_;  ///< tensor space
+  std::unique_ptr<mfem::FiniteElementSpace> sfes_;  ///< scalar companion
+  std::unique_ptr<mfem::MixedBilinearForm> B_;      ///< geometric coupling
+  std::unique_ptr<mfem::DiscreteLinearOperator> D_interp_;
+  std::unique_ptr<mfem::SparseMatrix> Minv_;  ///< block-diagonal L2 M^{-1}
+  mfem::DenseMatrix Ginv_;  ///< inverse Frobenius metric of the basis tensors
+  bool tracefree_ = true;   ///< trace-free (isotropic) internal variables
+  int nd_ = 0;              ///< scalar dofs
+  int nc_ = 0;              ///< tensor components
+  int ns_ = 0;              ///< d(d+1)/2
   mfem::Array<int> offsets_;
+  // Per branch: its active scalar nodes, the inverse map (node -> position
+  // in the block, -1 off the branch), and the rows of B for its nodes
+  // (B_ itself for a whole-mesh branch). Nodal material data below is
+  // stored per branch at its active nodes, in block order.
+  std::vector<mfem::Array<int>> nodes_, slot_;
+  std::vector<const mfem::SparseMatrix*> Bk_;
+  std::vector<std::unique_ptr<mfem::SparseMatrix>> Bk_owned_;
+
+  // Material data sampled at the internal nodes.
+  /// Isotropic: nodal 2 mu_k. Anisotropic: per node the n_s x n_s matrix
+  /// W with sigma_s = sum_t W_st m_t on unscaled tensor components
+  /// (row-major, node-major: W(p)(s,t) at p ns ns + s ns + t).
+  std::vector<mfem::Vector> branch_modulus_;
+  mfem::Vector CU_;  ///< anisotropic: nodal W-form of C_U (for the stress)
+  std::vector<mfem::Vector> itau0_;         ///< nodal 1 / tau_k0
+  mutable std::vector<mfem::Vector> itau_;  ///< current nodal 1 / tau_k
+  bool linear_ = true;                      ///< no state-dependent law
+  std::vector<const RelaxationLaw*> law_;   ///< per branch, may be null
+  std::vector<mfem::Vector> law_params_;    ///< per branch, node-major
+  std::vector<int> num_params_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> beta_;  ///< nodal weights
+  std::vector<std::unique_ptr<mfem::GridFunctionCoefficient>> beta_coef_;
+  std::vector<mfem::Coefficient*> beta_ptrs_;
+  std::vector<std::unique_ptr<mfem::GridFunction>> m_out_;
+  mutable mfem::Vector d_, d_prev_, dual_, force_, zeta_;  ///< scratch
 
   mutable Scheme scheme_ = Scheme::None;
   mutable mfem::real_t effective_dt_ = -1.0;
   mutable long effective_version_ = -1;  ///< tau version the weights hold
   mutable long tau_version_ = 0;         ///< bumped by EvaluateRelaxationTimes
-  bool linear_ = true;
   int max_corrector_ = 1;
   mfem::real_t corrector_tol_ = 1e-3;
   int last_passes_ = 0;
@@ -317,8 +318,8 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   // ETD1 predictor of the last trapezoid step, for the error estimate.
   mfem::Vector predictor_diff_, m_scale_;
 
-  // (m, t) for which fields_[i].d and the problem's displacement are
-  // consistent, if cache_valid_.
+  // (m, t) for which d_ and the problem's displacement are consistent, if
+  // cache_valid_.
   mutable mfem::Vector cached_m_;
   mutable mfem::real_t cached_t_ = 0.0;
   mutable bool cache_valid_ = false;

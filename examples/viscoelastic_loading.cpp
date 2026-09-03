@@ -5,9 +5,9 @@
 // surface load (an "ice sheet") pushes the top of a layered viscoelastic
 // half-space down while it is present, and the surface rebounds once it is
 // removed. Built on the same building blocks as viscoelasticity.cpp
-// (mfemElasticity/elastic_problem.hpp, viscoelastic.hpp): a ClampedProblem
-// (bottom clamped, load traction on top) with an IsotropicMaxwellRheology,
-// stepped by the ViscoelasticOperator.
+// (mfemElasticity/quasi_static_problem.hpp, viscoelastic.hpp): a
+// LinearQuasiStaticClampedProblem (bottom clamped, load traction on top) with
+// an IsotropicMaxwellRheology, stepped by the ViscoelasticOperator.
 //
 // The box [0,W]x[0,H] (2-D) or [0,W]x[0,W]x[0,H] (3-D, -d 3) is split by
 // element-centre depth into three layers of element attribute:
@@ -172,7 +172,8 @@ int main(int argc, char* argv[]) {
         }
       });
 
-  ClampedProblem problem(&fes, rheology, ess_bdr, traction, traction_marker);
+  LinearQuasiStaticClampedProblem problem(&fes, rheology, ess_bdr, traction,
+                                          traction_marker);
 
   ViscoelasticOperator visco(problem);
 

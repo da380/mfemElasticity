@@ -11,10 +11,14 @@
  * elasticity and viscoelasticity problems. Key components include:
  *
  * @subsection solvers Solvers
- * The RigidBodySolver class wraps another mfem::Solver and
- * orthogonally projects out rigid body motions. This is primarily used in the
- * solution of static or quasi-static problems with traction boundary conditions.
- * See `examples/quasi_static_elasticity.cpp` (through `TractionProblem`) for an example of its usage.
+ * NullSpaceProjector holds an orthonormal basis of a (near-)null space and
+ * ProjectedSolver / ProjectedOperator run a Krylov method on the projected
+ * system @f$P A P@f$ with the projected preconditioner @f$P M P@f$. The free
+ * function MakeRigidModeProjector() builds the projector for the rigid modes
+ * of a displacement space; this is how static or quasi-static problems with
+ * traction boundary conditions are solved. See
+ * `examples/quasi_static_elasticity.cpp` (through
+ * `LinearQuasiStaticTractionProblem`) for an example of its usage.
  *
  * @subsection integrators LinearFormIntegrator and BilinearFormIntegrator Extensions
  * A number of classes derived from `mfem::LinearFormIntegrator` and

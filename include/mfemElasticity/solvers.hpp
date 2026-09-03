@@ -114,166 +114,15 @@ class RigidRotation : public mfem::VectorCoefficient {
 };
 
 /**
- * @brief Linear solver suitable for static elastic problems with traction
- * boundary conditions.
- *
- * This class wraps another MFEM solver and pre- and post-multiplies
- * that solver's action with a projection orthogonal to the linearized rigid
- * body motions. This is crucial for solving problems where the stiffness matrix
- * has a null space corresponding to rigid body motions (e.g., free-floating
- * bodies under traction).
- *
- * This solver is suitable only for 2 and 3 dimensional problems.
- */
-class RigidBodySolver : public mfem::Solver {
- private:
-  mfem::FiniteElementSpace
-      *_fes; /**< Pointer to the finite element space for displacements. */
-  std::vector<std::unique_ptr<mfem::Vector>>
-      _u; /**< A collection of orthogonalized rigid body modes (vectors). */
-  mfem::Solver *_solver = nullptr; /**< Pointer to the underlying solver. */
-  mutable mfem::Vector
-      _b; /**< Internal buffer for the projected right-hand side vector. */
-  const bool
-      _parallel; /**< Flag indicating if the solver is running in parallel. */
-
-#ifdef MFEM_USE_MPI
-  mfem::ParFiniteElementSpace *_pfes; /**< Pointer to the parallel finite
-                                         element space (if MPI is enabled). */
-  MPI_Comm _comm; /**< The MPI communicator (if MPI is enabled). */
-#endif
-
-  /**
-   * @brief Local implementation of the Euclidean dot product of two vectors.
-   *
-   * This method correctly computes the dot product for both serial and parallel
-   * codes.
-   *
-   * @param x The first vector.
-   * @param y The second vector.
-   * @return The Euclidean dot product of x and y.
-   */
-  mfem::real_t Dot(const mfem::Vector &x, const mfem::Vector &y) const;
-
-  /**
-   * @brief Returns the Euclidean norm of a vector.
-   *
-   * @param x The vector for which to compute the norm.
-   * @return The Euclidean norm of the vector x.
-   */
-  mfem::real_t Norm(const mfem::Vector &x) const;
-
-  /**
-   * @brief Sets up the rigid body fields.
-   *
-   * This method generates the basis vectors for rigid body translations
-   * and rotations based on the spatial dimension of the problem and
-   * projects them onto the finite element space. These vectors are then
-   * orthogonalized using Gram-Schmidt.
-   */
-  void SetRigidBodyFields();
-
-  /**
-   * @brief Performs modified Gram-Schmidt orthogonalization on the linearized
-   * rigid body modes.
-   *
-   * This ensures that the basis vectors for the null space are orthonormal.
-   */
-  void GramSchmidt();
-
-  /**
-   * @brief Returns the dimension of the space of linearized rigid body motions.
-   *
-   * For 2D, this is 3 (2 translations + 1 rotation).
-   * For 3D, this is 6 (3 translations + 3 rotations).
-   *
-   * @return The dimension of the null space.
-   */
-  int GetNullDim() const;
-
-  /**
-   * @brief Takes in a vector x and returns in y its projection orthogonal to
-   * the linearized rigid body modes.
-   *
-   * This operation removes any rigid body components from the given vector.
-   *
-   * @param x The input vector.
-   * @param y The output vector, which is the projection of x orthogonal to the
-   * rigid body modes.
-   */
-  void ProjectOrthogonalToRigidBody(const mfem::Vector &x,
-                                    mfem::Vector &y) const;
-
- public:
-  /**
-   * @brief Constructor for the RigidBodySolver class for serial execution.
-   *
-   * To construct a class instance, the finite element space on
-   * which the displacements are defined must be provided.
-   *
-   * @param fes Pointer to the `mfem::FiniteElementSpace`.
-   */
-  RigidBodySolver(mfem::FiniteElementSpace *fes);
-
-#ifdef MFEM_USE_MPI
-  /**
-   * @brief Constructor for the RigidBodySolver class for parallel execution.
-   *
-   * To construct a class instance, the MPI communicator and
-   * finite element space on which the displacements are defined
-   * must be provided.
-   *
-   * @param comm The MPI communicator.
-   * @param fes Pointer to the `mfem::ParFiniteElementSpace`.
-   */
-  RigidBodySolver(MPI_Comm comm, mfem::ParFiniteElementSpace *fes);
-#endif
-
-  /**
-   * @brief Sets the underlying MFEM solver to be used.
-   *
-   * This solver will be wrapped by the `RigidBodySolver`.
-   *
-   * @param solver A reference to the `mfem::Solver` instance.
-   */
-  void SetSolver(mfem::Solver &solver);
-
-  /**
-   * @brief Sets the operator for the underlying solver.
-   *
-   * The `SetSolver()` method must be called before calling this routine.
-   * If the operator is already set within the underlying solver, then this
-   * method need not be called.
-   *
-   * @param op A constant reference to the `mfem::Operator` to be set.
-   */
-  void SetOperator(const mfem::Operator &op) override;
-
-  /**
-   * @brief Implementation of the Mult method, which performs the solver's
-   * action.
-   *
-   * The action of the underlying solver is wrapped with projections orthogonal
-   * to the rigid body modes. This ensures that the solution `x` is also
-   * orthogonal to the rigid body modes, and the right-hand side `b` is
-   * similarly projected before being passed to the underlying solver.
-   *
-   * @param b The right-hand side vector.
-   * @param x The solution vector.
-   */
-  void Mult(const mfem::Vector &b, mfem::Vector &x) const override;
-};
-
-/**
  * @brief An orthonormal basis of a (near-)null space of an operator, with the
  * Euclidean projection onto its orthogonal complement; serial or parallel
  * (true-dof vectors, global inner products).
  *
  * Vectors are added one at a time and orthonormalised by modified
  * Gram-Schmidt; a vector that is (numerically) dependent on the ones already
- * present is dropped. This generalises the rigid-body projection of
- * RigidBodySolver to arbitrary null vectors, for instance the coupled
- * displacement/potential null vectors of a self-gravitating body or the
+ * present is dropped. Typical null vectors are the rigid modes of a
+ * displacement space (AddRigidModes(), MakeRigidModeProjector()), the coupled
+ * displacement/potential null vectors of a self-gravitating body, or the
  * constant potential in two dimensions.
  */
 class NullSpaceProjector {
@@ -318,6 +167,25 @@ class NullSpaceProjector {
 };
 
 /**
+ * @brief Append the linearised rigid modes of the displacement space @p fes
+ * (the translations and, in two dimensions, the in-plane rotation, or all
+ * three rotations in three dimensions) to @p P as true-dof vectors. Returns
+ * the number actually added (a mode already spanned by @p P is dropped).
+ *
+ * @p P must use the communicator of @p fes when the space is parallel. The
+ * space must have vdim 2 or 3.
+ */
+int AddRigidModes(NullSpaceProjector& P, mfem::FiniteElementSpace& fes);
+
+/**
+ * @brief A projector holding exactly the rigid modes of @p fes (serial or
+ * parallel, the communicator taken from the space); the null-space handling
+ * of a pure traction problem.
+ */
+std::unique_ptr<NullSpaceProjector> MakeRigidModeProjector(
+    mfem::FiniteElementSpace& fes);
+
+/**
  * @brief The operator @f$P A P@f$ for a projector @f$P@f$ from a
  * NullSpaceProjector: @f$A@f$ restricted to the orthogonal complement of the
  * null space. Symmetric when @f$A@f$ is; the natural operator to hand to a
@@ -343,8 +211,8 @@ class ProjectedOperator : public mfem::Operator {
  * @brief Wraps a solver for a (nearly) singular symmetric system: the
  * operator handed to the inner solver is @f$P A P@f$, the right-hand side and
  * (in iterative mode) the initial guess are projected before, and the
- * solution after, the inner solve. The generalisation of RigidBodySolver to
- * an arbitrary NullSpaceProjector.
+ * solution after, the inner solve. With MakeRigidModeProjector() this is the
+ * solver of a free body under traction.
  */
 class ProjectedSolver : public mfem::Solver {
  public:
@@ -359,11 +227,32 @@ class ProjectedSolver : public mfem::Solver {
 
   void Mult(const mfem::Vector& b, mfem::Vector& x) const override;
 
+  /**
+   * @brief Choose the representative of the solution: after each solve,
+   * remove the component of @f$x@f$ in the span of the basis so that
+   * @f$n_i^T M x = 0@f$ for every basis vector (with @f$M@f$ the
+   * @f$\rho@f$-weighted vector mass matrix and the basis the rigid modes:
+   * zero net momentum and angular momentum), instead of the Euclidean
+   * @f$n_i^T x = 0@f$ of the projector. The inner solve is unchanged (it
+   * needs the Euclidean projector to keep @f$PAP@f$ symmetric); only the
+   * null-space component of the result differs. @p M must be symmetric
+   * positive semi-definite; basis vectors with zero @f$M@f$-norm (the
+   * constant potential of a coupled system, say) keep the Euclidean
+   * gauge, the others must be independent under @f$M@f$. Null restores the
+   * Euclidean gauge. Call after the basis is complete.
+   */
+  void SetGauge(const mfem::Operator* M);
+
  private:
+  void ApplyGauge(mfem::Vector& x) const;
+
   const NullSpaceProjector* P_;
   mfem::Solver* solver_ = nullptr;
   std::unique_ptr<ProjectedOperator> projected_;
   mutable mfem::Vector b_;
+  std::vector<int> gauge_idx_;    ///< basis vectors with nonzero M-norm
+  std::vector<mfem::Vector> Mn_;  ///< M n_i for those
+  mfem::DenseMatrix Ginv_;        ///< (n_i . M n_j)^{-1} over those
 };
 
 }  // namespace mfemElasticity

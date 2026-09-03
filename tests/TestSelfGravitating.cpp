@@ -2,8 +2,9 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for SelfGravitatingElasticProblem on the canned two-layer meshes
-  (2-D disc in a disc, 3-D ball in a ball), see SelfGravitatingTestCommon.hpp.
+  Tests for LinearQuasiStaticSelfGravitatingProblem on the canned two-layer
+  meshes (2-D disc in a disc, 3-D ball in a ball), see
+  SelfGravitatingTestCommon.hpp.
 
   - The Schur-complement CG and the block MINRES solvers give the same
     displacement and potential to solver tolerance (both solve the system
@@ -14,7 +15,8 @@
     (the coupling, the gravity terms and the background potential all
     vanish). On these curved meshes the rigid rotations are exact null
     vectors only for order >= 2, so the reference uses the same P A P
-    regularisation as the class rather than TractionProblem's solver.
+    regularisation as the class rather than LinearQuasiStaticTractionProblem's
+  solver.
   - The response is linear in the loads: time scaling of the surface load,
     and superposition of a surface load and an AddForce() increment.
   - Repeated and out-of-order solves (warm starts) reproduce the cold
@@ -62,9 +64,9 @@ struct Case {
     surface = SurfaceMarker(*body);
   }
 
-  std::unique_ptr<SelfGravitatingElasticProblem> Problem(
+  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> Problem(
       bool with_load = true) {
-    auto p = std::make_unique<SelfGravitatingElasticProblem>(
+    auto p = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, *rho, kG, kDtNDegree);
     if (with_load) {
       p->SetSurfaceLoad(*sigma, surface);
@@ -87,13 +89,14 @@ TEST_P(SelfGravitatingTest, SchurAndMinresAgree) {
   Case s(dim, order);
 
   auto schur = s.Problem();
-  schur->SetSolverType(SelfGravitatingElasticProblem::SolverType::SchurCG);
+  schur->SetSolverType(
+      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
   schur->AssembleForce(0.0);
   ASSERT_TRUE(schur->Solve());
 
   auto minres = s.Problem();
   minres->SetSolverType(
-      SelfGravitatingElasticProblem::SolverType::BlockMINRES);
+      LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
   minres->AssembleForce(0.0);
   ASSERT_TRUE(minres->Solve());
 
@@ -103,6 +106,54 @@ TEST_P(SelfGravitatingTest, SchurAndMinresAgree) {
   EXPECT_LT(RelDiff(schur->Displacement(), minres->Displacement()), tol);
   EXPECT_LT(RelDiff(schur->Potential(), minres->Potential()), tol);
   EXPECT_GT(schur->LastInnerIterations(), minres->LastInnerIterations());
+}
+
+TEST_P(SelfGravitatingTest, MassWeightedGaugeAgrees) {
+  const auto [dim, order] = GetParam();
+  Case s(dim, order);
+
+  // With the same physical gauge the two solvers return the same
+  // representative directly, and it carries no momentum.
+  auto schur = s.Problem();
+  schur->SetSolverType(
+      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+  schur->SetMassWeightedGauge();
+  schur->AssembleForce(0.0);
+  ASSERT_TRUE(schur->Solve());
+
+  auto minres = s.Problem();
+  minres->SetMassWeightedGauge();
+  minres->AssembleForce(0.0);
+  ASSERT_TRUE(minres->Solve());
+  EXPECT_LT(RelDiff(schur->Displacement(), minres->Displacement()), 1e-7);
+  EXPECT_LT(RelDiff(schur->Potential(), minres->Potential()), 1e-7);
+
+  BilinearForm mass(s.fes_u.get());
+  mass.AddDomainIntegrator(new VectorMassIntegrator(*s.rho));
+  mass.Assemble();
+  mass.Finalize();
+  const GridFunction& u = schur->Displacement();
+  Vector Mu(u.Size());
+  mass.SpMat().Mult(u, Mu);
+  const auto& P = schur->RigidModes();
+  double moment = 0.0;
+  for (int i = 0; i < P.Size(); i++) {
+    moment = std::max(moment, std::abs(P.Dot(Mu, P.Basis(i))));
+  }
+  EXPECT_LT(moment, 1e-10 * Mu.Norml2());
+
+  // Differs from the Euclidean gauge by a rigid motion only.
+  auto plain = s.Problem();
+  plain->AssembleForce(0.0);
+  ASSERT_TRUE(plain->Solve());
+  GridFunction d(u);
+  d -= plain->Displacement();
+  const double dnorm = L2Norm(d);
+  Vector dt;
+  d.GetTrueDofs(dt);
+  P.Project(dt);
+  d.SetFromTrueDofs(dt);
+  EXPECT_LT(L2Norm(d), 1e-6 * dnorm);
 }
 
 TEST(SelfGravitatingRigidModes, ResidualsDecreaseWithOrder) {
@@ -146,8 +197,9 @@ TEST_P(SelfGravitatingTest, ZeroDensityIsTractionProblem) {
   EXPECT_LT(L2Norm(p->BackgroundPotential()), 1e-12);
 
   // Reference: P A P x = P b with the same rigid modes, A the elastic
-  // stiffness of a TractionProblem on the same space.
-  TractionProblem ref(s.fes_u.get(), *s.rheology, traction, s.surface);
+  // stiffness of a LinearQuasiStaticTractionProblem on the same space.
+  LinearQuasiStaticTractionProblem ref(s.fes_u.get(), *s.rheology, traction,
+                                       s.surface);
   ref.AssembleForce(0.0);
   const SparseMatrix& A = *ref.SystemMatrix().As<SparseMatrix>();
   LinearForm b(s.fes_u.get());
@@ -224,8 +276,9 @@ TEST_P(SelfGravitatingTest, WarmStartsReproduceColdSolves) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
-  for (auto type : {SelfGravitatingElasticProblem::SolverType::SchurCG,
-                    SelfGravitatingElasticProblem::SolverType::BlockMINRES}) {
+  for (auto type :
+       {LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG,
+        LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES}) {
     auto p = s.Problem();
     p->SetSolverType(type);
     p->AssembleForce(0.0);
@@ -258,20 +311,20 @@ TEST_P(SelfGravitatingTest, RelaxationWeights) {
 
   ConstantCoefficient tau(1.0);
   auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, *s.kappa, *s.mu, tau);
-  auto q = std::make_unique<SelfGravitatingElasticProblem>(
+  auto q = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
       s.fes_u.get(), s.fes_phi.get(), maxwell, *s.rho, kG, kDtNDegree);
   q->SetSurfaceLoad(*s.sigma, s.surface);
   q->SetRelTol(1e-11);
   ASSERT_TRUE(q->SupportsRelaxationWeights());
 
   ConstantCoefficient one(1.0), half(0.5);
-  q->SetRelaxationWeights(0, {&one});
+  q->SetRelaxationWeights({&one});
   q->AssembleForce(0.0);
   ASSERT_TRUE(q->Solve());
   EXPECT_LT(RelDiff(q->Displacement(), u0), 1e-8);
   EXPECT_LT(RelDiff(q->Potential(), phi0), 1e-8);
 
-  q->SetRelaxationWeights(0, {&half});
+  q->SetRelaxationWeights({&half});
   ASSERT_TRUE(q->Solve());
   EXPECT_GT(RelDiff(q->Displacement(), u0), 1e-2);
 
@@ -290,7 +343,7 @@ TEST_P(SelfGravitatingTest, SuppliedBackgroundPotential) {
   ASSERT_TRUE(p->Solve());
 
   GridFunctionCoefficient phi0_coeff(&p->BackgroundPotential());
-  auto q = std::make_unique<SelfGravitatingElasticProblem>(
+  auto q = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
       s.fes_u.get(), s.fes_phi.get(), *s.rheology, *s.rho, kG, kDtNDegree,
       &phi0_coeff);
   q->SetSurfaceLoad(*s.sigma, s.surface);
@@ -311,8 +364,8 @@ TEST_P(SelfGravitatingTest, ViscoelasticCreep) {
   ConstantCoefficient tau(1.0);
   IsotropicMaxwellRheology maxwell =
       IsotropicMaxwellRheology::Maxwell(dim, *s.kappa, *s.mu, tau);
-  SelfGravitatingElasticProblem p(s.fes_u.get(), s.fes_phi.get(), maxwell,
-                                  *s.rho, kG, kDtNDegree);
+  LinearQuasiStaticSelfGravitatingProblem p(s.fes_u.get(), s.fes_phi.get(),
+                                            maxwell, *s.rho, kG, kDtNDegree);
   p.SetSurfaceLoad(*s.sigma, s.surface);
   p.SetRelTol(1e-10);
 

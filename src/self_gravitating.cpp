@@ -1,6 +1,6 @@
 /**
  * @file self_gravitating.cpp
- * @brief Implementation of SelfGravitatingElasticProblem.
+ * @brief Implementation of LinearQuasiStaticSelfGravitatingProblem.
  */
 
 #include "mfemElasticity/self_gravitating.hpp"
@@ -25,12 +25,14 @@ constexpr real_t kMinInnerRelTol = 1e-13;
 // ---------------------------------------------------------------------------
 // Construction
 
-SelfGravitatingElasticProblem::SelfGravitatingElasticProblem(
-    FiniteElementSpace* fes_u, FiniteElementSpace* fes_phi,
-    const mfemElasticity::Rheology& rheology, Coefficient& density,
-    real_t gravitational_constant, int dtn_degree,
-    Coefficient* background_potential, const std::vector<FluidRegion>& fluids)
-    : LinearElasticProblemBase(fes_u, rheology),
+LinearQuasiStaticSelfGravitatingProblem::
+    LinearQuasiStaticSelfGravitatingProblem(
+        FiniteElementSpace* fes_u, FiniteElementSpace* fes_phi,
+        const mfemElasticity::Rheology& rheology, Coefficient& density,
+        real_t gravitational_constant, int dtn_degree,
+        Coefficient* background_potential,
+        const std::vector<FluidRegion>& fluids)
+    : LinearQuasiStaticProblemBase(fes_u, rheology),
       dim_(fes_u->GetMesh()->Dimension()),
       fes_phi_(fes_phi),
       rho_(&density),
@@ -46,25 +48,30 @@ SelfGravitatingElasticProblem::SelfGravitatingElasticProblem(
       M_fluid_(Operator::MFEM_SPARSEMAT),
       C_(Operator::MFEM_SPARSEMAT) {
   MFEM_VERIFY(G_ > 0.0,
-              "SelfGravitatingElasticProblem: G must be positive.");
-  MFEM_VERIFY(fes_phi_->GetVDim() == 1,
-              "SelfGravitatingElasticProblem: the potential space must be "
-              "scalar.");
-  MFEM_VERIFY(fes_phi_->GetMesh()->Dimension() == dim_,
-              "SelfGravitatingElasticProblem: mesh dimensions differ.");
+              "LinearQuasiStaticSelfGravitatingProblem: G must be positive.");
+  MFEM_VERIFY(
+      fes_phi_->GetVDim() == 1,
+      "LinearQuasiStaticSelfGravitatingProblem: the potential space must be "
+      "scalar.");
+  MFEM_VERIFY(
+      fes_phi_->GetMesh()->Dimension() == dim_,
+      "LinearQuasiStaticSelfGravitatingProblem: mesh dimensions differ.");
 
 #ifdef MFEM_USE_MPI
   pfes_phi_ = dynamic_cast<ParFiniteElementSpace*>(fes_phi_);
-  MFEM_VERIFY((pfes_ != nullptr) == (pfes_phi_ != nullptr),
-              "SelfGravitatingElasticProblem: the displacement and potential "
-              "spaces must both be serial or both be parallel.");
+  MFEM_VERIFY(
+      (pfes_ != nullptr) == (pfes_phi_ != nullptr),
+      "LinearQuasiStaticSelfGravitatingProblem: the displacement and potential "
+      "spaces must both be serial or both be parallel.");
   if (pfes_phi_) {
     auto* psub = dynamic_cast<ParSubMesh*>(pfes_->GetParMesh());
-    MFEM_VERIFY(psub, "SelfGravitatingElasticProblem: the displacement "
-                      "space must live on a ParSubMesh.");
-    MFEM_VERIFY(psub->GetParent() == pfes_phi_->GetParMesh(),
-                "SelfGravitatingElasticProblem: the potential space must "
-                "live on the parent of the displacement SubMesh.");
+    MFEM_VERIFY(psub,
+                "LinearQuasiStaticSelfGravitatingProblem: the displacement "
+                "space must live on a ParSubMesh.");
+    MFEM_VERIFY(
+        psub->GetParent() == pfes_phi_->GetParMesh(),
+        "LinearQuasiStaticSelfGravitatingProblem: the potential space must "
+        "live on the parent of the displacement SubMesh.");
     shadow_phi_ = SubMeshDofInjection::MakeShadowSpace(*pfes_phi_, *psub);
     K_phi_.SetType(Operator::Hypre_ParCSR);
     K_shift_.SetType(Operator::Hypre_ParCSR);
@@ -74,11 +81,14 @@ SelfGravitatingElasticProblem::SelfGravitatingElasticProblem(
 #endif
   {
     auto* sub = dynamic_cast<SubMesh*>(fes_->GetMesh());
-    MFEM_VERIFY(sub, "SelfGravitatingElasticProblem: the displacement space "
-                     "must live on a SubMesh.");
-    MFEM_VERIFY(sub->GetParent() == fes_phi_->GetMesh(),
-                "SelfGravitatingElasticProblem: the potential space must "
-                "live on the parent of the displacement SubMesh.");
+    MFEM_VERIFY(
+        sub,
+        "LinearQuasiStaticSelfGravitatingProblem: the displacement space "
+        "must live on a SubMesh.");
+    MFEM_VERIFY(
+        sub->GetParent() == fes_phi_->GetMesh(),
+        "LinearQuasiStaticSelfGravitatingProblem: the potential space must "
+        "live on the parent of the displacement SubMesh.");
     shadow_phi_ = SubMeshDofInjection::MakeShadowSpace(*fes_phi_, *sub);
   }
   injection_ = std::make_unique<SubMeshDofInjection>(*shadow_phi_, *fes_phi_);
@@ -86,22 +96,24 @@ SelfGravitatingElasticProblem::SelfGravitatingElasticProblem(
   // Fluid regions: markers on the parent's attributes and the SubMesh's
   // boundary attributes.
   for (auto& f : fluids_) {
-    MFEM_VERIFY(f.density, "SelfGravitatingElasticProblem: a fluid region "
-                           "needs a density.");
+    MFEM_VERIFY(f.density,
+                "LinearQuasiStaticSelfGravitatingProblem: a fluid region "
+                "needs a density.");
     MFEM_VERIFY(f.attributes.Size() > 0,
-                "SelfGravitatingElasticProblem: a fluid region needs "
+                "LinearQuasiStaticSelfGravitatingProblem: a fluid region needs "
                 "parent-mesh attributes.");
-    MFEM_VERIFY(f.interface_marker.Size() ==
-                    fes_->GetMesh()->bdr_attributes.Max(),
-                "SelfGravitatingElasticProblem: a fluid region's "
-                "interface_marker must be sized to the SubMesh's "
-                "bdr_attributes.Max().");
+    MFEM_VERIFY(
+        f.interface_marker.Size() == fes_->GetMesh()->bdr_attributes.Max(),
+        "LinearQuasiStaticSelfGravitatingProblem: a fluid region's "
+        "interface_marker must be sized to the SubMesh's "
+        "bdr_attributes.Max().");
     Array<int> marker(fes_phi_->GetMesh()->attributes.Max());
     marker = 0;
     for (int a : f.attributes) {
-      MFEM_VERIFY(a >= 1 && a <= marker.Size(),
-                  "SelfGravitatingElasticProblem: fluid attribute out of "
-                  "range.");
+      MFEM_VERIFY(
+          a >= 1 && a <= marker.Size(),
+          "LinearQuasiStaticSelfGravitatingProblem: fluid attribute out of "
+          "range.");
       marker[a - 1] = 1;
     }
     fluid_markers_.push_back(marker);
@@ -150,8 +162,9 @@ SelfGravitatingElasticProblem::SelfGravitatingElasticProblem(
     l->Assemble();
     ToTrueDofs(*fes_phi_, *l, L_outer_);
     outer_length_ = Dot(L_outer_, ones_);
-    MFEM_VERIFY(outer_length_ > 0.0,
-                "SelfGravitatingElasticProblem: empty outer boundary.");
+    MFEM_VERIFY(
+        outer_length_ > 0.0,
+        "LinearQuasiStaticSelfGravitatingProblem: empty outer boundary.");
   }
 
   SetupPotentialOperators();
@@ -167,7 +180,7 @@ SelfGravitatingElasticProblem::SelfGravitatingElasticProblem(
   B_phi_ = 0.0;
 }
 
-bool SelfGravitatingElasticProblem::ParallelPotential() const {
+bool LinearQuasiStaticSelfGravitatingProblem::ParallelPotential() const {
 #ifdef MFEM_USE_MPI
   return pfes_phi_ != nullptr;
 #else
@@ -175,9 +188,8 @@ bool SelfGravitatingElasticProblem::ParallelPotential() const {
 #endif
 }
 
-void SelfGravitatingElasticProblem::ToTrueDofs(const FiniteElementSpace& fes,
-                                               const Vector& L,
-                                               Vector& T) const {
+void LinearQuasiStaticSelfGravitatingProblem::ToTrueDofs(
+    const FiniteElementSpace& fes, const Vector& L, Vector& T) const {
   const Operator* P = fes.GetProlongationMatrix();
   if (P) {
     T.SetSize(P->Width());
@@ -187,7 +199,7 @@ void SelfGravitatingElasticProblem::ToTrueDofs(const FiniteElementSpace& fes,
   }
 }
 
-void SelfGravitatingElasticProblem::SetupPotentialOperators() {
+void LinearQuasiStaticSelfGravitatingProblem::SetupPotentialOperators() {
   Array<int> empty;
 
   // K = (grad phi, grad psi) on the ball; A_phiphi = (K + DtN) / (4 pi G).
@@ -204,7 +216,7 @@ void SelfGravitatingElasticProblem::SetupPotentialOperators() {
   SetupPotentialSolver();
 }
 
-void SelfGravitatingElasticProblem::SetupPotentialSolver() {
+void LinearQuasiStaticSelfGravitatingProblem::SetupPotentialSolver() {
   // CG on the current potential block A_phiphi_ (the operator must be set
   // before the preconditioner: BoomerAMG's SetOperator only accepts a
   // HypreParMatrix). In 2-D the constant is projected out on both sides,
@@ -257,7 +269,7 @@ void SelfGravitatingElasticProblem::SetupPotentialSolver() {
   }
 }
 
-void SelfGravitatingElasticProblem::SetupPotentialPreconditioner() {
+void LinearQuasiStaticSelfGravitatingProblem::SetupPotentialPreconditioner() {
   // (Re)build the shifted-Laplacian preconditioner; the solver, if it
   // exists, is rebuilt on it by the caller through SetupPotentialSolver().
   Array<int> empty;
@@ -282,7 +294,8 @@ void SelfGravitatingElasticProblem::SetupPotentialPreconditioner() {
   }
 }
 
-void SelfGravitatingElasticProblem::MakeCompatible(Vector& B_phi) const {
+void LinearQuasiStaticSelfGravitatingProblem::MakeCompatible(
+    Vector& B_phi) const {
   if (dim_ != 2) {
     return;
   }
@@ -290,8 +303,8 @@ void SelfGravitatingElasticProblem::MakeCompatible(Vector& B_phi) const {
   B_phi.Add(-mass / outer_length_, L_outer_);
 }
 
-bool SelfGravitatingElasticProblem::SolvePotential(const Vector& b,
-                                                   Vector& x) const {
+bool LinearQuasiStaticSelfGravitatingProblem::SolvePotential(const Vector& b,
+                                                             Vector& x) const {
   x.SetSize(b.Size());
   x = 0.0;
   phi_solver_->Mult(b, x);
@@ -299,12 +312,26 @@ bool SelfGravitatingElasticProblem::SolvePotential(const Vector& b,
   return cg_phi_->GetConverged();
 }
 
-void SelfGravitatingElasticProblem::DistributePotential(const Vector& Phi) {
+bool LinearQuasiStaticSelfGravitatingProblem::SolveLoadPotential(
+    GridFunction& phi_body) {
+  MFEM_VERIFY(phi_body.FESpace() == shadow_phi_.get(),
+              "SolveLoadPotential: the field must be on PotentialSpaceOnBody().");
+  EnsureOperator();
+  Vector Phi;
+  const bool ok = SolvePotential(B_phi_, Phi);
+  auto tmp = detail::MakeGridFunction(fes_phi_);
+  tmp->SetFromTrueDofs(Phi);
+  injection_->MultTranspose(*tmp, phi_body);
+  return ok;
+}
+
+void LinearQuasiStaticSelfGravitatingProblem::DistributePotential(
+    const Vector& Phi) {
   phi_->SetFromTrueDofs(Phi);
   injection_->MultTranspose(*phi_, *phi_shadow_);
 }
 
-void SelfGravitatingElasticProblem::ComputeBackgroundPotential(
+void LinearQuasiStaticSelfGravitatingProblem::ComputeBackgroundPotential(
     Coefficient* phi0) {
   if (phi0) {
     phi0_->ProjectCoefficient(*phi0);
@@ -346,14 +373,15 @@ void SelfGravitatingElasticProblem::ComputeBackgroundPotential(
       A_phiphi_ = saved;
       SetupPotentialSolver();
     }
-    MFEM_VERIFY(ok, "SelfGravitatingElasticProblem: the background "
-                    "potential solve did not converge.");
+    MFEM_VERIFY(ok,
+                "LinearQuasiStaticSelfGravitatingProblem: the background "
+                "potential solve did not converge.");
     phi0_->SetFromTrueDofs(Phi0);
   }
   injection_->MultTranspose(*phi0_, *phi0_shadow_);
 }
 
-void SelfGravitatingElasticProblem::SetupFluidMass() {
+void LinearQuasiStaticSelfGravitatingProblem::SetupFluidMass() {
   // M_F = int_{M_F} rho'_F phi chi on the parent's fluid elements, with
   // rho'_F from the region or, by default, from the element-wise L2
   // projection of the density and the discrete grad Phi0. Then
@@ -394,7 +422,7 @@ void SelfGravitatingElasticProblem::SetupFluidMass() {
   SetupPotentialSolver();
 }
 
-void SelfGravitatingElasticProblem::SetupCoupling() {
+void LinearQuasiStaticSelfGravitatingProblem::SetupCoupling() {
   // C = int_{M_S} rho grad phi . v  -  sum_F int_{Sigma_F} rho_F phi (m.v),
   // trial phi on B, test v on M_S; C^T by transposition.
   Array<int> empty;
@@ -432,7 +460,7 @@ void SelfGravitatingElasticProblem::SetupCoupling() {
   Ct_op_ = Ct_owned_.get();
 }
 
-void SelfGravitatingElasticProblem::SetupGravityIntegrators() {
+void LinearQuasiStaticSelfGravitatingProblem::SetupGravityIntegrators() {
   half_rho_ = std::make_unique<ProductCoefficient>(0.5, *rho_);
   minus_half_rho_ = std::make_unique<ProductCoefficient>(-0.5, *rho_);
   minus_half_rho_grad_ = std::make_unique<ScalarVectorProductCoefficient>(
@@ -462,40 +490,12 @@ void SelfGravitatingElasticProblem::SetupGravityIntegrators() {
   }
 }
 
-void SelfGravitatingElasticProblem::SetupRigidModes() {
-#ifdef MFEM_USE_MPI
-  if (pfes_) {
-    projector_u_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
-  } else
-#endif
-  {
-    projector_u_ = std::make_unique<NullSpaceProjector>();
-  }
-  auto gf = detail::MakeGridFunction(fes_);
-  auto add = [&](VectorCoefficient& c) {
-    gf->ProjectCoefficient(c);
-    Vector t;
-    gf->GetTrueDofs(t);
-    rigid_true_.push_back(t);
-    projector_u_->Add(t);
-  };
-  for (int c = 0; c < dim_; c++) {
-    RigidTranslation tr(dim_, c);
-    add(tr);
-  }
-  if (dim_ == 2) {
-    RigidRotation rot(2, 2);
-    add(rot);
-  } else {
-    for (int c = 0; c < 3; c++) {
-      RigidRotation rot(3, c);
-      add(rot);
-    }
-  }
+void LinearQuasiStaticSelfGravitatingProblem::SetupRigidModes() {
+  projector_u_ = MakeRigidModeProjector(*fes_);
   num_global_modes_ = projector_u_->Size();
 }
 
-void SelfGravitatingElasticProblem::AddRegionRotations(
+void LinearQuasiStaticSelfGravitatingProblem::AddRegionRotations(
     const Array<int>& solid_attributes) {
   Mesh* mesh = fes_->GetMesh();
   Array<int> attr_marker(mesh->attributes.Max());
@@ -529,7 +529,6 @@ void SelfGravitatingElasticProblem::AddRegionRotations(
     Vector t;
     gf->GetTrueDofs(t);
     if (projector_u_->Add(t)) {
-      rigid_true_.push_back(t);
       added++;
     }
   };
@@ -548,7 +547,7 @@ void SelfGravitatingElasticProblem::AddRegionRotations(
   operator_dirty_ = true;
 }
 
-void SelfGravitatingElasticProblem::SetupCoupledNullSpace() {
+void LinearQuasiStaticSelfGravitatingProblem::SetupCoupledNullSpace() {
   // The block system is restricted to displacements orthogonal to the
   // rigid modes (and, in 2-D, potentials orthogonal to the constant): the
   // projector removes (u_r, 0) and (0, 1). On that subspace the operator is
@@ -591,7 +590,7 @@ void SelfGravitatingElasticProblem::SetupCoupledNullSpace() {
 // ---------------------------------------------------------------------------
 // Loads
 
-void SelfGravitatingElasticProblem::SetSurfaceLoad(
+void LinearQuasiStaticSelfGravitatingProblem::SetSurfaceLoad(
     Coefficient& sigma, const Array<int>& bdr_marker) {
   MFEM_VERIFY(bdr_marker.Size() == fes_->GetMesh()->bdr_attributes.Max(),
               "SetSurfaceLoad: the marker must be sized to the SubMesh's "
@@ -610,14 +609,15 @@ void SelfGravitatingElasticProblem::SetSurfaceLoad(
   load_vcoefs_.push_back(std::move(minus_sigma_grad));
 }
 
-void SelfGravitatingElasticProblem::SetTidalPotential(Coefficient& psi) {
+void LinearQuasiStaticSelfGravitatingProblem::SetTidalPotential(
+    Coefficient& psi) {
   psi_ = &psi;
   RegisterTimeDependent(psi);
   psi_gf_ = detail::MakeGridFunction(fes_phi_);
   *psi_gf_ = 0.0;
 }
 
-void SelfGravitatingElasticProblem::AssembleTidalLoad() {
+void LinearQuasiStaticSelfGravitatingProblem::AssembleTidalLoad() {
   // Psi = interpolant of psi; loads -C Psi (displacement) and -M_F Psi
   // (potential), the latter absent without fluid regions.
   tidal_u_.SetSize(fes_->GetTrueVSize());
@@ -635,8 +635,8 @@ void SelfGravitatingElasticProblem::AssembleTidalLoad() {
   }
 }
 
-void SelfGravitatingElasticProblem::AssembleForce(real_t t) {
-  LinearElasticProblemBase::AssembleForce(t);
+void LinearQuasiStaticSelfGravitatingProblem::AssembleForce(real_t t) {
+  LinearQuasiStaticProblemBase::AssembleForce(t);
   b_phi_->Assemble();
   Vector bL(fes_phi_->GetVSize());
   injection_->Mult(*b_phi_, bL);
@@ -648,14 +648,24 @@ void SelfGravitatingElasticProblem::AssembleForce(real_t t) {
 // ---------------------------------------------------------------------------
 // Controls
 
-void SelfGravitatingElasticProblem::SetSolverType(SolverType type) {
+void LinearQuasiStaticSelfGravitatingProblem::SetMassWeightedGauge(bool on) {
+  if (on && !gauge_M_.Ptr()) {
+    gauge_form_ = AssembleMassOperator(rho_, gauge_M_);
+  }
+  if (on != mass_gauge_) {
+    mass_gauge_ = on;
+    operator_dirty_ = true;  // the solvers are rebuilt with the gauge
+  }
+}
+
+void LinearQuasiStaticSelfGravitatingProblem::SetSolverType(SolverType type) {
   if (type != type_) {
     type_ = type;
     operator_dirty_ = true;
   }
 }
 
-void SelfGravitatingElasticProblem::SetInnerRelTol(real_t tol) {
+void LinearQuasiStaticSelfGravitatingProblem::SetInnerRelTol(real_t tol) {
   // CG stops on (B r, r) <= tol^2 (B r0, r0); below tol ~ 1e-13 that is
   // round-off, where the projected iteration loses orthogonality and
   // diverges rather than stagnates.
@@ -664,19 +674,21 @@ void SelfGravitatingElasticProblem::SetInnerRelTol(real_t tol) {
   cg_phi_->SetRelTol(inner_rel_tol_);
 }
 
-void SelfGravitatingElasticProblem::SetPreconditionerShift(real_t eps) {
+void LinearQuasiStaticSelfGravitatingProblem::SetPreconditionerShift(
+    real_t eps) {
   shift_ = eps;
   SetupPotentialPreconditioner();
   operator_dirty_ = true;
 }
 
-void SelfGravitatingElasticProblem::SetInnerPrintLevel(
+void LinearQuasiStaticSelfGravitatingProblem::SetInnerPrintLevel(
     IterativeSolver::PrintLevel level) {
   inner_print_level_ = level;
   cg_phi_->SetPrintLevel(level);
 }
 
-void SelfGravitatingElasticProblem::SetBackgroundPotential(Coefficient& phi0) {
+void LinearQuasiStaticSelfGravitatingProblem::SetBackgroundPotential(
+    Coefficient& phi0) {
   ComputeBackgroundPotential(&phi0);
   if (!fluids_.empty()) {
     // The fluid mass term may depend on grad Phi0.
@@ -685,8 +697,9 @@ void SelfGravitatingElasticProblem::SetBackgroundPotential(Coefficient& phi0) {
   operator_dirty_ = true;
 }
 
-void SelfGravitatingElasticProblem::RegisterFields(DataCollection& dc) {
-  LinearElasticProblemBase::RegisterFields(dc);
+void LinearQuasiStaticSelfGravitatingProblem::RegisterFields(
+    DataCollection& dc) {
+  LinearQuasiStaticProblemBase::RegisterFields(dc);
   dc.RegisterField("potential", phi_shadow_.get());
   dc.RegisterField("background_potential", phi0_shadow_.get());
 }
@@ -694,7 +707,7 @@ void SelfGravitatingElasticProblem::RegisterFields(DataCollection& dc) {
 // ---------------------------------------------------------------------------
 // Diagnostics
 
-real_t SelfGravitatingElasticProblem::ModeResidual(const Vector& u) {
+real_t LinearQuasiStaticSelfGravitatingProblem::ModeResidual(const Vector& u) {
   EnsureOperator();
   const Operator& A_uu = *A_.Ptr();
   real_t a_max = 0.0;
@@ -724,7 +737,8 @@ real_t SelfGravitatingElasticProblem::ModeResidual(const Vector& u) {
   return std::sqrt(Dot(y, y)) / (a_max * std::sqrt(Dot(u, u)));
 }
 
-std::vector<real_t> SelfGravitatingElasticProblem::RigidModeResiduals() {
+std::vector<real_t>
+LinearQuasiStaticSelfGravitatingProblem::RigidModeResiduals() {
   std::vector<real_t> residuals;
   for (int i = 0; i < projector_u_->Size(); i++) {
     residuals.push_back(ModeResidual(projector_u_->Basis(i)));
@@ -781,7 +795,7 @@ void TridiagonalExtremes(const std::vector<real_t>& alpha,
 
 }  // namespace
 
-real_t SelfGravitatingElasticProblem::PotentialBlockMinEigenvalue(
+real_t LinearQuasiStaticSelfGravitatingProblem::PotentialBlockMinEigenvalue(
     int lanczos_steps, real_t* largest) {
   // Lanczos on A_phiphi with full reorthogonalisation, Euclidean inner
   // product on true dofs, deterministic start.
@@ -834,12 +848,12 @@ real_t SelfGravitatingElasticProblem::PotentialBlockMinEigenvalue(
 // ---------------------------------------------------------------------------
 // Solvers
 
-SelfGravitatingElasticProblem::SchurOperator::SchurOperator(
-    const SelfGravitatingElasticProblem& p, const Operator& A_uu)
+LinearQuasiStaticSelfGravitatingProblem::SchurOperator::SchurOperator(
+    const LinearQuasiStaticSelfGravitatingProblem& p, const Operator& A_uu)
     : Operator(A_uu.Height(), A_uu.Width()), p_(&p), A_uu_(&A_uu) {}
 
-void SelfGravitatingElasticProblem::SchurOperator::Mult(const Vector& x,
-                                                        Vector& y) const {
+void LinearQuasiStaticSelfGravitatingProblem::SchurOperator::Mult(
+    const Vector& x, Vector& y) const {
   t_.SetSize(p_->Ct_op_->Height());
   p_->Ct_op_->Mult(x, t_);
   p_->SolvePotential(t_, w_);
@@ -849,7 +863,7 @@ void SelfGravitatingElasticProblem::SchurOperator::Mult(const Vector& x,
   y -= cw_;
 }
 
-void SelfGravitatingElasticProblem::SetupSolver(OperatorHandle& A) {
+void LinearQuasiStaticSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
   if (!inner_tol_set_) {
     inner_rel_tol_ = std::max<real_t>(kMinInnerRelTol, 1e-2 * rel_tol_);
     cg_phi_->SetRelTol(inner_rel_tol_);
@@ -863,36 +877,22 @@ void SelfGravitatingElasticProblem::SetupSolver(OperatorHandle& A) {
   }
 }
 
-void SelfGravitatingElasticProblem::SetupSchur(OperatorHandle& A) {
+void LinearQuasiStaticSelfGravitatingProblem::SetupSchur(OperatorHandle& A) {
   schur_ = std::make_unique<SchurOperator>(*this, *A.Ptr());
   projected_op_ = std::make_unique<ProjectedOperator>(*schur_, *projector_u_);
-  // The operator must be set before the preconditioner: IterativeSolver
-  // forwards SetOperator to its preconditioner, and the Gauss-Seidel
-  // smoother of the serial path only accepts a SparseMatrix.
-#ifdef MFEM_USE_MPI
-  if (pfes_) {
-    cg_ = std::make_unique<CGSolver>(pfes_->GetComm());
-  } else
-#endif
-  {
-    cg_ = std::make_unique<CGSolver>();
-  }
-  cg_->SetOperator(*projected_op_);
   projected_prec_ = std::make_unique<ProjectedSolver>(*projector_u_);
   projected_prec_->SetSolver(*prec_);
-  cg_->SetPreconditioner(*projected_prec_);
-  cg_->SetRelTol(rel_tol_);
-  cg_->SetAbsTol(0.0);
-  cg_->SetMaxIter(10000);
-  cg_->SetPrintLevel(print_level_);
-  cg_->iterative_mode = true;
+  SetupCG(*projected_op_, *projected_prec_);
 
   projected_ = std::make_unique<ProjectedSolver>(*projector_u_);
   projected_->SetSolver(*cg_);
   projected_->iterative_mode = true;
+  if (mass_gauge_) {
+    projected_->SetGauge(gauge_M_.Ptr());
+  }
 }
 
-void SelfGravitatingElasticProblem::SetupMinres(OperatorHandle& A) {
+void LinearQuasiStaticSelfGravitatingProblem::SetupMinres(OperatorHandle& A) {
   block_op_ = std::make_unique<BlockOperator>(offsets_);
   block_op_->SetBlock(0, 0, A.Ptr());
   block_op_->SetBlock(0, 1, const_cast<Operator*>(C_op_));
@@ -928,6 +928,13 @@ void SelfGravitatingElasticProblem::SetupMinres(OperatorHandle& A) {
   projected_ = std::make_unique<ProjectedSolver>(*projector_block_);
   projected_->SetSolver(*minres_);
   projected_->iterative_mode = true;
+  if (mass_gauge_) {
+    // The gauge weights the u block only; the phi part of a null vector
+    // follows its u part.
+    gauge_block_ = std::make_unique<BlockOperator>(offsets_);
+    gauge_block_->SetBlock(0, 0, gauge_M_.Ptr());
+    projected_->SetGauge(gauge_block_.get());
+  }
 
   // The MINRES iterate is the warm-start state; keep it across operator
   // rebuilds (a change of shear modulus) when the sizes are unchanged.
@@ -938,8 +945,8 @@ void SelfGravitatingElasticProblem::SetupMinres(OperatorHandle& A) {
   B_block_ = std::make_unique<BlockVector>(offsets_);
 }
 
-bool SelfGravitatingElasticProblem::SolveLinearSystem(const Vector& B_in,
-                                                      Vector& X) {
+bool LinearQuasiStaticSelfGravitatingProblem::SolveLinearSystem(
+    const Vector& B_in, Vector& X) {
   inner_its_ = 0;
   outer_its_ = 0;
   bool ok = true;
@@ -987,11 +994,22 @@ bool SelfGravitatingElasticProblem::SolveLinearSystem(const Vector& B_in,
       ok = minres_->GetConverged();
       outer_its_ = minres_->GetNumIterations();
       NoteIterations(outer_its_);
-      // The iterate is already in the output gauge (u orthogonal to the
-      // rigid modes; in 2-D phi orthogonal to the constant).
       X = X_block_->GetBlock(0);
-      projector_u_->Project(X);
-      Phi_true_ = X_block_->GetBlock(1);
+      if (mass_gauge_) {
+        // The gauge shifted the body by a rigid motion, whose potential
+        // (of the rigid modes' near-null partners) the block solve does not
+        // carry: solve phi from the gauged u, as the Schur path does.
+        Vector t(B_phi_.Size());
+        Ct_op_->Mult(X, t);
+        t *= -1.0;
+        t += B_phi_;
+        ok = SolvePotential(t, Phi_true_) && ok;
+      } else {
+        // The iterate is already in the output gauge (u orthogonal to the
+        // rigid modes; in 2-D phi orthogonal to the constant).
+        projector_u_->Project(X);
+        Phi_true_ = X_block_->GetBlock(1);
+      }
     }
   }
   DistributePotential(Phi_true_);

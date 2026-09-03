@@ -2,8 +2,8 @@
 // viscoelasticity.cpp
 //
 // Quasi-static generalised Maxwell viscoelasticity with the library's
-// ViscoelasticOperator on top of a QuasiStaticLinearElasticProblem
-// (mfemElasticity/elastic_problem.hpp, viscoelastic.hpp).
+// ViscoelasticOperator on top of a LinearQuasiStaticProblem
+// (mfemElasticity/quasi_static_problem.hpp, viscoelastic.hpp).
 //
 // The rheology is a Maxwell body (mu_inf = 0, one branch) or, with -mu-inf,
 // a standard linear solid (mu_inf > 0, one branch). With -ti the body is
@@ -170,10 +170,11 @@ int main(int argc, char* argv[]) {
   Array<int> marker(mesh.bdr_attributes.Max()), ess_bdr;
   marker = 0;
 
-  unique_ptr<LinearElasticProblemBase> problem;
+  unique_ptr<LinearQuasiStaticProblemBase> problem;
   if (problem_type == 0) {
     mesh.MarkExternalBoundaries(marker);
-    problem = make_unique<TractionProblem>(&fes, rheology, traction, marker);
+    problem = make_unique<LinearQuasiStaticTractionProblem>(&fes, rheology,
+                                                            traction, marker);
   } else if (problem_type == 1) {
     MFEM_VERIFY(mesh.bdr_attributes.Max() >= 2,
                 "Problem 1 needs boundary attributes 1 (clamped) and 2 "
@@ -182,8 +183,8 @@ int main(int argc, char* argv[]) {
     ess_bdr = 0;
     ess_bdr[0] = 1;
     marker[1] = 1;
-    problem =
-        make_unique<ClampedProblem>(&fes, rheology, ess_bdr, traction, marker);
+    problem = make_unique<LinearQuasiStaticClampedProblem>(
+        &fes, rheology, ess_bdr, traction, marker);
   } else {
     cerr << "Unknown problem type: " << problem_type << "\n";
     return 1;

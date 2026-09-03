@@ -14,8 +14,8 @@
 
 #include "mfem.hpp"
 #include "mfemElasticity/coefficient.hpp"
-#include "mfemElasticity/elastic_problem.hpp"
 #include "mfemElasticity/poisson.hpp"
+#include "mfemElasticity/quasi_static_problem.hpp"
 #include "mfemElasticity/solvers.hpp"
 #include "mfemElasticity/submesh.hpp"
 
@@ -23,8 +23,9 @@ namespace mfemElasticity {
 
 /**
  * @brief A fluid region of a self-gravitating body (see
- * SelfGravitatingElasticProblem): a set of parent-mesh attributes carrying
- * no displacement unknown, its density, and its interfaces with the solid.
+ * LinearQuasiStaticSelfGravitatingProblem): a set of parent-mesh attributes
+ * carrying no displacement unknown, its density, and its interfaces with the
+ * solid.
  *
  * - @p attributes: the parent-mesh attributes of the fluid (not part of the
  *   displacement SubMesh).
@@ -55,10 +56,10 @@ struct FluidRegion {
 };
 
 /**
- * @brief Self-gravitating quasi-static linear elastic problem (eq. 3 of Yu,
+ * @brief Self-gravitating linear quasi-static problem (eq. 3 of Yu,
  * Al-Attar, Syvret & Lloyd 2025, with the fluid regions of their Appendix A
  * / Al-Attar & Tromp 2014 eq. 2.52), implementing
- * QuasiStaticLinearElasticProblem so that the viscoelastic layer runs on it
+ * LinearQuasiStaticProblem so that the viscoelastic layer runs on it
  * unchanged.
  *
  * **Geometry.** The body @f$M = M_S \cup M_F@f$ is a region of a ball
@@ -77,7 +78,8 @@ struct FluidRegion {
  * and @f$\rho'_F = d\rho/d\Phi_0@f$ in the fluid):
  * @f[
  *   a(u,v) + \tfrac12\int_{M_S} \rho\,[v\cdot\nabla(u\cdot\nabla\Phi_0)
- *     + u\cdot\nabla(v\cdot\nabla\Phi_0) - (v\cdot\nabla\Phi_0)\,\mathrm{div}\,u
+ *     + u\cdot\nabla(v\cdot\nabla\Phi_0) -
+ * (v\cdot\nabla\Phi_0)\,\mathrm{div}\,u
  *     - (u\cdot\nabla\Phi_0)\,\mathrm{div}\,v]
  *     - \int_{\Sigma_F} \rho_F\,(\mathbf{m}\cdot\nabla\Phi_0)
  *       (\mathbf{m}\cdot u)(\mathbf{m}\cdot v)
@@ -91,7 +93,7 @@ struct FluidRegion {
  * with the coupling form
  * @f$c(\phi, v) = \int_{M_S} \rho\,\nabla\phi\cdot v
  *   - \int_{\Sigma_F} \rho_F\,\phi\,(\mathbf{m}\cdot v)@f$,
- * @f$a@f$ the bulk/deviatoric elastic form of LinearElasticProblemBase, and
+ * @f$a@f$ the bulk/deviatoric elastic form of LinearQuasiStaticProblemBase, and
  * @f$\psi@f$ an optional applied (tidal) potential. Without fluid regions
  * the interface and @f$\rho'_F@f$ terms are absent and this is eq. 3 of the
  * paper. A surface mass load @f$\sigma@f$ (mass per unit area, positive
@@ -159,7 +161,8 @@ struct FluidRegion {
  * interface term is reassembled with it, harmlessly); the potential block,
  * the coupling and the DtN are built once.
  */
-class SelfGravitatingElasticProblem : public LinearElasticProblemBase {
+class LinearQuasiStaticSelfGravitatingProblem
+    : public LinearQuasiStaticProblemBase {
  public:
   enum class SolverType { SchurCG, BlockMINRES };
 
@@ -177,7 +180,7 @@ class SelfGravitatingElasticProblem : public LinearElasticProblemBase {
    * @param fluids Fluid regions (copied); their coefficients must outlive
    * the problem. Empty for a solid body.
    */
-  SelfGravitatingElasticProblem(
+  LinearQuasiStaticSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_phi,
       const mfemElasticity::Rheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
@@ -226,6 +229,15 @@ class SelfGravitatingElasticProblem : public LinearElasticProblemBase {
 
   /** @brief Print level of the inner potential solves (quiet by default). */
   void SetInnerPrintLevel(mfem::IterativeSolver::PrintLevel level);
+  /**
+   * @brief Fix the rigid gauge of the displacement by zero net momentum and
+   * angular momentum with the body's density, @f$\int \rho\, u \cdot
+   * (a + b \times x) = 0@f$ for every projected mode (including region
+   * rotations), instead of orthogonality in the true-dof inner product
+   * (the default). Both solvers then return the same representative. The
+   * potential follows the displacement in either case.
+   */
+  void SetMassWeightedGauge(bool on = true);
 
   /** @brief Replace the background potential and mark the operator stale. */
   void SetBackgroundPotential(mfem::Coefficient& phi0);
@@ -248,6 +260,17 @@ class SelfGravitatingElasticProblem : public LinearElasticProblemBase {
 
   /** @brief Potential perturbation restricted to the body (shadow space). */
   const mfem::GridFunction& PotentialOnBody() const { return *phi_shadow_; }
+  /** @brief The shadow of the potential space on the body's SubMesh. */
+  mfem::FiniteElementSpace& PotentialSpaceOnBody() { return *shadow_phi_; }
+  /**
+   * @brief The potential of the assembled loads with the body held rigid
+   * (@f$u = 0@f$): the potential equation solved for the potential load
+   * alone (surface mass loads and, with fluid regions, the tidal fluid-mass
+   * term), on the shadow space. For load Love numbers this is the load's
+   * own potential on the same discretisation as the solution. Call after
+   * AssembleForce(); returns the inner solver's convergence.
+   */
+  bool SolveLoadPotential(mfem::GridFunction& phi_body);
 
   const mfem::GridFunction& BackgroundPotential() const { return *phi0_; }
   const mfem::GridFunction& BackgroundPotentialOnBody() const {
@@ -335,12 +358,12 @@ class SelfGravitatingElasticProblem : public LinearElasticProblemBase {
   /** @brief @f$S x = A_{uu} x - C A_{\phi\phi}^{-1} C^T x@f$. */
   class SchurOperator : public mfem::Operator {
    public:
-    SchurOperator(const SelfGravitatingElasticProblem& p,
+    SchurOperator(const LinearQuasiStaticSelfGravitatingProblem& p,
                   const mfem::Operator& A_uu);
     void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
 
    private:
-    const SelfGravitatingElasticProblem* p_;
+    const LinearQuasiStaticSelfGravitatingProblem* p_;
     const mfem::Operator* A_uu_;
     mutable mfem::Vector t_, w_, cw_;
   };
@@ -458,7 +481,10 @@ class SelfGravitatingElasticProblem : public LinearElasticProblemBase {
 
   // null spaces
   std::unique_ptr<NullSpaceProjector> projector_u_, projector_block_;
-  std::vector<mfem::Vector> rigid_true_;
+  bool mass_gauge_ = false;
+  std::unique_ptr<mfem::BilinearForm> gauge_form_;
+  mfem::OperatorHandle gauge_M_;                   ///< rho-weighted mass
+  std::unique_ptr<mfem::BlockOperator> gauge_block_;  ///< diag(M, 0)
   int num_global_modes_ = 0;
 
   // outer solvers

@@ -18,7 +18,7 @@
 #include <memory>
 #include <string>
 
-#include "ElasticTestCommon.hpp"
+#include "QuasiStaticTestCommon.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
@@ -95,7 +95,7 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
     auto marker = Marker(nbdr, {x0_attr, x1_attr});
     VectorFunctionCoefficient traction(dim, ConstantUniaxial);
-    TractionProblem problem(&pfes, rheology, traction, marker);
+    LinearQuasiStaticTractionProblem problem(&pfes, rheology, traction, marker);
     ViscoelasticOperator visco(problem);
     ExponentialTrapezoidSolver ode;
     ode.Init(visco);
@@ -122,9 +122,9 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     auto rheology = AnisotropicMaxwellRheology::DeviatoricMaxwell(dim, C, tau);
     auto marker = Marker(nbdr, {x0_attr, x1_attr});
     VectorFunctionCoefficient traction(dim, ConstantUniaxial);
-    TractionProblem problem(&pfes, rheology, traction, marker);
+    LinearQuasiStaticTractionProblem problem(&pfes, rheology, traction, marker);
     ViscoelasticOperator visco(problem);
-    Check(visco.TraceFree(0) ? 1.0 : 0.0, 0.0, label + ": full tensors");
+    Check(visco.TraceFree() ? 1.0 : 0.0, 0.0, label + ": full tensors");
     ExponentialTrapezoidSolver ode;
     ode.Init(visco);
     Vector m(visco.Height());
@@ -152,7 +152,7 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau, &law);
     auto marker = Marker(nbdr, {x0_attr, x1_attr});
     VectorFunctionCoefficient traction(dim, ConstantUniaxial);
-    TractionProblem problem(&pfes, rheology, traction, marker);
+    LinearQuasiStaticTractionProblem problem(&pfes, rheology, traction, marker);
     ViscoelasticOperator visco(problem);
     Check(visco.IsLinear() ? 1.0 : 0.0, 0.0, label + ": nonlinear operator");
     ExponentialTrapezoidSolver ode;
@@ -199,13 +199,14 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     Array<int> all(nbdr), none(nbdr);
     all = 1;
     none = 0;
-    ClampedProblem problem(&pfes, rheology, all, no_traction, none, &dirichlet);
+    LinearQuasiStaticClampedProblem problem(&pfes, rheology, all, no_traction,
+                                            none, &dirichlet);
     ViscoelasticOperator visco(problem);
     Check(std::abs(visco.MinRelaxationTime() - 1.0), 1e-14,
           label + ": min relaxation time");
     const Vector d0 = DeviatoricPart(A);
     const double d0_max = d0.Normlinf();
-    const int nd = visco.InternalScalarSpace(0).GetVSize();
+    const int nd = visco.InternalScalarSpace().GetVSize();
     const double taus[2] = {1.0, 100.0};
 
     // Max over nodes, components and branches of the error relative to the
@@ -213,7 +214,7 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     auto max_err = [&](const Vector& m, auto factor) {
       double err = 0.0;
       for (int k = 0; k < 2; k++) {
-        Vector mk = visco.Branch(m, 0, k);
+        Vector mk = visco.Branch(m, k);
         for (int c = 0; c < d0.Size(); c++) {
           for (int p = 0; p < nd; p++) {
             err = std::max(

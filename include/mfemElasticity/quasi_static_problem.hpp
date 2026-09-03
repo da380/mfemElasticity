@@ -1,8 +1,14 @@
 /**
- * @file elastic_problem.hpp
- * @brief Quasi-static linear elastic problems: the abstract interface used by
- * the viscoelastic layer, a base class owning the shared bookkeeping (serial
- * and parallel), and two reference problems (pure traction, clamped).
+ * @file quasi_static_problem.hpp
+ * @brief Linear quasi-static problems: the abstract interface used by the
+ * viscoelastic layer, a base class owning the shared bookkeeping (serial and
+ * parallel), and two reference problems (pure traction, clamped).
+ *
+ * A problem is the equilibrium of a body at a time @f$t@f$: geometry,
+ * boundary conditions, loads and solver. Whether the body is elastic or
+ * viscoelastic is decided by its Rheology; the problem assembles the
+ * rheology's (effective) elastic stiffness and never sees the internal
+ * variables, which the viscoelastic layer evolves around it.
  */
 
 #pragma once
@@ -17,20 +23,19 @@
 namespace mfemElasticity {
 
 /**
- * @brief Abstract interface for quasi-static linear elastic problems.
+ * @brief Abstract interface for linear quasi-static problems.
  *
  * Per evaluation time @f$t@f$ the protocol is
  * @code
  *   AssembleForce(t);        // all time-dependent data to t; external loads;
  *                            // increments cleared
- *   AddForce(i, f); ...      // superpose dual vectors on displacement field i
- *   Solve();                 // displacement(s) <- K^{-1}(external +
- * increments)
+ *   AddForce(f); ...         // superpose dual vectors on the displacement
+ *   Solve();                 // displacement <- K^{-1}(external + increments)
  * @endcode
  *
  * - AssembleForce(t) is called at every stage of a time integrator, with
  *   possibly non-monotone t; it must be cheap and idempotent at fixed t.
- * - AddForce(i, f) takes the vdof (L-vector) layout of DisplacementSpace(i),
+ * - AddForce(f) takes the vdof (L-vector) layout of DisplacementSpace(),
  *   i.e. the layout of a LinearForm on that space before FormLinearSystem.
  *   In parallel the problem applies the prolongation transpose inside
  *   Solve(); callers never handle true dofs. AddForce accumulates.
@@ -39,7 +44,9 @@ namespace mfemElasticity {
  *   false if the linear solver did not converge.
  * - Problems carrying more unknowns than the displacement (a gravitational
  *   potential, say) keep them internal: the interface only ever refers to
- *   the displacement field(s).
+ *   the displacement. There is one displacement field; several solid
+ *   regions share it on a (possibly disconnected) SubMesh, and regional
+ *   material differences are the rheology's business.
  *
  * Implicit and exponential-trapezoid viscoelastic stepping eliminate the
  * internal variables and need the stiffness reassembled with the
@@ -47,30 +54,24 @@ namespace mfemElasticity {
  * relaxation weights @f$\beta_k@f$ (see ElasticStiffness); problems that
  * can do so advertise it through SupportsRelaxationWeights().
  */
-class QuasiStaticLinearElasticProblem {
+class LinearQuasiStaticProblem {
  public:
-  virtual ~QuasiStaticLinearElasticProblem() = default;
+  virtual ~LinearQuasiStaticProblem() = default;
 
-  /** @brief Number of solid regions carrying a displacement unknown. */
-  virtual int NumDisplacementFields() const = 0;
+  /** @brief The (vector) displacement space. */
+  virtual mfem::FiniteElementSpace& DisplacementSpace() = 0;
 
-  /** @brief The (vector) space of displacement field @p i. */
-  virtual mfem::FiniteElementSpace& DisplacementSpace(int i = 0) = 0;
+  /** @brief Read-only access to the displacement. */
+  virtual const mfem::GridFunction& Displacement() const = 0;
 
-  /** @brief Read-only access to displacement field @p i. */
-  virtual const mfem::GridFunction& Displacement(int i = 0) const = 0;
-
-  /** @brief The rheology field @p i's operator was assembled with. */
-  virtual const mfemElasticity::Rheology& Rheology(int i = 0) const = 0;
+  /** @brief The rheology the operator was assembled with. */
+  virtual const mfemElasticity::Rheology& Rheology() const = 0;
 
   /** @brief Bring all time-dependent data to time @p t and reset forcing. */
   virtual void AssembleForce(mfem::real_t t) = 0;
 
-  /** @brief Superpose a dual vector (LinearForm layout) on field @p i. */
-  virtual void AddForce(int i, const mfem::Vector& f) = 0;
-
-  /** @brief Convenience for single-field problems. */
-  void AddForce(const mfem::Vector& f) { AddForce(0, f); }
+  /** @brief Superpose a dual vector (LinearForm layout) on the displacement. */
+  virtual void AddForce(const mfem::Vector& f) = 0;
 
   /** @brief Solve for the displacement(s); false on solver failure. */
   virtual bool Solve() = 0;
@@ -79,29 +80,28 @@ class QuasiStaticLinearElasticProblem {
   virtual bool SupportsRelaxationWeights() const { return false; }
 
   /**
-   * @brief Reassemble field @p i's stiffness with @f$C_\infty + \sum_k
-   * \beta_k C_k@f$, one weight coefficient per branch of its rheology
+   * @brief Reassemble the stiffness with @f$C_\infty + \sum_k
+   * \beta_k C_k@f$, one weight coefficient per branch of the rheology
    * (typically nodal fields on the internal-variable mesh). The problem
    * must invalidate its solver setup and reassemble on every call (the same
    * coefficient objects may carry new values). The coefficients must outlive
    * the next call to SetRelaxationWeights() or ClearRelaxationWeights().
    */
   virtual void SetRelaxationWeights(
-      int /*i*/, const std::vector<mfem::Coefficient*>& /*beta*/) {
+      const std::vector<mfem::Coefficient*>& /*beta*/) {
     MFEM_ABORT("relaxation weights not supported by this problem");
   }
 
-  /** @brief Restore the unrelaxed modulus @f$C_U@f$ on every field. */
+  /** @brief Restore the unrelaxed modulus @f$C_U@f$. */
   virtual void ClearRelaxationWeights() {}
 
   /** @brief Register output fields with a DataCollection. */
   virtual void RegisterFields(mfem::DataCollection& dc) = 0;
 };
 
-
 /**
- * @brief Base class implementing the interface for a single displacement
- * field on a serial or parallel space.
+ * @brief Base class implementing the interface on a serial or parallel
+ * displacement space.
  *
  * The stiffness integrators come from the rheology's ElasticStiffness
  * (two split mfem::ElasticityIntegrators for the isotropic body, one
@@ -123,29 +123,29 @@ class QuasiStaticLinearElasticProblem {
  *  4. optionally overrides SetupSolver()/SolveLinearSystem() (the defaults
  *     are preconditioned CG with Gauss-Seidel or BoomerAMG).
  */
-class LinearElasticProblemBase : public QuasiStaticLinearElasticProblem {
+class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
  public:
   /**
    * @param fes Displacement space (vdim = space dimension); serial or
    * parallel; not owned.
    * @param rheology The material; not owned, must outlive the problem.
    */
-  LinearElasticProblemBase(mfem::FiniteElementSpace* fes,
-                     const mfemElasticity::Rheology& rheology);
+  LinearQuasiStaticProblemBase(mfem::FiniteElementSpace* fes,
+                               const mfemElasticity::Rheology& rheology);
 
-  int NumDisplacementFields() const override { return 1; }
-  mfem::FiniteElementSpace& DisplacementSpace(int i = 0) override;
-  const mfem::GridFunction& Displacement(int i = 0) const override;
-  const mfemElasticity::Rheology& Rheology(int i = 0) const override;
+  mfem::FiniteElementSpace& DisplacementSpace() override { return *fes_; }
+  const mfem::GridFunction& Displacement() const override { return *u_; }
+  const mfemElasticity::Rheology& Rheology() const override {
+    return *rheology_;
+  }
 
   void AssembleForce(mfem::real_t t) override;
-  void AddForce(int i, const mfem::Vector& f) override;
-  using QuasiStaticLinearElasticProblem::AddForce;
+  void AddForce(const mfem::Vector& f) override;
   bool Solve() override;
 
   bool SupportsRelaxationWeights() const override { return true; }
-  void SetRelaxationWeights(int i,
-                            const std::vector<mfem::Coefficient*>& beta) override;
+  void SetRelaxationWeights(
+      const std::vector<mfem::Coefficient*>& beta) override;
   void ClearRelaxationWeights() override;
 
   void RegisterFields(mfem::DataCollection& dc) override;
@@ -231,8 +231,18 @@ class LinearElasticProblemBase : public QuasiStaticLinearElasticProblem {
 
   /** @brief Preconditioned CG (Gauss-Seidel serial, BoomerAMG with elasticity
    * options in parallel) in prec_/cg_, warm-started; the preconditioner is
-   * reused per SetPreconditionerReuse(). */
+   * reused per SetPreconditionerReuse(). Equivalent to
+   * SetupDefaultPreconditioner(A) followed by SetupCG(*A.Ptr(), *prec_). */
   void SetupDefaultCG(mfem::OperatorHandle& A);
+
+  /** @brief The default preconditioner on A in prec_, rebuilt or reused per
+   * SetPreconditionerReuse(). */
+  void SetupDefaultPreconditioner(mfem::OperatorHandle& A);
+
+  /** @brief A fresh CG in cg_ on @p op preconditioned by @p prec, with the
+   * problem's tolerance and print level, in iterative mode. The operator is
+   * set before the preconditioner so that the latter is not reset onto it. */
+  void SetupCG(const mfem::Operator& op, mfem::Solver& prec);
 
   /** @brief Record a solve's iteration count against the preconditioner's
    * baseline; marks it stale when the count has grown past the reuse
@@ -250,6 +260,12 @@ class LinearElasticProblemBase : public QuasiStaticLinearElasticProblem {
 
   /** @brief Inner product, global in parallel. */
   mfem::real_t Dot(const mfem::Vector& x, const mfem::Vector& y) const;
+
+  /** @brief The vector mass matrix @f$\int \rho\, u \cdot v@f$ on the
+   * displacement space (unit weight when @p rho is null), as a true-dof
+   * operator. Returns the form, which must outlive @p M. */
+  std::unique_ptr<mfem::BilinearForm> AssembleMassOperator(
+      mfem::Coefficient* rho, mfem::OperatorHandle& M);
 
   /** @brief (Re)assemble the stiffness and set up the solver. */
   void AssembleOperator();
@@ -299,28 +315,51 @@ class LinearElasticProblemBase : public QuasiStaticLinearElasticProblem {
  * @brief Pure traction (Neumann) problem: a traction is applied on the marked
  * boundary attributes; no essential conditions.
  *
- * The stiffness retains the rigid-body null space, so the CG solve is wrapped
- * in a RigidBodySolver, which also projects the load orthogonal to the rigid
- * modes (any net force or torque is removed).
+ * The stiffness retains the rigid-body null space. CG runs on @f$P A P@f$
+ * with the preconditioner @f$P M P@f$, where @f$P@f$ is the Euclidean
+ * projector orthogonal to the rigid modes (MakeRigidModeProjector()); the
+ * load and the warm start are projected before the solve and the solution
+ * after it, so any net force or torque is removed and the displacement is
+ * orthogonal to the rigid modes in the true-dof inner product.
  */
-class TractionProblem : public LinearElasticProblemBase {
+class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
  public:
   /**
    * @param traction Boundary traction; registered as time-dependent.
    * @param bdr_marker Boundary attributes it acts on (copied).
    */
-  TractionProblem(mfem::FiniteElementSpace* fes,
-                  const mfemElasticity::Rheology& rheology,
-                  mfem::VectorCoefficient& traction,
-                  const mfem::Array<int>& bdr_marker);
+  LinearQuasiStaticTractionProblem(mfem::FiniteElementSpace* fes,
+                                   const mfemElasticity::Rheology& rheology,
+                                   mfem::VectorCoefficient& traction,
+                                   const mfem::Array<int>& bdr_marker);
+
+  /**
+   * @brief Fix the rigid gauge of the solution by zero net momentum and
+   * angular momentum, @f$\int \rho\, u \cdot (a + b \times x) = 0@f$
+   * (unit @f$\rho@f$ when null), instead of orthogonality to the rigid
+   * modes in the true-dof inner product (the default). Only the rigid
+   * component of the displacement changes. May be called at any time.
+   */
+  void SetMassWeightedGauge(mfem::Coefficient* rho = nullptr);
+  /** @brief Back to the true-dof (Euclidean) gauge. */
+  void SetEuclideanGauge();
 
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
 
  private:
+  /** @brief The rigid-mode projector (built on first use; the space does
+   * not change). */
+  const NullSpaceProjector& RigidModes();
+
   mfem::Array<int> marker_;
-  std::unique_ptr<RigidBodySolver> rigid_;
+  std::unique_ptr<mfem::BilinearForm> gauge_form_;
+  mfem::OperatorHandle gauge_M_;  ///< mass-weighted gauge, if set
+  std::unique_ptr<NullSpaceProjector> projector_;
+  std::unique_ptr<ProjectedOperator> projected_op_;    ///< P A P
+  std::unique_ptr<ProjectedSolver> projected_prec_;    ///< P M P
+  std::unique_ptr<ProjectedSolver> projected_;         ///< wraps cg_
 };
 
 /**
@@ -328,7 +367,7 @@ class TractionProblem : public LinearElasticProblemBase {
  * boundary attributes and a traction applied on another; all other
  * boundaries are traction-free.
  */
-class ClampedProblem : public LinearElasticProblemBase {
+class LinearQuasiStaticClampedProblem : public LinearQuasiStaticProblemBase {
  public:
   /**
    * @param ess_bdr Boundary attributes with prescribed displacement (copied).
@@ -337,12 +376,12 @@ class ClampedProblem : public LinearElasticProblemBase {
    * @param dirichlet Prescribed displacement (registered as time-dependent);
    * nullptr means homogeneous.
    */
-  ClampedProblem(mfem::FiniteElementSpace* fes,
-                 const mfemElasticity::Rheology& rheology,
-                 const mfem::Array<int>& ess_bdr,
-                 mfem::VectorCoefficient& traction,
-                 const mfem::Array<int>& traction_marker,
-                 mfem::VectorCoefficient* dirichlet = nullptr);
+  LinearQuasiStaticClampedProblem(mfem::FiniteElementSpace* fes,
+                                  const mfemElasticity::Rheology& rheology,
+                                  const mfem::Array<int>& ess_bdr,
+                                  mfem::VectorCoefficient& traction,
+                                  const mfem::Array<int>& traction_marker,
+                                  mfem::VectorCoefficient* dirichlet = nullptr);
 
  protected:
   void UpdateBoundaryValues(mfem::real_t t) override;

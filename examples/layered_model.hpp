@@ -176,6 +176,7 @@ inline Array<int> SolidAttributes() {
 
 inline int FluidAttribute() { return inner_core ? 2 : 1; }
 inline int InnerCoreAttribute() { return 1; }
+inline int MantleAttribute() { return inner_core ? 3 : 2; }
 
 inline Array<int> SurfaceMarker(Mesh& solid) {
   Array<int> m(solid.bdr_attributes.Max());

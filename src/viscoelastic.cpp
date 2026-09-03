@@ -168,248 +168,305 @@ Vector NodalUnrelaxedTensors(FiniteElementSpace& sfes, const Rheology& rh) {
 
 }  // namespace
 
-ViscoelasticOperator::ViscoelasticOperator(
-    QuasiStaticLinearElasticProblem& problem, int internal_order, StrainMap map)
+ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
+                                           int internal_order, StrainMap map)
     : TimeDependentOperator(0, 0.0, TimeDependentOperator::EXPLICIT),
       problem_(problem),
       map_(map) {
-  const int nf = problem_.NumDisplacementFields();
-  MFEM_VERIFY(nf > 0, "ViscoelasticOperator: no displacement fields.");
-  fields_.resize(nf);
+  ufes_ = &problem_.DisplacementSpace();
+  Mesh* mesh = ufes_->GetMesh();
+  const int dim = mesh->Dimension();
+  const auto& rh = problem_.Rheology();
+  MFEM_VERIFY(rh.SpaceDim() == dim,
+              "ViscoelasticOperator: rheology/mesh dimension mismatch.");
+
+  parallel_ = detail::IsParallel(*ufes_);
+#ifdef MFEM_USE_MPI
+  if (parallel_) {
+    comm_ = static_cast<ParFiniteElementSpace*>(ufes_)->GetComm();
+  }
+#endif
+
+  // Default internal order: the smallest L2 order containing eps(u)
+  // exactly, p - 1 on simplices and p on tensor-product elements (the
+  // gradient of a Q_p field has Q_{p,p-1} components).
+  int order = internal_order;
+  if (order < 0) {
+    const int p = ufes_->GetMaxElementOrder();
+    const bool tensor = mesh->HasGeometry(Geometry::SQUARE) ||
+                        mesh->HasGeometry(Geometry::CUBE) ||
+                        mesh->HasGeometry(Geometry::PRISM) ||
+                        mesh->HasGeometry(Geometry::PYRAMID);
+    order = tensor ? p : std::max(p - 1, 0);
+#ifdef MFEM_USE_MPI
+    if (parallel_) {
+      int g = order;
+      MPI_Allreduce(&order, &g, 1, MPI_INT, MPI_MAX, comm_);
+      order = g;
+    }
+#endif
+  }
+  fec_ = std::make_unique<L2_FECollection>(order, dim);
+  tracefree_ = rh.TraceFreeInternalVariables();
+  ns_ = dim * (dim + 1) / 2;
+  nc_ = tracefree_ ? ns_ - 1 : ns_;
+  dfes_ = detail::MakeFESpace(*ufes_, fec_.get(), nc_, Ordering::byNODES);
+  sfes_ = detail::MakeFESpace(*ufes_, fec_.get(), 1);
+  nd_ = sfes_->GetVSize();
+  MFEM_VERIFY(dfes_->GetVSize() == nd_ * nc_, "layout");
+
+  // Geometric coupling, unit coefficient: all material weighting is
+  // applied pointwise at the internal nodes. Trace-free deviatoric
+  // strain for the isotropic body, the full strain otherwise.
+  B_ = std::make_unique<MixedBilinearForm>(ufes_, dfes_.get());
+  if (tracefree_) {
+    B_->AddDomainIntegrator(
+        new DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator());
+  } else {
+    B_->AddDomainIntegrator(new DomainSymmetricMatrixStrainIntegrator());
+  }
+  B_->Assemble();
+  B_->Finalize();
+
+  if (map_ == StrainMap::Interpolation) {
+    D_interp_ = std::make_unique<DiscreteLinearOperator>(ufes_, dfes_.get());
+    if (tracefree_) {
+      D_interp_->AddDomainInterpolator(new DeviatoricStrainInterpolator());
+    } else {
+      D_interp_->AddDomainInterpolator(new StrainInterpolator());
+    }
+    D_interp_->Assemble();
+    D_interp_->Finalize();
+  } else {
+    Minv_ = BuildBlockMassInverse(*sfes_);
+    Ginv_ = MetricInverse(dim, tracefree_);
+  }
+
+  // Material data sampled once at the internal nodes (L2 nodes are
+  // element-interior, so attribute-wise data is sampled correctly), then
+  // restricted to each branch's active nodes: all of them, or those of the
+  // elements the rheology marks for the branch.
+  const int K = rh.NumBranches();
+  branch_modulus_.resize(K);
+  itau0_.resize(K);
+  itau_.resize(K);
+  law_.resize(K, nullptr);
+  law_params_.resize(K);
+  num_params_.resize(K, 0);
+  nodes_.resize(K);
+  slot_.resize(K);
+  Bk_.resize(K, nullptr);
+  linear_ = rh.IsLinear();
   offsets_.SetSize(1);
   offsets_[0] = 0;
-
-  for (int i = 0; i < nf; i++) {
-    Field& f = fields_[i];
-    f.ufes = &problem_.DisplacementSpace(i);
-    Mesh* mesh = f.ufes->GetMesh();
-    const int dim = mesh->Dimension();
-    const auto& rh = problem_.Rheology(i);
-    MFEM_VERIFY(rh.SpaceDim() == dim,
-                "ViscoelasticOperator: rheology/mesh dimension mismatch.");
-
-    // Default internal order: the smallest L2 order containing eps(u)
-    // exactly, p - 1 on simplices and p on tensor-product elements (the
-    // gradient of a Q_p field has Q_{p,p-1} components).
-    int order = internal_order;
-    if (order < 0) {
-      const int p = f.ufes->GetMaxElementOrder();
-      const bool tensor = mesh->HasGeometry(Geometry::SQUARE) ||
-                          mesh->HasGeometry(Geometry::CUBE) ||
-                          mesh->HasGeometry(Geometry::PRISM) ||
-                          mesh->HasGeometry(Geometry::PYRAMID);
-      order = tensor ? p : std::max(p - 1, 0);
-#ifdef MFEM_USE_MPI
-      if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(f.ufes)) {
-        int g = order;
-        MPI_Allreduce(&order, &g, 1, MPI_INT, MPI_MAX, pfes->GetComm());
-        order = g;
+  const SparseMatrix& Bmat = B_->SpMat();
+  int max_block = nd_ * nc_;
+  for (int k = 0; k < K; k++) {
+    const Array<int>* marker = rh.BranchMarker(k);
+    Array<int>& nodes = nodes_[k];
+    if (!marker) {
+      nodes.SetSize(nd_);
+      for (int p = 0; p < nd_; p++) {
+        nodes[p] = p;
       }
-#endif
-    }
-    f.fec = std::make_unique<L2_FECollection>(order, dim);
-    f.tracefree = rh.TraceFreeInternalVariables();
-    f.ns = dim * (dim + 1) / 2;
-    f.nc = f.tracefree ? f.ns - 1 : f.ns;
-    f.dfes = detail::MakeFESpace(*f.ufes, f.fec.get(), f.nc, Ordering::byNODES);
-    f.sfes = detail::MakeFESpace(*f.ufes, f.fec.get(), 1);
-    f.nd = f.sfes->GetVSize();
-    MFEM_VERIFY(f.dfes->GetVSize() == f.nd * f.nc, "layout");
-
-    // Geometric coupling, unit coefficient: all material weighting is
-    // applied pointwise at the internal nodes. Trace-free deviatoric
-    // strain for the isotropic body, the full strain otherwise.
-    f.B = std::make_unique<MixedBilinearForm>(f.ufes, f.dfes.get());
-    if (f.tracefree) {
-      f.B->AddDomainIntegrator(
-          new DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator());
     } else {
-      f.B->AddDomainIntegrator(new DomainSymmetricMatrixStrainIntegrator());
-    }
-    f.B->Assemble();
-    f.B->Finalize();
-
-    if (map_ == StrainMap::Interpolation) {
-      f.D_interp =
-          std::make_unique<DiscreteLinearOperator>(f.ufes, f.dfes.get());
-      if (f.tracefree) {
-        f.D_interp->AddDomainInterpolator(new DeviatoricStrainInterpolator());
-      } else {
-        f.D_interp->AddDomainInterpolator(new StrainInterpolator());
+      MFEM_VERIFY(marker->Size() >= mesh->attributes.Max(),
+                  "ViscoelasticOperator: branch marker too small.");
+      Array<int> dofs;
+      for (int e = 0; e < mesh->GetNE(); e++) {
+        if ((*marker)[mesh->GetAttribute(e) - 1]) {
+          sfes_->GetElementDofs(e, dofs);
+          nodes.Append(dofs);
+        }
       }
-      f.D_interp->Assemble();
-      f.D_interp->Finalize();
+    }
+    const int ndk = nodes.Size();
+    slot_[k].SetSize(nd_);
+    slot_[k] = -1;
+    for (int q = 0; q < ndk; q++) {
+      slot_[k][nodes[q]] = q;
+    }
+    auto gather = [&](const Vector& full, int per_node) {
+      Vector v(ndk * per_node);
+      for (int q = 0; q < ndk; q++) {
+        for (int i = 0; i < per_node; i++) {
+          v[q * per_node + i] = full[nodes[q] * per_node + i];
+        }
+      }
+      return v;
+    };
+    if (tracefree_) {
+      branch_modulus_[k] =
+          gather(NodalValues(*sfes_, rh.BranchShearModulus(k)), 1);
+      branch_modulus_[k] *= 2.0;
     } else {
-      f.Minv = BuildBlockMassInverse(*f.sfes);
-      f.Ginv = MetricInverse(dim, f.tracefree);
+      branch_modulus_[k] = gather(NodalBranchTensors(*sfes_, rh, k), ns_ * ns_);
     }
+    itau0_[k] = gather(NodalValues(*sfes_, rh.RelaxationTime(k)), 1);
+    for (int q = 0; q < ndk; q++) {
+      MFEM_VERIFY(itau0_[k][q] > 0.0,
+                  "ViscoelasticOperator: relaxation times must be positive.");
+      itau0_[k][q] = 1.0 / itau0_[k][q];
+    }
+    itau_[k] = itau0_[k];
+    const RelaxationLaw* law = rh.Law(k);
+    if (law && law->IsStateDependent()) {
+      law_[k] = law;
+      const int np = law->NumParameters();
+      num_params_[k] = np;
+      law_params_[k].SetSize(ndk * np);
+      for (int i = 0; i < np; i++) {
+        Vector v = NodalValues(*sfes_, law->Parameter(i));
+        for (int q = 0; q < ndk; q++) {
+          law_params_[k][q * np + i] = v[nodes[q]];
+        }
+      }
+    }
+    m_out_.push_back(detail::MakeGridFunction(dfes_.get()));
+    *m_out_.back() = 0.0;
+    offsets_.Append(offsets_.Last() + ndk * nc_);
+    max_block = std::max(max_block, ndk * nc_);
 
-    // Material data sampled once at the internal nodes (L2 nodes are
-    // element-interior, so attribute-wise data is sampled correctly).
-    const int K = rh.NumBranches();
-    f.branch_modulus.resize(K);
-    f.itau0.resize(K);
-    f.itau.resize(K);
-    f.law.resize(K, nullptr);
-    f.law_params.resize(K);
-    f.num_params.resize(K, 0);
-    f.linear = rh.IsLinear();
-    linear_ = linear_ && f.linear;
-    for (int k = 0; k < K; k++) {
-      if (f.tracefree) {
-        f.branch_modulus[k] = NodalValues(*f.sfes, rh.BranchShearModulus(k));
-        f.branch_modulus[k] *= 2.0;
-      } else {
-        f.branch_modulus[k] = NodalBranchTensors(*f.sfes, rh, k);
-      }
-      f.itau0[k] = NodalValues(*f.sfes, rh.RelaxationTime(k));
-      for (int p = 0; p < f.nd; p++) {
-        MFEM_VERIFY(f.itau0[k][p] > 0.0,
-                    "ViscoelasticOperator: relaxation times must be "
-                    "positive.");
-        f.itau0[k][p] = 1.0 / f.itau0[k][p];
-      }
-      f.itau[k] = f.itau0[k];
-      const RelaxationLaw* law = rh.Law(k);
-      if (law && law->IsStateDependent()) {
-        f.law[k] = law;
-        const int np = law->NumParameters();
-        f.num_params[k] = np;
-        f.law_params[k].SetSize(f.nd * np);
-        for (int i = 0; i < np; i++) {
-          Vector v = NodalValues(*f.sfes, law->Parameter(i));
-          for (int p = 0; p < f.nd; p++) {
-            f.law_params[k][p * np + i] = v[p];
+    beta_.push_back(detail::MakeGridFunction(sfes_.get()));
+    *beta_.back() = 1.0;
+    beta_coef_.push_back(
+        std::make_unique<GridFunctionCoefficient>(beta_.back().get()));
+    beta_ptrs_.push_back(beta_coef_.back().get());
+
+    // The rows of B for the branch's nodes (an L2 node's row involves its
+    // own element only, so these are the rows a form assembled on the
+    // region alone would have).
+    if (!marker) {
+      Bk_[k] = &Bmat;
+    } else {
+      auto Bk = std::make_unique<SparseMatrix>(ndk * nc_, Bmat.Width());
+      Array<int> cols;
+      Vector vals;
+      for (int c = 0; c < nc_; c++) {
+        for (int q = 0; q < ndk; q++) {
+          Bmat.GetRow(c * nd_ + nodes[q], cols, vals);
+          if (cols.Size() > 0) {
+            Bk->AddRow(c * ndk + q, cols, vals);
           }
         }
       }
-      f.m_out.push_back(detail::MakeGridFunction(f.dfes.get()));
-      *f.m_out.back() = 0.0;
-      offsets_.Append(offsets_.Last() + f.nd * f.nc);
-
-      f.beta.push_back(detail::MakeGridFunction(f.sfes.get()));
-      *f.beta.back() = 1.0;
-      f.beta_coef.push_back(
-          std::make_unique<GridFunctionCoefficient>(f.beta.back().get()));
-      f.beta_ptrs.push_back(f.beta_coef.back().get());
+      Bk->Finalize();
+      Bk_[k] = Bk.get();
+      Bk_owned_.push_back(std::move(Bk));
     }
-
-    if (!f.linear && !f.tracefree) {
-      f.CU = NodalUnrelaxedTensors(*f.sfes, rh);
-    }
-
-    f.d.SetSize(f.nd * f.nc);
-    f.d_prev.SetSize(f.nd * f.nc);
-    f.dual.SetSize(f.nd * f.nc);
-    f.zeta.SetSize(f.nd * f.nc);
-    f.force.SetSize(f.ufes->GetVSize());
   }
+
+  if (!linear_ && !tracefree_) {
+    CU_ = NodalUnrelaxedTensors(*sfes_, rh);
+  }
+
+  d_.SetSize(nd_ * nc_);
+  d_prev_.SetSize(nd_ * nc_);
+  dual_.SetSize(max_block);
+  zeta_.SetSize(max_block);
+  force_.SetSize(ufes_->GetVSize());
 
   height = width = offsets_.Last();
-
-  parallel_ = detail::IsParallel(*fields_[0].ufes);
-#ifdef MFEM_USE_MPI
-  if (parallel_) {
-    comm_ = static_cast<ParFiniteElementSpace*>(fields_[0].ufes)->GetComm();
-  }
-#endif
 }
 
-int ViscoelasticOperator::BranchOffset(int i, int k) const {
-  int b = 0;
-  for (int j = 0; j < i; j++) {
-    b += NumBranches(j);
-  }
-  return offsets_[b + k];
-}
-
-Vector ViscoelasticOperator::Branch(const Vector& m, int i, int k) const {
+Vector ViscoelasticOperator::Branch(const Vector& m, int k) const {
   Vector v;
-  v.MakeRef(const_cast<Vector&>(m), BranchOffset(i, k), BranchSize(i));
+  v.MakeRef(const_cast<Vector&>(m), BranchOffset(k), BranchSize(k));
   return v;
 }
 
-void ViscoelasticOperator::ComputeStrain(int i, const GridFunction& u,
+void ViscoelasticOperator::BranchToFull(const Vector& m, int k,
+                                        Vector& full) const {
+  full.SetSize(nd_ * nc_);
+  full = 0.0;
+  const Vector b = Branch(m, k);
+  const Array<int>& nodes = nodes_[k];
+  const int ndk = nodes.Size();
+  for (int c = 0; c < nc_; c++) {
+    for (int q = 0; q < ndk; q++) {
+      full[c * nd_ + nodes[q]] = b[c * ndk + q];
+    }
+  }
+}
+
+void ViscoelasticOperator::ComputeStrain(const GridFunction& u,
                                          Vector& d) const {
-  const Field& f = fields_[i];
-  d.SetSize(f.nd * f.nc);
+  d.SetSize(nd_ * nc_);
   if (map_ == StrainMap::Interpolation) {
-    f.D_interp->Mult(u, d);
+    D_interp_->Mult(u, d);
     return;
   }
   // d = (G^{-1} (x) M^{-1}) B u: scalar mass inverse per component, then the
   // inverse basis-tensor metric across components.
-  f.B->Mult(u, f.dual);
+  dual_.SetSize(nd_ * nc_);
+  zeta_.SetSize(nd_ * nc_);
+  B_->Mult(u, dual_);
   Vector tc, duc;
-  for (int c = 0; c < f.nc; c++) {
-    tc.MakeRef(f.zeta, c * f.nd, f.nd);
-    duc.MakeRef(f.dual, c * f.nd, f.nd);
-    f.Minv->Mult(duc, tc);
+  for (int c = 0; c < nc_; c++) {
+    tc.MakeRef(zeta_, c * nd_, nd_);
+    duc.MakeRef(dual_, c * nd_, nd_);
+    Minv_->Mult(duc, tc);
   }
-  for (int c = 0; c < f.nc; c++) {
-    for (int p = 0; p < f.nd; p++) {
+  for (int c = 0; c < nc_; c++) {
+    for (int p = 0; p < nd_; p++) {
       real_t v = 0.0;
-      for (int cp = 0; cp < f.nc; cp++) {
-        v += f.Ginv(c, cp) * f.zeta[cp * f.nd + p];
+      for (int cp = 0; cp < nc_; cp++) {
+        v += Ginv_(c, cp) * zeta_[cp * nd_ + p];
       }
-      d[c * f.nd + p] = v;
+      d[c * nd_ + p] = v;
     }
   }
 }
 
-void ViscoelasticOperator::ComputeAllStrains() const {
-  for (int i = 0; i < NumFields(); i++) {
-    ComputeStrain(i, problem_.Displacement(i), fields_[i].d);
-  }
+void ViscoelasticOperator::ComputeCurrentStrain() const {
+  ComputeStrain(problem_.Displacement(), d_);
 }
 
-void ViscoelasticOperator::ApplyBranchModulus(const Field& f, int k,
-                                              const Vector& x, Vector& y) {
+void ViscoelasticOperator::ApplyBranchModulus(int k, const Vector& x,
+                                              Vector& y) const {
   y.SetSize(x.Size());
-  const Vector& w = f.branch_modulus[k];
-  if (f.tracefree) {
-    for (int c = 0; c < f.nc; c++) {
-      const int o = c * f.nd;
-      for (int p = 0; p < f.nd; p++) {
-        y[o + p] = w[p] * x[o + p];
+  const Vector& w = branch_modulus_[k];
+  const int nd = nodes_[k].Size();
+  MFEM_ASSERT(x.Size() == nd * nc_, "ApplyBranchModulus: branch layout");
+  if (tracefree_) {
+    for (int c = 0; c < nc_; c++) {
+      const int o = c * nd;
+      for (int q = 0; q < nd; q++) {
+        y[o + q] = w[q] * x[o + q];
       }
     }
     return;
   }
-  const int ns = f.ns;
-  for (int p = 0; p < f.nd; p++) {
-    const real_t* Wp = w.GetData() + static_cast<std::size_t>(p) * ns * ns;
+  const int ns = ns_;
+  for (int q = 0; q < nd; q++) {
+    const real_t* Wq = w.GetData() + static_cast<std::size_t>(q) * ns * ns;
     for (int s = 0; s < ns; s++) {
       real_t v = 0.0;
       for (int t = 0; t < ns; t++) {
-        v += Wp[s * ns + t] * x[t * f.nd + p];
+        v += Wq[s * ns + t] * x[t * nd + q];
       }
-      y[s * f.nd + p] = v;
+      y[s * nd + q] = v;
     }
   }
 }
 
-void ViscoelasticOperator::EvaluateRelaxationTimes(int i, const Vector& d,
+void ViscoelasticOperator::EvaluateRelaxationTimes(const Vector& d,
                                                    const Vector& m) const {
-  const Field& f = fields_[i];
-  if (f.linear) {
+  if (linear_) {
     return;
   }
-  const int dim = f.ufes->GetMesh()->Dimension();
-  const int ns = f.ns, nc = f.nc, nd = f.nd;
-  const int K = NumBranches(i);
+  const int dim = ufes_->GetMesh()->Dimension();
+  const int ns = ns_, nc = nc_, nd = nd_;
+  const int K = NumBranches();
   LocalState s(dim);
   std::vector<Vector> mk(K);
   for (int k = 0; k < K; k++) {
-    mk[k] = Branch(m, i, k);
+    mk[k] = Branch(m, k);
   }
   // Index of the dropped diagonal component in the trace-free layout.
   const int last_diag = SymmetricTensorBasis::Index(dim, dim - 1, dim - 1);
-  auto expand = [&](const Vector& x, int p, Vector& full) {
-    for (int c = 0; c < nc; c++) {
-      full[c] = x[c * nd + p];
-    }
-    if (f.tracefree) {
+  auto complete = [&](Vector& full) {
+    if (tracefree_) {
       real_t tr = 0.0;
       for (int j = 0; j < dim - 1; j++) {
         tr += full[SymmetricTensorBasis::Index(dim, j, j)];
@@ -417,76 +474,89 @@ void ViscoelasticOperator::EvaluateRelaxationTimes(int i, const Vector& d,
       full[last_diag] = -tr;
     }
   };
+  // Full-layout vector at node p; block of branch j at its position q.
+  auto expand = [&](const Vector& x, int p, Vector& full) {
+    for (int c = 0; c < nc; c++) {
+      full[c] = x[c * nd + p];
+    }
+    complete(full);
+  };
+  auto expand_branch = [&](int j, int q, Vector& full) {
+    const int ndj = nodes_[j].Size();
+    for (int c = 0; c < nc; c++) {
+      full[c] = mk[j][c * ndj + q];
+    }
+    complete(full);
+  };
   Vector tmp(ns);
-  for (int p = 0; p < nd; p++) {
-    expand(d, p, s.strain);
-    // Stress: trace-free isotropic sum_j 2 mu_j (d - m_j) (deviatoric part
-    // only); anisotropic C_U eps - sum_j C_j m_j through the nodal W forms.
-    if (f.tracefree) {
-      s.stress = 0.0;
-      for (int j = 0; j < K; j++) {
-        expand(mk[j], p, tmp);
-        const real_t two_mu = f.branch_modulus[j][p];
-        for (int c = 0; c < ns; c++) {
-          s.stress[c] += two_mu * (s.strain[c] - tmp[c]);
+  for (int k = 0; k < K; k++) {
+    if (!law_[k]) {
+      continue;
+    }
+    const Array<int>& nodes = nodes_[k];
+    for (int q = 0; q < nodes.Size(); q++) {
+      const int p = nodes[q];
+      expand(d, p, s.strain);
+      // Stress at p: trace-free isotropic sum_j 2 mu_j (d - m_j) over the
+      // branches living at p (deviatoric part only); anisotropic C_U eps -
+      // sum_j C_j m_j through the nodal W forms.
+      if (tracefree_) {
+        s.stress = 0.0;
+        for (int j = 0; j < K; j++) {
+          const int qj = slot_[j][p];
+          if (qj < 0) {
+            continue;
+          }
+          expand_branch(j, qj, tmp);
+          const real_t two_mu = branch_modulus_[j][qj];
+          for (int c = 0; c < ns; c++) {
+            s.stress[c] += two_mu * (s.strain[c] - tmp[c]);
+          }
         }
-      }
-    } else {
-      const real_t* Wu = f.CU.GetData() + static_cast<std::size_t>(p) * ns * ns;
-      for (int a = 0; a < ns; a++) {
-        real_t v = 0.0;
-        for (int b = 0; b < ns; b++) {
-          v += Wu[a * ns + b] * s.strain[b];
-        }
-        s.stress[a] = v;
-      }
-      for (int j = 0; j < K; j++) {
-        const real_t* Wj =
-            f.branch_modulus[j].GetData() + static_cast<std::size_t>(p) * ns * ns;
-        expand(mk[j], p, tmp);
+      } else {
+        const real_t* Wu =
+            CU_.GetData() + static_cast<std::size_t>(p) * ns * ns;
         for (int a = 0; a < ns; a++) {
           real_t v = 0.0;
           for (int b = 0; b < ns; b++) {
-            v += Wj[a * ns + b] * tmp[b];
+            v += Wu[a * ns + b] * s.strain[b];
           }
-          s.stress[a] -= v;
+          s.stress[a] = v;
+        }
+        for (int j = 0; j < K; j++) {
+          const int qj = slot_[j][p];
+          if (qj < 0) {
+            continue;
+          }
+          const real_t* Wj = branch_modulus_[j].GetData() +
+                             static_cast<std::size_t>(qj) * ns * ns;
+          expand_branch(j, qj, tmp);
+          for (int a = 0; a < ns; a++) {
+            real_t v = 0.0;
+            for (int b = 0; b < ns; b++) {
+              v += Wj[a * ns + b] * tmp[b];
+            }
+            s.stress[a] -= v;
+          }
         }
       }
-    }
-    for (int k = 0; k < K; k++) {
-      if (!f.law[k]) {
-        continue;
-      }
-      expand(mk[k], p, s.m);
-      const real_t* params = f.law_params[k].GetData() + p * f.num_params[k];
-      const real_t F = f.law[k]->Factor(params, s);
+      expand_branch(k, q, s.m);
+      const real_t* params = law_params_[k].GetData() + q * num_params_[k];
+      const real_t F = law_[k]->Factor(params, s);
       MFEM_ASSERT(F > 0.0, "relaxation law factor must be positive");
-      f.itau[k][p] = f.itau0[k][p] / F;
+      itau_[k][q] = itau0_[k][q] / F;
     }
   }
   tau_version_++;
 }
 
-std::vector<std::vector<Vector>> ViscoelasticOperator::SaveRelaxationTimes()
-    const {
-  std::vector<std::vector<Vector>> saved(NumFields());
-  for (int i = 0; i < NumFields(); i++) {
-    saved[i] = fields_[i].itau;
-  }
-  return saved;
-}
-
 real_t ViscoelasticOperator::RelaxationTimeChange(
-    const std::vector<std::vector<Vector>>& old_itau) const {
+    const std::vector<Vector>& old_itau) const {
   real_t change = 0.0;
-  for (int i = 0; i < NumFields(); i++) {
-    const Field& f = fields_[i];
-    if (f.linear) {
-      continue;
-    }
-    for (int k = 0; k < NumBranches(i); k++) {
-      for (int p = 0; p < f.nd; p++) {
-        const real_t a = old_itau[i][k][p], b = f.itau[k][p];
+  if (!linear_) {
+    for (int k = 0; k < NumBranches(); k++) {
+      for (int p = 0; p < itau_[k].Size(); p++) {
+        const real_t a = old_itau[k][p], b = itau_[k][p];
         change = std::max(change, std::abs(b - a) / std::max(a, b));
       }
     }
@@ -505,43 +575,43 @@ real_t ViscoelasticOperator::GlobalMax(real_t v) const {
   return v;
 }
 
-void ViscoelasticOperator::AddCoupledForce(int i, const Vector& zeta) const {
-  const Field& f = fields_[i];
-  f.B->MultTranspose(zeta, f.force);
-  problem_.AddForce(i, f.force);
+void ViscoelasticOperator::AddCoupledForce(int k, const Vector& zeta) const {
+  force_.SetSize(ufes_->GetVSize());
+  Bk_[k]->MultTranspose(zeta, force_);
+  problem_.AddForce(force_);
 }
 
 bool ViscoelasticOperator::ElasticUpdate(const Vector& m, real_t t) const {
   problem_.AssembleForce(t);
-  for (int i = 0; i < NumFields(); i++) {
-    const Field& f = fields_[i];
-    for (int k = 0; k < NumBranches(i); k++) {
-      ApplyBranchModulus(f, k, Branch(m, i, k), f.zeta);
-      AddCoupledForce(i, f.zeta);
-    }
+  for (int k = 0; k < NumBranches(); k++) {
+    ApplyBranchModulus(k, Branch(m, k), zeta_);
+    AddCoupledForce(k, zeta_);
   }
   return problem_.Solve();
 }
 
-void ViscoelasticOperator::Rate(const Field& f, int k, const Vector& m_k,
-                                const Vector& d, Vector& k_out) const {
-  for (int c = 0; c < f.nc; c++) {
-    const int o = c * f.nd;
-    for (int p = 0; p < f.nd; p++) {
-      k_out[o + p] = (d[o + p] - m_k[o + p]) * f.itau[k][p];
+void ViscoelasticOperator::Rate(int k, const Vector& m_k, const Vector& d,
+                                Vector& k_out) const {
+  const Array<int>& nodes = nodes_[k];
+  const int nd = nodes.Size();
+  for (int c = 0; c < nc_; c++) {
+    const int o = c * nd, of = c * nd_;
+    for (int q = 0; q < nd; q++) {
+      k_out[o + q] = (d[of + nodes[q]] - m_k[o + q]) * itau_[k][q];
     }
   }
 }
 
-void ViscoelasticOperator::LocalExponentialUpdate(const Field& f, int k,
-                                                  real_t dt, Vector& m_k,
+void ViscoelasticOperator::LocalExponentialUpdate(int k, real_t dt, Vector& m_k,
                                                   const Vector& d) const {
-  for (int p = 0; p < f.nd; p++) {
-    const real_t a = std::exp(-dt * f.itau[k][p]);
+  const Array<int>& nodes = nodes_[k];
+  const int nd = nodes.Size();
+  for (int q = 0; q < nd; q++) {
+    const real_t a = std::exp(-dt * itau_[k][q]);
     const real_t b = 1.0 - a;
-    for (int c = 0; c < f.nc; c++) {
-      const int idx = c * f.nd + p;
-      m_k[idx] = a * m_k[idx] + b * d[idx];
+    const int p = nodes[q];
+    for (int c = 0; c < nc_; c++) {
+      m_k[c * nd + q] = a * m_k[c * nd + q] + b * d[c * nd_ + p];
     }
   }
 }
@@ -552,28 +622,26 @@ void ViscoelasticOperator::SetEffectiveModulus(real_t dt, Scheme scheme) const {
     return;
   }
   MFEM_VERIFY(problem_.SupportsRelaxationWeights(),
-              "ViscoelasticOperator: this scheme needs an elastic problem "
+              "ViscoelasticOperator: this scheme needs a quasi-static problem "
               "supporting SetRelaxationWeights(); use an explicit solver or "
               "ExponentialEulerSolver instead.");
   // Nodal weights beta_k: the effective modulus is C_inf + sum_k beta_k C_k
   // after eliminating m_k^{n+1}.
-  for (int i = 0; i < NumFields(); i++) {
-    const Field& f = fields_[i];
-    for (int k = 0; k < NumBranches(i); k++) {
-      GridFunction& beta_k = *f.beta[k];
-      for (int p = 0; p < f.nd; p++) {
-        const real_t h = dt * f.itau[k][p];
-        if (scheme == Scheme::BackwardEuler) {
-          beta_k[p] = 1.0 / (1.0 + h);
-        } else {
-          real_t e, alpha, beta;
-          detail::ExponentialTrapezoidWeights(h, e, alpha, beta);
-          beta_k[p] = 1.0 - beta;
-        }
+  for (int k = 0; k < NumBranches(); k++) {
+    GridFunction& beta_k = *beta_[k];
+    const Array<int>& nodes = nodes_[k];
+    for (int q = 0; q < nodes.Size(); q++) {
+      const real_t h = dt * itau_[k][q];
+      if (scheme == Scheme::BackwardEuler) {
+        beta_k[nodes[q]] = 1.0 / (1.0 + h);
+      } else {
+        real_t e, alpha, beta;
+        detail::ExponentialTrapezoidWeights(h, e, alpha, beta);
+        beta_k[nodes[q]] = 1.0 - beta;
       }
     }
-    problem_.SetRelaxationWeights(i, f.beta_ptrs);
   }
+  problem_.SetRelaxationWeights(beta_ptrs_);
   scheme_ = scheme;
   effective_dt_ = dt;
   effective_version_ = tau_version_;
@@ -620,15 +688,12 @@ void ViscoelasticOperator::Mult(const Vector& m, Vector& k) const {
   UseUnrelaxedOperator();
   MFEM_VERIFY(ElasticUpdate(m, t),
               "ViscoelasticOperator::Mult: elastic solve failed.");
-  ComputeAllStrains();
+  ComputeCurrentStrain();
   k.SetSize(m.Size());
-  for (int i = 0; i < NumFields(); i++) {
-    const Field& f = fields_[i];
-    EvaluateRelaxationTimes(i, f.d, m);
-    for (int b = 0; b < NumBranches(i); b++) {
-      Vector kb = Branch(k, i, b);
-      Rate(f, b, Branch(m, i, b), f.d, kb);
-    }
+  EvaluateRelaxationTimes(d_, m);
+  for (int b = 0; b < NumBranches(); b++) {
+    Vector kb = Branch(k, b);
+    Rate(b, Branch(m, b), d_, kb);
   }
   UpdateCache(m, t);
 }
@@ -647,39 +712,38 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
   for (int pass = 0;; pass++) {
     SetEffectiveModulus(dt, Scheme::BackwardEuler);
     problem_.AssembleForce(t);
-    for (int i = 0; i < NumFields(); i++) {
-      const Field& f = fields_[i];
-      for (int b = 0; b < NumBranches(i); b++) {
-        Vector mb = Branch(m, i, b);
-        for (int c = 0; c < f.nc; c++) {
-          const int o = c * f.nd;
-          for (int p = 0; p < f.nd; p++) {
-            const real_t h = dt * f.itau[b][p];
-            f.dual[o + p] = mb[o + p] / (1.0 + h);
-          }
+    for (int b = 0; b < NumBranches(); b++) {
+      Vector mb = Branch(m, b);
+      const int nd = nodes_[b].Size();
+      dual_.SetSize(nd * nc_);
+      for (int c = 0; c < nc_; c++) {
+        const int o = c * nd;
+        for (int q = 0; q < nd; q++) {
+          const real_t h = dt * itau_[b][q];
+          dual_[o + q] = mb[o + q] / (1.0 + h);
         }
-        ApplyBranchModulus(f, b, f.dual, f.zeta);
-        AddCoupledForce(i, f.zeta);
       }
+      ApplyBranchModulus(b, dual_, zeta_);
+      AddCoupledForce(b, zeta_);
     }
     MFEM_VERIFY(problem_.Solve(),
                 "ViscoelasticOperator::ImplicitSolve: elastic solve failed.");
-    ComputeAllStrains();
+    ComputeCurrentStrain();
 
-    for (int i = 0; i < NumFields(); i++) {
-      const Field& f = fields_[i];
-      for (int b = 0; b < NumBranches(i); b++) {
-        Vector mb = Branch(m, i, b);
-        Vector kb = Branch(k, i, b);
-        Vector cb = Branch(cached_m_, i, b);
-        for (int c = 0; c < f.nc; c++) {
-          const int o = c * f.nd;
-          for (int p = 0; p < f.nd; p++) {
-            const real_t h = dt * f.itau[b][p];
-            const real_t m_new = (mb[o + p] + h * f.d[o + p]) / (1.0 + h);
-            kb[o + p] = (m_new - mb[o + p]) / dt;
-            cb[o + p] = m_new;
-          }
+    for (int b = 0; b < NumBranches(); b++) {
+      Vector mb = Branch(m, b);
+      Vector kb = Branch(k, b);
+      Vector cb = Branch(cached_m_, b);
+      const Array<int>& nodes = nodes_[b];
+      const int nd = nodes.Size();
+      for (int c = 0; c < nc_; c++) {
+        const int o = c * nd, of = c * nd_;
+        for (int q = 0; q < nd; q++) {
+          const real_t h = dt * itau_[b][q];
+          const real_t m_new =
+              (mb[o + q] + h * d_[of + nodes[q]]) / (1.0 + h);
+          kb[o + q] = (m_new - mb[o + q]) / dt;
+          cb[o + q] = m_new;
         }
       }
     }
@@ -688,10 +752,8 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
       break;
     }
     // Corrector: times at the end state (d^{n+1}, m^{n+1}).
-    const auto old_itau = SaveRelaxationTimes();
-    for (int i = 0; i < NumFields(); i++) {
-      EvaluateRelaxationTimes(i, fields_[i].d, cached_m_);
-    }
+    const std::vector<Vector> old_itau = itau_;
+    EvaluateRelaxationTimes(d_, cached_m_);
     if (RelaxationTimeChange(old_itau) < corrector_tol_) {
       break;
     }
@@ -709,15 +771,12 @@ void ViscoelasticOperator::ExponentialEulerStep(Vector& m, real_t& t,
     MFEM_VERIFY(ElasticUpdate(m, t),
                 "ViscoelasticOperator::ExponentialEulerStep: elastic solve "
                 "failed.");
-    ComputeAllStrains();
+    ComputeCurrentStrain();
   }
-  for (int i = 0; i < NumFields(); i++) {
-    const Field& f = fields_[i];
-    EvaluateRelaxationTimes(i, f.d, m);  // frozen over the step
-    for (int b = 0; b < NumBranches(i); b++) {
-      Vector mb = Branch(m, i, b);
-      LocalExponentialUpdate(f, b, dt, mb, f.d);
-    }
+  EvaluateRelaxationTimes(d_, m);  // frozen over the step
+  for (int b = 0; b < NumBranches(); b++) {
+    Vector mb = Branch(m, b);
+    LocalExponentialUpdate(b, dt, mb, d_);
   }
   t += dt;
   SetTime(t);
@@ -734,65 +793,58 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
     MFEM_VERIFY(ElasticUpdate(m, t),
                 "ViscoelasticOperator::ExponentialTrapezoidStep: elastic "
                 "solve failed.");
-    ComputeAllStrains();
+    ComputeCurrentStrain();
   }
-  for (int i = 0; i < NumFields(); i++) {
-    fields_[i].d_prev = fields_[i].d;
-    EvaluateRelaxationTimes(i, fields_[i].d_prev, m);  // predictor: start
-  }
+  d_prev_ = d_;
+  EvaluateRelaxationTimes(d_prev_, m);  // predictor: start
 
   // ETD1 prediction of the step (times and strain frozen at the start),
   // kept for the error estimate.
   const Vector m_start(m);
   predictor_diff_ = m;
   m_scale_.SetSize(m.Size());
-  for (int i = 0; i < NumFields(); i++) {
-    const Field& f = fields_[i];
-    for (int b = 0; b < NumBranches(i); b++) {
-      Vector pb = Branch(predictor_diff_, i, b);
-      LocalExponentialUpdate(f, b, dt, pb, f.d_prev);
-    }
+  for (int b = 0; b < NumBranches(); b++) {
+    Vector pb = Branch(predictor_diff_, b);
+    LocalExponentialUpdate(b, dt, pb, d_prev_);
   }
 
   last_passes_ = 0;
   for (int pass = 0;; pass++) {
     SetEffectiveModulus(dt, Scheme::ExponentialTrapezoid);
     problem_.AssembleForce(t + dt);
-    for (int i = 0; i < NumFields(); i++) {
-      const Field& f = fields_[i];
-      for (int b = 0; b < NumBranches(i); b++) {
-        Vector mb = Branch(m_start, i, b);
-        for (int p = 0; p < f.nd; p++) {
-          real_t e, alpha, beta;
-          detail::ExponentialTrapezoidWeights(dt * f.itau[b][p], e, alpha,
-                                              beta);
-          for (int c = 0; c < f.nc; c++) {
-            const int idx = c * f.nd + p;
-            f.dual[idx] = e * mb[idx] + alpha * f.d_prev[idx];
-          }
+    for (int b = 0; b < NumBranches(); b++) {
+      Vector mb = Branch(m_start, b);
+      const Array<int>& nodes = nodes_[b];
+      const int nd = nodes.Size();
+      dual_.SetSize(nd * nc_);
+      for (int q = 0; q < nd; q++) {
+        real_t e, alpha, beta;
+        detail::ExponentialTrapezoidWeights(dt * itau_[b][q], e, alpha, beta);
+        for (int c = 0; c < nc_; c++) {
+          dual_[c * nd + q] =
+              e * mb[c * nd + q] + alpha * d_prev_[c * nd_ + nodes[q]];
         }
-        ApplyBranchModulus(f, b, f.dual, f.zeta);
-        AddCoupledForce(i, f.zeta);
       }
+      ApplyBranchModulus(b, dual_, zeta_);
+      AddCoupledForce(b, zeta_);
     }
     MFEM_VERIFY(problem_.Solve(),
                 "ViscoelasticOperator::ExponentialTrapezoidStep: elastic "
                 "solve failed.");
-    ComputeAllStrains();  // d^{n+1}
+    ComputeCurrentStrain();  // d^{n+1}
 
-    for (int i = 0; i < NumFields(); i++) {
-      const Field& f = fields_[i];
-      for (int b = 0; b < NumBranches(i); b++) {
-        Vector mb = Branch(m, i, b);
-        Vector m0 = Branch(m_start, i, b);
-        for (int p = 0; p < f.nd; p++) {
-          real_t e, alpha, beta;
-          detail::ExponentialTrapezoidWeights(dt * f.itau[b][p], e, alpha,
-                                              beta);
-          for (int c = 0; c < f.nc; c++) {
-            const int idx = c * f.nd + p;
-            mb[idx] = e * m0[idx] + alpha * f.d_prev[idx] + beta * f.d[idx];
-          }
+    for (int b = 0; b < NumBranches(); b++) {
+      Vector mb = Branch(m, b);
+      Vector m0 = Branch(m_start, b);
+      const Array<int>& nodes = nodes_[b];
+      const int nd = nodes.Size();
+      for (int q = 0; q < nd; q++) {
+        real_t e, alpha, beta;
+        detail::ExponentialTrapezoidWeights(dt * itau_[b][q], e, alpha, beta);
+        const int p = nodes[q];
+        for (int c = 0; c < nc_; c++) {
+          const int idx = c * nd + q, full = c * nd_ + p;
+          mb[idx] = e * m0[idx] + alpha * d_prev_[full] + beta * d_[full];
         }
       }
     }
@@ -801,17 +853,14 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
       break;
     }
     // Corrector: times at the midpoint state.
-    const auto old_itau = SaveRelaxationTimes();
+    const std::vector<Vector> old_itau = itau_;
     Vector m_mid(m);
     m_mid += m_start;
     m_mid *= 0.5;
-    for (int i = 0; i < NumFields(); i++) {
-      Field& f = fields_[i];
-      f.dual = f.d;
-      f.dual += f.d_prev;
-      f.dual *= 0.5;
-      EvaluateRelaxationTimes(i, f.dual, m_mid);
-    }
+    Vector d_mid(d_);
+    d_mid += d_prev_;
+    d_mid *= 0.5;
+    EvaluateRelaxationTimes(d_mid, m_mid);
     if (RelaxationTimeChange(old_itau) < corrector_tol_) {
       break;
     }
@@ -856,43 +905,39 @@ bool ViscoelasticOperator::SolveElastic(const Vector& m, real_t t) {
   UseUnrelaxedOperator();
   const bool ok = ElasticUpdate(m, t);
   if (ok) {
-    ComputeAllStrains();
+    ComputeCurrentStrain();
     UpdateCache(m, t);
   }
   return ok;
 }
 
 void ViscoelasticOperator::SyncFields(const Vector& m) {
-  for (int i = 0; i < NumFields(); i++) {
-    for (int b = 0; b < NumBranches(i); b++) {
-      *fields_[i].m_out[b] = Branch(m, i, b);
-    }
+  Vector full;
+  for (int b = 0; b < NumBranches(); b++) {
+    BranchToFull(m, b, full);
+    *m_out_[b] = full;
   }
 }
 
 void ViscoelasticOperator::RegisterFields(DataCollection& dc) {
   problem_.RegisterFields(dc);
-  for (int i = 0; i < NumFields(); i++) {
-    for (int b = 0; b < NumBranches(i); b++) {
-      std::string name = "internal_variable";
-      if (NumFields() > 1) {
-        name += "_field" + std::to_string(i);
-      }
-      if (NumBranches(i) > 1) {
-        name += "_branch" + std::to_string(b);
-      }
-      dc.RegisterField(name, fields_[i].m_out[b].get());
+  // One branch with the default label keeps the plain name; otherwise the
+  // rheology's label (e.g. "<region>_branch<j>" for a CompositeRheology).
+  for (int b = 0; b < NumBranches(); b++) {
+    std::string name = "internal_variable";
+    const std::string label = problem_.Rheology().BranchLabel(b);
+    if (NumBranches() > 1 || label != "branch0") {
+      name += "_" + label;
     }
+    dc.RegisterField(name, m_out_[b].get());
   }
 }
 
 real_t ViscoelasticOperator::MinRelaxationTime() const {
   real_t itau_max = 0.0;
-  for (const auto& f : fields_) {
-    for (const auto& it : f.itau) {
-      if (it.Size() > 0) {
-        itau_max = std::max(itau_max, it.Max());
-      }
+  for (const auto& it : itau_) {
+    if (it.Size() > 0) {
+      itau_max = std::max(itau_max, it.Max());
     }
   }
 #ifdef MFEM_USE_MPI

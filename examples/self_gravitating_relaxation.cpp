@@ -4,11 +4,12 @@
 // Viscoelastic relaxation of a self-gravitating layered Earth model with a
 // fluid outer core: the layered models of layered_model.hpp (two- or
 // three-layer meshes, see elastogravity_layered.cpp), a Maxwell mantle with
-// a given viscosity, an elastic inner core, and a surface mass load switched
-// on at t = 0 (a Heaviside load: the elastic response is followed by the
-// viscous relaxation towards isostasy). ViscoelasticOperator runs on
-// SelfGravitatingElasticProblem unchanged; the potential and the fluid core
-// come along for free.
+// a given viscosity, an elastic inner core (a CompositeRheology: the inner
+// core carries an elastic rheology, the mantle a Maxwell one), and a surface
+// mass load switched on at t = 0 (a Heaviside load: the elastic response is
+// followed by the viscous relaxation towards isostasy). ViscoelasticOperator
+// runs on LinearQuasiStaticSelfGravitatingProblem unchanged; the potential
+// and the fluid core come along for free.
 //
 // Time is measured in Maxwell times of the mantle, tau = eta / mu evaluated
 // with the mantle's mean shear modulus; the run prints, at every step, the
@@ -17,8 +18,10 @@
 //
 // Sample runs:
 //    ./self_gravitating_relaxation -o 2 -n 20 -tf 5
-//    ./self_gravitating_relaxation -m ../data/elastogravity_three_layer_2d.msh -o 2
-//    ./self_gravitating_relaxation -m ../data/elastogravity_three_layer_3d.msh -o 1 -n 10
+//    ./self_gravitating_relaxation -m ../data/elastogravity_three_layer_2d.msh
+//    -o 2
+//    ./self_gravitating_relaxation -m ../data/elastogravity_three_layer_3d.msh
+//    -o 1 -n 10
 //    ./self_gravitating_relaxation -o 2 -rtol 1e-3
 //    ./self_gravitating_relaxation -o 2 -eta 3e21 -pv
 // ============================================================================
@@ -82,18 +85,32 @@ int main(int argc, char* argv[]) {
 
   // Material. The Maxwell time of the mantle from its mean shear modulus
   // (the moduli vary with radius, so tau varies too; the reported time unit
-  // uses the mean); the inner core is kept elastic by a very long time.
+  // uses the mean). With an inner core the rheology is a composite: elastic
+  // in the inner core, Maxwell in the mantle (the same kappa and mu
+  // coefficients serve both; each region reads its own radii).
   const real_t mu_mantle_dim = inner_core ? 0.5 * (294e9 + 68e9)
                                           : 0.5 * (280e9 + 70e9);
   const real_t tau_dim = eta_dim / mu_mantle_dim;
   const real_t tau_nd = tau_dim / ND.Time();
   FunctionCoefficient rho(Density), rho_f(FluidDensity), kappa(BulkModulus),
       mu(ShearModulus), sigma(SurfaceLoad);
-  FunctionCoefficient tau([tau_nd](const Vector& x) {
-    const real_t r = x.Norml2();
-    return (inner_core && r < kRIcb) ? 1e9 * tau_nd : tau_nd;
-  });
-  auto rheology = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+  ConstantCoefficient tau(tau_nd);
+  auto mantle = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
+  IsotropicElasticRheology core(dim, kappa, mu);
+  std::vector<RheologyRegion> regions;
+  {
+    Array<int> mantle_marker(solid.attributes.Max()), core_marker;
+    mantle_marker = 0;
+    mantle_marker[MantleAttribute() - 1] = 1;
+    regions.push_back({mantle_marker, &mantle, "mantle"});
+    if (inner_core) {
+      core_marker.SetSize(solid.attributes.Max());
+      core_marker = 0;
+      core_marker[InnerCoreAttribute() - 1] = 1;
+      regions.push_back({core_marker, &core, "inner_core"});
+    }
+  }
+  CompositeRheology rheology(dim, regions);
   std::vector<FluidRegion> fluids;
   {
     FluidRegion f;
@@ -102,8 +119,8 @@ int main(int argc, char* argv[]) {
     f.interface_marker = InterfaceMarker(solid);
     fluids.push_back(f);
   }
-  SelfGravitatingElasticProblem problem(&fes_u, &fes_phi, rheology, rho, 1.0,
-                                        dtn_degree, nullptr, fluids);
+  LinearQuasiStaticSelfGravitatingProblem problem(
+      &fes_u, &fes_phi, rheology, rho, 1.0, dtn_degree, nullptr, fluids);
   // A Heaviside load: the surface load coefficient is constant in time, so
   // switching it on at t = 0 is simply starting from an unloaded state.
   problem.SetSurfaceLoad(sigma, SurfaceMarker(solid));

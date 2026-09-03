@@ -107,7 +107,7 @@ class IsotropicMaxwellRheology {
 
 An anisotropic counterpart later holds `C_∞` and `C_k` as `MatrixCoefficient`s and provides `UnrelaxedTensor()`; the interface below only ever asks for "the coefficient(s) to assemble the elastic operator with" and "the coefficient(s) of the relaxable parts", so the two share the same shape.
 
-### 2.2 The elastic-problem interface (`elastic_problem.hpp`)
+### 2.2 The elastic-problem interface (`quasi_static_problem.hpp`)
 
 Kept as sketched, with three additions: multiple displacement fields, the effective-modulus hook, and material access.
 
@@ -118,9 +118,9 @@ Kept as sketched, with three additions: multiple displacement fields, the effect
 ///   Solve();                   // displacement(s) <- K^{-1} (external + increments)
 /// Solve() may be internally iterative or nonlinear (sea level), but it is a
 /// black box to callers; linearity in the *forces* is part of the contract.
-class QuasiStaticLinearElasticProblem {
+class LinearQuasiStaticProblem {
  public:
-  virtual ~QuasiStaticLinearElasticProblem() {}
+  virtual ~LinearQuasiStaticProblem() {}
 
   /// Solid regions carrying a displacement unknown (1; 2 for inner core + mantle).
   virtual int NumDisplacementFields() const = 0;
@@ -153,10 +153,10 @@ Notes on the contract:
 - `SetEffectiveShearModulus` changes the operator; the implementation must invalidate its preconditioner/solver setup and, in coupled problems, any Schur-complement caches. `ClearEffectiveShearModulus` restores `μ_U`. Implementations may cache by the *identity* of `mu_eff`'s underlying `GridFunction` plus a version counter, but simplest is: reassemble on every call and let the viscoelastic layer call it only when `dt` changes.
 - `Rheology(i)` lets the viscoelastic layer verify consistency at construction (`&problem.Rheology(i) == &rheology` or, in debug, nodal sampling of `μ_U`).
 
-### 2.3 `LinearElasticProblemBase` — the shared implementation
+### 2.3 `LinearQuasiStaticProblemBase` — the shared implementation
 
 ```cpp
-class LinearElasticProblemBase : public QuasiStaticLinearElasticProblem {
+class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
  protected:
   mfem::FiniteElementSpace *fes_;           // serial or parallel; owned or not
 #ifdef MFEM_USE_MPI
@@ -182,7 +182,7 @@ class LinearElasticProblemBase : public QuasiStaticLinearElasticProblem {
   bool SetWarmStartTolerance(mfem::IterativeSolver &, mfem::Solver &prec, const mfem::Vector &B) const;
   void AssembleOperator();                                     // K = K_κ + K_dev(μ_current); sets operator_dirty_
  public:
-  LinearElasticProblemBase(mfem::FiniteElementSpace *fes, const IsotropicMaxwellRheology &rh);
+  LinearQuasiStaticProblemBase(mfem::FiniteElementSpace *fes, const IsotropicMaxwellRheology &rh);
   // interface methods implemented once for serial and parallel:
   void AssembleForce(mfem::real_t t) override;
   void AddForce(int i, const mfem::Vector &f) override;
@@ -205,7 +205,7 @@ if (!SetWarmStartTolerance(...)) { X = 0; } else ok = SolveLinearSystem(B, X);
 RecoverFEMSolution(X, rhs, u);
 ```
 
-`TractionProblem` (rigid-body wrapper) and `ClampedProblem` stay as the two reference implementations; the coupled `SelfGravitatingElasticProblem` overrides `SetupSolver`/`SolveLinearSystem` with the block or Schur solver and `NumDisplacementFields`.
+`LinearQuasiStaticTractionProblem` (rigid-body wrapper) and `LinearQuasiStaticClampedProblem` stay as the two reference implementations; the coupled `LinearQuasiStaticSelfGravitatingProblem` overrides `SetupSolver`/`SolveLinearSystem` with the block or Schur solver and `NumDisplacementFields`.
 
 ### 2.4 `ViscoelasticOperator` (`viscoelastic.hpp`)
 
@@ -216,7 +216,7 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
  public:
   enum class StrainMap { Galerkin, Interpolation };
 
-  ViscoelasticOperator(QuasiStaticLinearElasticProblem &problem,
+  ViscoelasticOperator(LinearQuasiStaticProblem &problem,
                        int internal_order = -1,           // < 0: displacement order − 1
                        StrainMap map = StrainMap::Galerkin);
 
@@ -256,7 +256,7 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
     mutable mfem::Vector d, force, zeta;                     // scratch
   };
   std::vector<Field> fields_;
-  QuasiStaticLinearElasticProblem &problem_;
+  LinearQuasiStaticProblem &problem_;
   mfem::real_t cached_dt_ = -1.0;                            // dt for which μ_eff was set
 
   // pointwise kernels (isotropic; virtual for nonlinear rheologies)
@@ -292,10 +292,10 @@ ImplicitSolve(dt,m,k): (t already set by the ODESolver)  mu_eff = μ_∞ + Σ μ
 
 ```
 include/mfemElasticity/rheology.hpp          MaxwellBranch, IsotropicMaxwellRheology
-include/mfemElasticity/elastic_problem.hpp   QuasiStaticLinearElasticProblem, LinearElasticProblemBase,
-                                             TractionProblem, ClampedProblem (reference implementations)
+include/mfemElasticity/quasi_static_problem.hpp   LinearQuasiStaticProblem, LinearQuasiStaticProblemBase,
+                                             LinearQuasiStaticTractionProblem, LinearQuasiStaticClampedProblem (reference implementations)
 include/mfemElasticity/viscoelastic.hpp      ViscoelasticOperator, ExponentialEulerSolver, ExponentialTrapezoidSolver
-include/mfemElasticity/self_gravitating.hpp  SelfGravitatingElasticProblem (after the SubMesh work)
+include/mfemElasticity/self_gravitating.hpp  LinearQuasiStaticSelfGravitatingProblem (after the SubMesh work)
 src/…                                        matching .cpp files; the stale elasticity.hpp/.cpp removed
 examples/quasi_static_elasticity.cpp, viscoelasticity.cpp   drivers only
 tests/TestRheology.cpp, TestViscoelastic.cpp
@@ -329,22 +329,22 @@ Dependencies: `viscoelastic.hpp` depends only on the interface and on `bilininte
 4. **0-D analytic checks on a uniform block.** (a) Constant pure-shear traction, Maxwell: `d(t)` grows linearly with slope `σ/(2η)` after the instantaneous response; (b) relaxation test: prescribed constant displacement (clamped variant), reaction stress `σ(t) = 2[μ_∞ + Σ μ_k e^{−t/τ_k}] d` — exact Prony series; two branches with `τ₁/τ₂ = 100`. Both with all integrators at `dt ≪ τ_min`; then with `dt ≫ τ_1` for the implicit/exponential ones (must still be exact for (b), since `d` is constant).
 5. **Temporal convergence.** Time-varying traction `f(t)`; reference = RK4 at tiny `dt`; observed orders: ETD1 → 1, BE → 1, exponential trapezoid → 2, SDIRK23 → 2.
 6. **Long-time limit.** Clamped Maxwell body: `u(t→∞)` equals the elastic solution with `μ = μ_∞` (for `μ_∞ > 0`) — a check of the effective-modulus path.
-7. **Interface conformance.** A mock `QuasiStaticLinearElasticProblem` with two displacement fields verifies the state layout and that forces are routed to the right field.
-8. **Physics.** Viscoelastic self-gravitating sphere relaxing to hydrostatic equilibrium under a degree-2 load vs the radial codes (once `SelfGravitatingElasticProblem` exists).
+7. **Interface conformance.** A mock `LinearQuasiStaticProblem` with two displacement fields verifies the state layout and that forces are routed to the right field.
+8. **Physics.** Viscoelastic self-gravitating sphere relaxing to hydrostatic equilibrium under a degree-2 load vs the radial codes (once `LinearQuasiStaticSelfGravitatingProblem` exists).
 
 ## 6. Phases
 
 | Phase | Deliverable | Effort |
 |---|---|---|
-| 1 | `rheology.hpp`; `elastic_problem.hpp` promoted from `examples/elastic.hpp` with the κ/dev split, effective-modulus hook, multi-field interface, serial+parallel in one class; `Traction`/`Clamped` reference problems; tests 1–2 | 2 d |
+| 1 | `rheology.hpp`; `quasi_static_problem.hpp` promoted from `examples/elastic.hpp` with the κ/dev split, effective-modulus hook, multi-field interface, serial+parallel in one class; `Traction`/`Clamped` reference problems; tests 1–2 | 2 d |
 | 2 | `viscoelastic.hpp`: generalised Maxwell, block state, Galerkin strain map, `Mult`, ETD1, exponential trapezoid, `ImplicitSolve`; adaptors; tests 3–7 | 2–3 d |
-| 3 | `SelfGravitatingElasticProblem` implementing the interface (after SubMesh phases 1–2); test 8 | 3–5 d | **Done 2 Sep 2026** (`self_gravitating.hpp`; see `status_and_roadmap.md` step 4). Test 8 (viscoelastic self-gravitating sphere vs radial codes) still open; the operator runs on the problem (creep test in `TestSelfGravitating.cpp`). |
+| 3 | `LinearQuasiStaticSelfGravitatingProblem` implementing the interface (after SubMesh phases 1–2); test 8 | 3–5 d | **Done 2 Sep 2026** (`self_gravitating.hpp`; see `status_and_roadmap.md` step 4). Test 8 (viscoelastic self-gravitating sphere vs radial codes) still open; the operator runs on the problem (creep test in `TestSelfGravitating.cpp`). |
 | 4 | Anisotropic branches (`C_k`), nonlinear rheology hooks, adjoint stepping | later |
 
-**Status (2 Sep 2026): Phases 1 and 2 done.** Phase 1: `rheology.hpp/cpp` (`MaxwellBranch`, `IsotropicMaxwellRheology` with a `Maxwell` factory; its `Elastic` factory became `IsotropicElasticRheology` on 3 Sep 2026, see the note at the end of this section) and `elastic_problem.hpp/cpp` (`QuasiStaticLinearElasticProblem`, `LinearElasticProblemBase`, `TractionProblem`, `ClampedProblem`) are in the library; `examples/elastic.hpp` and the stale `elasticity.hpp/cpp` are deleted and the two drivers use the library classes. Notes where the implementation differs from §2:
+**Status (2 Sep 2026): Phases 1 and 2 done.** Phase 1: `rheology.hpp/cpp` (`MaxwellBranch`, `IsotropicMaxwellRheology` with a `Maxwell` factory; its `Elastic` factory became `IsotropicElasticRheology` on 3 Sep 2026, see the note at the end of this section) and `quasi_static_problem.hpp/cpp` (`LinearQuasiStaticProblem`, `LinearQuasiStaticProblemBase`, `LinearQuasiStaticTractionProblem`, `LinearQuasiStaticClampedProblem`) are in the library; `examples/elastic.hpp` and the stale `elasticity.hpp/cpp` are deleted and the two drivers use the library classes. Notes where the implementation differs from §2:
 
 - The effective modulus is switched by a small `detail::RedirectableCoefficient` that the deviatoric `ElasticityIntegrator` holds; `SetEffectiveShearModulus` just retargets it and marks the operator dirty. On the next `Solve()` the base builds a *fresh* `BilinearForm` that borrows the integrators from a never-assembled template form (`StiffnessIntegrators()`), assembles, eliminates and calls `SetupSolver`. This avoids reusing a finalized sparsity pattern (MFEM's `Update()` only zeroes the matrix in place, and `Finalize(skip_zeros)` may have dropped exact zeros) at the cost of reassembling `K_κ` with `K_dev`, which is negligible next to the preconditioner setup. Both `K`s therefore live in one form, not two.
-- `SetupSolver`/`SolveLinearSystem` have working defaults in the base (warm-started PCG, Gauss–Seidel in serial, BoomerAMG with elasticity options in parallel); `TractionProblem` only wraps the CG in a `RigidBodySolver`. Loads are the caller's: the reference problems take a traction `VectorCoefficient` and a marker (and `ClampedProblem` an essential-boundary marker and optional Dirichlet coefficient); `ExternalLoad()` and `StiffnessIntegrators()` expose the forms for anything else. Solver output is quiet unless `SetPrintLevel` is called.
+- `SetupSolver`/`SolveLinearSystem` have working defaults in the base (warm-started PCG, Gauss–Seidel in serial, BoomerAMG with elasticity options in parallel); `LinearQuasiStaticTractionProblem` only runs the CG on the rigid-mode-projected system (`ProjectedSolver` with `MakeRigidModeProjector()`, both CG and preconditioner projected; since 3 Sep 2026, follow-up F1 of `status_and_roadmap.md`). Loads are the caller's: the reference problems take a traction `VectorCoefficient` and a marker (and `LinearQuasiStaticClampedProblem` an essential-boundary marker and optional Dirichlet coefficient); `ExternalLoad()` and `StiffnessIntegrators()` expose the forms for anything else. Solver output is quiet unless `SetPrintLevel` is called.
 **Phase 2 done (2 Sep 2026).** `viscoelastic.hpp/cpp`: `ViscoelasticOperator` (generalised Maxwell, any number of fields and branches, block state `(field, branch)`-major, `Mult`, `ImplicitSolve`, `ExponentialEulerStep`, `ExponentialTrapezoidStep`, `SolveElastic`/`SyncFields`/`RegisterFields`, `MinRelaxationTime`) and the `ExponentialEulerSolver` / `ExponentialTrapezoidSolver` adaptors; `examples/viscoelasticity.cpp` is a driver only. Serial and parallel in one class (everything is element-local; forces are L-vectors). Things learned that the plan did not say:
 
 - **The trace-free basis tensors are not orthonormal**, so the Galerkin strain map is `D = (G⁻¹ ⊗ M⁻¹) B`, not `M⁻¹ B`: `G_{cc'} = E_c : E_{c'}` is the Frobenius metric of the completed basis tensors (`E = e_j e_kᵀ + e_k e_jᵀ` off the diagonal, `e_j e_jᵀ − e_{d−1} e_{d−1}ᵀ` on it): every `|E_c|² = 2` and in 3-D the two diagonal ones overlap (`E_0 : E_3 = 1`). Without `G⁻¹` the strain came out exactly twice too large in 2-D. `M⁻¹` itself is the exact element-block inverse of the scalar L2 mass matrix, stored as a sparse matrix.
@@ -353,10 +353,12 @@ Dependencies: `viscoelastic.hpp` depends only on the interface and on `bilininte
 - MFEM's default `SDIRK23Solver` is the third-order variant; the second-order L-stable one is `SDIRK23Solver(2)`.
 - Tests (`tests/TestViscoelastic.cpp`, 2-D/3-D × tri/quad/tet/hex × orders 1–2): strain maps against the analytic deviatoric strain of a degree-`p` polynomial (test 3); Maxwell creep under constant uniaxial stress against `d(t) = d_0 + t dev σ/(2η)` (trapezoid exact at `dt = 2τ`, RK4 to 1e-5) and relaxation under a prescribed uniform strain against `m_k = d(1 − e^{−t/τ_k})` with `τ₁/τ₂ = 100` at `dt = 5` (ETD1 and trapezoid exact; BE against its own discrete relaxation) (test 4); temporal orders ETD1 → 1, BE → 1, trapezoid → 2, SDIRK23(2) → 2 against an RK4 reference (test 5); the long-time limit against the `μ_∞` elastic solution (test 6); a two-field mock reproducing two single-field operators for both a trapezoid and an RK4 run (test 7). `tests/TestViscoelasticPar.cpp` (1/2/4 ranks) repeats creep and relaxation on `ParFiniteElementSpace`s. Test 8 (self-gravitating sphere) waits for Phase 3.
 
-- Tests: `tests/TestRheology.cpp` (test 1) and `tests/TestElasticProblem.cpp` (test 2 — split identity; `ClampedProblem` against a direct MFEM assembly; the effective-modulus path with a constant and with an L2 `GridFunctionCoefficient`, and `Clear`; `TractionProblem` under uniaxial stress against the exact strain, including the warm-started re-solve at a doubled load; `AddForce` against an equivalent load integrator), 2-D/3-D × tri/quad/tet/hex × orders 1–2. `tests/TestElasticProblemPar.cpp` (1/2/4 ranks) checks the parallel class against the serial one (clamped L2 norms, effective modulus, exact uniaxial strain).
+- Tests: `tests/TestRheology.cpp` (test 1) and `tests/TestQuasiStaticProblem.cpp` (test 2 — split identity; `LinearQuasiStaticClampedProblem` against a direct MFEM assembly; the effective-modulus path with a constant and with an L2 `GridFunctionCoefficient`, and `Clear`; `LinearQuasiStaticTractionProblem` under uniaxial stress against the exact strain, including the warm-started re-solve at a doubled load; `AddForce` against an equivalent load integrator), 2-D/3-D × tri/quad/tet/hex × orders 1–2. `tests/TestQuasiStaticProblemPar.cpp` (1/2/4 ranks) checks the parallel class against the serial one (clamped L2 norms, effective modulus, exact uniaxial strain).
 
 
-**Explicit elastic rheologies (3 Sep 2026).** A purely elastic solid is no longer spelled as a branchless Maxwell body: `IsotropicElasticRheology(dim, kappa, mu)` (accessors `BulkModulus`, `ShearModulus`, `Lame`) and `AnisotropicElasticRheology(dim, C)` (`Tensor`) implement `Rheology` with zero branches, the branch methods abort, and their `ElasticStiffness` accepts only an empty weight list and is never relaxed. The `Elastic` factories on the two Maxwell classes are gone; instead `IsotropicMaxwellRheology::UnrelaxedElastic()` / `LongTermElastic()` and the anisotropic counterparts return the instantaneous and fully relaxed elastic solids as instances of the new classes (referring to the Maxwell object's coefficients). A field with an elastic rheology passes through `ViscoelasticOperator` with an empty state block, so an elastic layer can be coupled to a Maxwell one in a multi-field problem (`TestViscoelastic`, `ElasticFieldHasNoState`).
+**Explicit elastic rheologies (3 Sep 2026).** A purely elastic solid is no longer spelled as a branchless Maxwell body: `IsotropicElasticRheology(dim, kappa, mu)` (accessors `BulkModulus`, `ShearModulus`, `Lame`) and `AnisotropicElasticRheology(dim, C)` (`Tensor`) implement `Rheology` with zero branches, the branch methods abort, and their `ElasticStiffness` accepts only an empty weight list and is never relaxed. The `Elastic` factories on the two Maxwell classes are gone; instead `IsotropicMaxwellRheology::UnrelaxedElastic()` / `LongTermElastic()` and the anisotropic counterparts return the instantaneous and fully relaxed elastic solids as instances of the new classes (referring to the Maxwell object's coefficients). A problem with an elastic rheology passes through `ViscoelasticOperator` with an empty state (`TestViscoelastic`, `ElasticRheologyHasNoState`).
+
+**One displacement field (3 Sep 2026).** The multi-field indexing of §2.2/§3 (`NumDisplacementFields`, `DisplacementSpace(i)`, `Displacement(i)`, `Rheology(i)`, `AddForce(i, f)`, `SetRelaxationWeights(i, beta)`, and the per-field `Field` blocks of `ViscoelasticOperator` with their `(field, branch)` state layout) is gone. It existed for coupled problems with a separate displacement space per solid region; since a SubMesh may be disconnected, one displacement space covers every solid region, and every concrete problem had exactly one field. The interface now has `DisplacementSpace()`, `Displacement()`, `Rheology()`, `AddForce(f)`, `SetRelaxationWeights(beta)`; the operator has one internal-variable discretisation with a state block per branch (`NumBranches()`, `Branch(m, k)`, `BranchOffset(k)`, `InternalVariable(k)`, `InverseRelaxationTimes(k)`, `ComputeStrain(u, d)`). Test 7 (two-field mock) is replaced by the elastic-rheology test above. Regional material differences within the one space are the rheology's business: see `composite_rheology_design.md`.
 
 ---
 
@@ -374,5 +376,5 @@ Also set `CMAKE_CXX_STANDARD` from one place (top-level `CMakeLists.txt`), and a
 
 - **SubMesh plan.** The `MixedBilinearForm(tr, te, mbf)` borrow constructor and the `mat` member are protected/public API that has been stable since 4.0; the plan depends on nothing else internal. One refinement: `SubMeshMixedBilinearForm::Assemble` should `MFEM_VERIFY` that `GetFBFI()->Size() == 0` (interior-face integrators) *and* that no `SetAssemblyLevel` was called, and should keep the shadow space alive for the object's lifetime (`FormRectangularSystemMatrix` does not need it, but `Mult` after `Assemble` on the helper does not exist — the helper is destroyed at the end of `Assemble`, which is intended). For the self-gravitating problem the `AddForce` path never touches the coupling blocks; `SetEffectiveShearModulus` never touches them either — consistent with §4.4 here.
 - **Anisotropy plan.** `FromVelocities` returning by value requires the class to be movable while holding references to owned `ProductCoefficient`s — hold them in a `std::vector<std::unique_ptr<Coefficient>>` and store raw pointers, not references, to keep it movable. The relaxable tensor `C_k` per branch slots into `MaxwellBranch` as a `MatrixCoefficient*` alternative to `mu`; keep `MaxwellBranch` a small struct with either scalar or tensor members set, and let the viscoelastic operator choose the force integrator by which is set (§4.7).
-- **Status/roadmap.** The roadmap's step 3 ("library `elasticity.hpp`") is exactly Phase 1 here; step 4 is Phase 3 here and Phase 3 of the SubMesh plan. Suggested global order: SubMesh phase 1 (serial injection + form) → this Phase 1 → this Phase 2 → anisotropy A/B (any time) → SubMesh phase 2 (parallel) → `SelfGravitatingElasticProblem` → physics benchmarks.
+- **Status/roadmap.** The roadmap's step 3 ("library `elasticity.hpp`") is exactly Phase 1 here; step 4 is Phase 3 here and Phase 3 of the SubMesh plan. Suggested global order: SubMesh phase 1 (serial injection + form) → this Phase 1 → this Phase 2 → anisotropy A/B (any time) → SubMesh phase 2 (parallel) → `LinearQuasiStaticSelfGravitatingProblem` → physics benchmarks.
 - **One naming convention.** The library mixes `_member` (`solvers.hpp`, `poisson.hpp`) and `member_` (`elastic.hpp`, `radial_model.hpp`) and `Google` vs `MFEM` brace styles; `.clang-format` exists — pick `member_` (the newer code) and run it once before the new files land, so the upstream-candidate core is uniform.

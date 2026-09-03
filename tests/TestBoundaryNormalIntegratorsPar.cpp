@@ -21,8 +21,8 @@
   2. CG preconditioned by BoomerAMG converges on the disconnected
      ParSubMesh, for a shifted Laplacian and for a shifted elasticity
      operator with the elasticity AMG options (the setup used by
-     LinearElasticProblemBase), in an iteration count comparable to that on the
-     connected mantle-only ParSubMesh. The counts are printed.
+     LinearQuasiStaticProblemBase), in an iteration count comparable to that on
+  the connected mantle-only ParSubMesh. The counts are printed.
 */
 
 #include <mpi.h>

@@ -7,14 +7,14 @@ set(SERIAL_EXAMPLES
     transformed_diffusion       # pull-back Laplacian on a mapped domain
     submesh_injection           # tour of SubMeshDofInjection
     coupled_poisson             # coupled Poisson pair across mesh / submesh
-    elastogravity               # self-gravitating elastic body, block MINRES
-    elastogravity_layered       # SelfGravitatingElasticProblem: fluid core (+ inner core)
-    quasi_static_elasticity     # elastic_problem.hpp driver
+    elastogravity_layered       # LinearQuasiStaticSelfGravitatingProblem: fluid core (+ inner core)
+    quasi_static_elasticity     # quasi_static_problem.hpp driver
     viscoelasticity             # ViscoelasticOperator driver
     viscoelastic_loading        # GIA-style layered load/rebound driver
     viscoelastic_schemes        # cost/accuracy table of the time integrators
     self_gravitating_relaxation # Maxwell mantle + fluid core under a Heaviside load
-    self_gravitating_elasticity # SelfGravitatingElasticProblem driver
+    self_gravitating_elasticity # LinearQuasiStaticSelfGravitatingProblem driver
+    love_numbers                # load and tidal Love numbers by degree, one solve each
     anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
 )
 
@@ -23,7 +23,6 @@ set(PARALLEL_EXAMPLES
     transformed_diffusion_p
     submesh_injection_p
     coupled_poisson_p
-    elastogravity_p
     elastogravity_layered_p
     self_gravitating_elasticity_p
 )

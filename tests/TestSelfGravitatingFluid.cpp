@@ -2,7 +2,7 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for SelfGravitatingElasticProblem with fluid regions
+  Tests for LinearQuasiStaticSelfGravitatingProblem with fluid regions
   (doc/fluid_solid_design.md section 5.1) on the canned three-layer meshes
   (solid inner core, fluid outer core, solid mantle; one disconnected solid
   SubMesh) and the two-layer disc (fluid core, mantle).
@@ -57,11 +57,11 @@ struct Case {
     fluids.push_back(OuterCore(*solid, rho_f));
   }
 
-  std::unique_ptr<SelfGravitatingElasticProblem> Problem(
+  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> Problem(
       bool with_load = true, bool region_rotations = true,
       const std::vector<FluidRegion>* regions = nullptr,
       Coefficient* solid_density = nullptr, double G = kG) {
-    auto p = std::make_unique<SelfGravitatingElasticProblem>(
+    auto p = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology,
         solid_density ? *solid_density : rho_s, G, kDtNDegree, nullptr,
         regions ? *regions : fluids);
@@ -115,13 +115,14 @@ TEST_P(SelfGravitatingFluidTest, SchurAndMinresAgree) {
   Case s(dim, order);
 
   auto schur = s.Problem();
-  schur->SetSolverType(SelfGravitatingElasticProblem::SolverType::SchurCG);
+  schur->SetSolverType(
+      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
   schur->AssembleForce(0.0);
   ASSERT_TRUE(schur->Solve());
 
   auto minres = s.Problem();
   minres->SetSolverType(
-      SelfGravitatingElasticProblem::SolverType::BlockMINRES);
+      LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
   minres->AssembleForce(0.0);
   ASSERT_TRUE(minres->Solve());
 
@@ -258,7 +259,8 @@ TEST_P(SelfGravitatingFluidTest, TidalLoad) {
     EXPECT_LT(RelDiff(p->Potential(), phi0), 1e-7);
 
     auto q = s.Problem(false);
-    q->SetSolverType(SelfGravitatingElasticProblem::SolverType::SchurCG);
+    q->SetSolverType(
+        LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
     q->SetTidalPotential(psi);
     q->AssembleForce(1.0);
     ASSERT_TRUE(q->Solve());
@@ -338,8 +340,8 @@ TEST(SelfGravitatingFluidTwoLayer, SchurAndMinresAgree) {
   std::vector<FluidRegion> fluids{core};
   Array<int> surface({0, 1});
 
-  auto make = [&](SelfGravitatingElasticProblem::SolverType type) {
-    auto p = std::make_unique<SelfGravitatingElasticProblem>(
+  auto make = [&](LinearQuasiStaticSelfGravitatingProblem::SolverType type) {
+    auto p = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
         &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
     p->SetSurfaceLoad(sigma, surface);
     p->SetRelTol(1e-11);
@@ -348,8 +350,10 @@ TEST(SelfGravitatingFluidTwoLayer, SchurAndMinresAgree) {
     EXPECT_TRUE(p->Solve());
     return p;
   };
-  auto schur = make(SelfGravitatingElasticProblem::SolverType::SchurCG);
-  auto minres = make(SelfGravitatingElasticProblem::SolverType::BlockMINRES);
+  auto schur =
+      make(LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+  auto minres =
+      make(LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
   EXPECT_GT(L2Norm(schur->Displacement()), 0.0);
   EXPECT_LT(RelDiff(schur->Displacement(), minres->Displacement()), 1e-7);
   EXPECT_LT(RelDiff(schur->Potential(), minres->Potential()), 1e-7);
@@ -367,8 +371,9 @@ TEST_P(SelfGravitatingFluidTest, ViscoelasticCreep) {
   ConstantCoefficient tau(1.0);
   IsotropicMaxwellRheology maxwell =
       IsotropicMaxwellRheology::Maxwell(dim, s.kappa, s.mu, tau);
-  SelfGravitatingElasticProblem p(s.fes_u.get(), s.fes_phi.get(), maxwell,
-                                  s.rho_s, kG, kDtNDegree, nullptr, s.fluids);
+  LinearQuasiStaticSelfGravitatingProblem p(s.fes_u.get(), s.fes_phi.get(),
+                                            maxwell, s.rho_s, kG, kDtNDegree,
+                                            nullptr, s.fluids);
   p.SetSurfaceLoad(s.sigma, s.surface);
   Array<int> inner_core({1});
   p.AddRegionRotations(inner_core);

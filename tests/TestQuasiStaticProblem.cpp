@@ -1,14 +1,14 @@
-#include "ElasticTestCommon.hpp"
+#include "QuasiStaticTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
-  Tests for LinearElasticProblemBase, TractionProblem and ClampedProblem (design
-  doc doc/viscoelastic_design.md, section 5, test 2 and the elastic parts
-  of the interface contract).
+  Tests for LinearQuasiStaticProblemBase, LinearQuasiStaticTractionProblem and
+  LinearQuasiStaticClampedProblem (design doc doc/viscoelastic_design.md,
+  section 5, test 2 and the elastic parts of the interface contract).
 
   - The bulk/deviatoric split assembled by the base class equals MFEM's
     ElasticityIntegrator(lambda, mu) with lambda = kappa - 2 mu / d.
-  - ClampedProblem reproduces a direct MFEM assembly and solve.
+  - LinearQuasiStaticClampedProblem reproduces a direct MFEM assembly and solve.
   - SetRelaxationWeights (constant and piecewise-constant L2 field) on a
     Maxwell rheology, and Clear restoring the unrelaxed modulus
   - The anisotropic rheology with an isotropic tensor reproduces the
@@ -16,7 +16,8 @@
   - Preconditioner reuse across reassemblies keeps the solutions exact and
     reduces the number of setups
     reproduces a direct assembly with that modulus; Clear restores mu_U.
-  - TractionProblem under uniaxial stress gives the exact constant strain.
+  - LinearQuasiStaticTractionProblem under uniaxial stress gives the exact
+  constant strain.
   - Loads scale with time through the registered coefficients, and
     AddForce superposes exactly like an integrator on the load.
 */
@@ -94,8 +95,7 @@ TEST_P(ElasticProblemTest, SplitIdentity) {
   split.Finalize();
 
   BilinearForm ref(fes.get());
-  ref.AddDomainIntegrator(
-      new ElasticityIntegrator(rheology->Lame(), *mu));
+  ref.AddDomainIntegrator(new ElasticityIntegrator(rheology->Lame(), *mu));
   ref.Assemble();
   ref.Finalize();
 
@@ -107,8 +107,8 @@ TEST_P(ElasticProblemTest, ClampedMatchesDirect) {
   auto pull_marker = Marker(nbdr, {x1_attr});
   VectorFunctionCoefficient traction(dim, PullTraction);
 
-  ClampedProblem problem(fes.get(), *rheology, ess_bdr, traction, pull_marker);
-  EXPECT_EQ(problem.NumDisplacementFields(), 1);
+  LinearQuasiStaticClampedProblem problem(fes.get(), *rheology, ess_bdr,
+                                          traction, pull_marker);
   EXPECT_EQ(&problem.DisplacementSpace(), fes.get());
   EXPECT_EQ(&problem.Rheology(), rheology.get());
   EXPECT_TRUE(problem.SupportsRelaxationWeights());
@@ -139,7 +139,8 @@ TEST_P(ElasticProblemTest, RelaxationWeights) {
   // Maxwell body: mu_inf = 0, one branch mu, so mu_eff = beta mu.
   ConstantCoefficient tau(1.0);
   auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, tau);
-  ClampedProblem problem(fes.get(), maxwell, ess_bdr, traction, pull_marker);
+  LinearQuasiStaticClampedProblem problem(fes.get(), maxwell, ess_bdr, traction,
+                                          pull_marker);
   EXPECT_FALSE(problem.Stiffness().IsRelaxed());
 
   LinearForm b(fes.get());
@@ -151,7 +152,7 @@ TEST_P(ElasticProblemTest, RelaxationWeights) {
   // Constant weight.
   ConstantCoefficient beta(0.4), mu_eff(0.4 * kMu);
   SumCoefficient lambda_eff(*kappa, mu_eff, 1.0, -2.0 / dim);
-  problem.SetRelaxationWeights(0, {&beta});
+  problem.SetRelaxationWeights({&beta});
   EXPECT_TRUE(problem.Stiffness().IsRelaxed());
   problem.AssembleForce(0.0);
   ASSERT_TRUE(problem.Solve());
@@ -163,12 +164,13 @@ TEST_P(ElasticProblemTest, RelaxationWeights) {
   L2_FECollection l2fec(0, dim);
   FiniteElementSpace sfes(mesh.get(), &l2fec);
   GridFunction beta_field(&sfes);
-  FunctionCoefficient beta_var([](const Vector& x) { return 0.3 + 0.6 * x[0]; });
+  FunctionCoefficient beta_var(
+      [](const Vector& x) { return 0.3 + 0.6 * x[0]; });
   beta_field.ProjectCoefficient(beta_var);
   GridFunctionCoefficient beta_gf(&beta_field);
   ProductCoefficient mu_eff_gf(beta_gf, *mu);
   SumCoefficient lambda_eff_gf(*kappa, mu_eff_gf, 1.0, -2.0 / dim);
-  problem.SetRelaxationWeights(0, {&beta_gf});
+  problem.SetRelaxationWeights({&beta_gf});
   problem.AssembleForce(0.0);
   ASSERT_TRUE(problem.Solve());
   auto u_ref_gf = DirectClamped(lambda_eff_gf, mu_eff_gf, ess_bdr, b);
@@ -197,7 +199,8 @@ TEST_P(ElasticProblemTest, PreconditionerReuse) {
   b.Assemble();
 
   for (double reuse : {2.0, 1.0}) {
-    ClampedProblem problem(fes.get(), maxwell, ess_bdr, traction, pull_marker);
+    LinearQuasiStaticClampedProblem problem(fes.get(), maxwell, ess_bdr,
+                                            traction, pull_marker);
     problem.SetPreconditionerReuse(reuse);
     problem.AssembleForce(0.0);
     ASSERT_TRUE(problem.Solve());
@@ -208,7 +211,7 @@ TEST_P(ElasticProblemTest, PreconditionerReuse) {
     for (double bv : {0.9, 0.8, 0.7}) {
       ConstantCoefficient beta(bv), mu_eff(bv * kMu);
       SumCoefficient lambda_eff(*kappa, mu_eff, 1.0, -2.0 / dim);
-      problem.SetRelaxationWeights(0, {&beta});
+      problem.SetRelaxationWeights({&beta});
       ASSERT_TRUE(problem.Solve());
       assemblies++;
       auto u_ref = DirectClamped(lambda_eff, mu_eff, ess_bdr, b);
@@ -223,7 +226,7 @@ TEST_P(ElasticProblemTest, PreconditionerReuse) {
     // rebuilt at the following assembly.
     ConstantCoefficient tiny(0.01), mu_tiny(0.01 * kMu);
     SumCoefficient lambda_tiny(*kappa, mu_tiny, 1.0, -2.0 / dim);
-    problem.SetRelaxationWeights(0, {&tiny});
+    problem.SetRelaxationWeights({&tiny});
     ASSERT_TRUE(problem.Solve());
     auto u_ref = DirectClamped(lambda_tiny, mu_tiny, ess_bdr, b);
     EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref), 1e-8);
@@ -242,12 +245,14 @@ TEST_P(ElasticProblemTest, AnisotropicMatchesIsotropic) {
   EXPECT_FALSE(aniso.TraceFreeInternalVariables());
   EXPECT_EQ(aniso.NumBranches(), 1);
 
-  ClampedProblem a(fes.get(), iso, ess_bdr, traction, pull_marker);
-  ClampedProblem b(fes.get(), aniso, ess_bdr, traction, pull_marker);
+  LinearQuasiStaticClampedProblem a(fes.get(), iso, ess_bdr, traction,
+                                    pull_marker);
+  LinearQuasiStaticClampedProblem b(fes.get(), aniso, ess_bdr, traction,
+                                    pull_marker);
   for (int relaxed = 0; relaxed < 2; relaxed++) {
     if (relaxed) {
-      a.SetRelaxationWeights(0, {&beta});
-      b.SetRelaxationWeights(0, {&beta});
+      a.SetRelaxationWeights({&beta});
+      b.SetRelaxationWeights({&beta});
     }
     a.AssembleForce(0.0);
     b.AssembleForce(0.0);
@@ -261,7 +266,8 @@ TEST_P(ElasticProblemTest, AnisotropicMatchesIsotropic) {
 TEST_P(ElasticProblemTest, TractionUniaxialStrain) {
   auto marker = Marker(nbdr, {x0_attr, x1_attr});
   VectorFunctionCoefficient traction(dim, UniaxialTraction);
-  TractionProblem problem(fes.get(), *rheology, traction, marker);
+  LinearQuasiStaticTractionProblem problem(fes.get(), *rheology, traction,
+                                           marker);
 
   double exx = 0.0, eyy = 0.0;
   UniaxialStrain(dim, kSigma, exx, eyy);
@@ -277,6 +283,49 @@ TEST_P(ElasticProblemTest, TractionUniaxialStrain) {
             1e-8 * exx);
 }
 
+TEST_P(ElasticProblemTest, TractionMassWeightedGauge) {
+  auto marker = Marker(nbdr, {x0_attr, x1_attr});
+  VectorFunctionCoefficient traction(dim, UniaxialTraction);
+  LinearQuasiStaticTractionProblem problem(fes.get(), *rheology, traction,
+                                           marker);
+  problem.AssembleForce(0.0);
+  ASSERT_TRUE(problem.Solve());
+  GridFunction u_euclid(problem.Displacement());
+
+  FunctionCoefficient rho([](const Vector& x) { return 1.0 + x[0]; });
+  problem.SetMassWeightedGauge(&rho);
+  ASSERT_TRUE(problem.Solve());
+  const GridFunction& u = problem.Displacement();
+  double exx = 0.0, eyy = 0.0;
+  UniaxialStrain(dim, kSigma, exx, eyy);
+  EXPECT_LT(MaxStrainError(u, exx, eyy), 1e-8 * exx);
+
+  // Zero momentum and angular momentum against the rigid modes.
+  BilinearForm mass(fes.get());
+  mass.AddDomainIntegrator(new VectorMassIntegrator(rho));
+  mass.Assemble();
+  mass.Finalize();
+  Vector Mu(u.Size());
+  mass.SpMat().Mult(u, Mu);
+  auto P = MakeRigidModeProjector(*fes);
+  double moment = 0.0, moment_euclid = 0.0;
+  Vector Mue(u.Size());
+  mass.SpMat().Mult(u_euclid, Mue);
+  for (int i = 0; i < P->Size(); i++) {
+    moment = std::max(moment, std::abs(P->Dot(Mu, P->Basis(i))));
+    moment_euclid =
+        std::max(moment_euclid, std::abs(P->Dot(Mue, P->Basis(i))));
+  }
+  EXPECT_LT(moment, 1e-12 * Mu.Norml2());
+  EXPECT_GT(moment_euclid, 1e-6 * Mue.Norml2());
+
+  problem.SetEuclideanGauge();
+  ASSERT_TRUE(problem.Solve());
+  GridFunction d(problem.Displacement());
+  d -= u_euclid;
+  EXPECT_LT(d.Normlinf(), 1e-12 * u_euclid.Normlinf());
+}
+
 TEST_P(ElasticProblemTest, AddForceSuperposes) {
   auto ess_bdr = Marker(nbdr, {x0_attr});
   auto pull_marker = Marker(nbdr, {x1_attr});
@@ -287,7 +336,8 @@ TEST_P(ElasticProblemTest, AddForceSuperposes) {
   VectorConstantCoefficient body(g);
 
   // Problem 1: body force through AddForce.
-  ClampedProblem p1(fes.get(), *rheology, ess_bdr, traction, pull_marker);
+  LinearQuasiStaticClampedProblem p1(fes.get(), *rheology, ess_bdr, traction,
+                                     pull_marker);
   LinearForm extra(fes.get());
   extra.AddDomainIntegrator(new VectorDomainLFIntegrator(body));
   extra.Assemble();
@@ -296,7 +346,8 @@ TEST_P(ElasticProblemTest, AddForceSuperposes) {
   ASSERT_TRUE(p1.Solve());
 
   // Problem 2: the same body force as a load integrator.
-  ClampedProblem p2(fes.get(), *rheology, ess_bdr, traction, pull_marker);
+  LinearQuasiStaticClampedProblem p2(fes.get(), *rheology, ess_bdr, traction,
+                                     pull_marker);
   p2.ExternalLoad().AddDomainIntegrator(new VectorDomainLFIntegrator(body));
   p2.AssembleForce(0.5);
   ASSERT_TRUE(p2.Solve());

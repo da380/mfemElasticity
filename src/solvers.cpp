@@ -1,5 +1,8 @@
 #include "mfemElasticity/solvers.hpp"
+
 #include <cmath>
+
+#include "mfemElasticity/detail/fem_factory.hpp"
 
 namespace mfemElasticity {
 
@@ -53,134 +56,6 @@ void RigidRotation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
   }
 }
 
-RigidBodySolver::RigidBodySolver(mfem::FiniteElementSpace *fes)
-    : mfem::Solver(0, false), _fes{fes}, _parallel{false} {
-  auto vDim = _fes->GetVDim();
-  MFEM_ASSERT(vDim == 2 || vDim == 3, "Dimensions must be two or three");
-  SetRigidBodyFields();
-}
-
-#ifdef MFEM_USE_MPI
-RigidBodySolver::RigidBodySolver(MPI_Comm comm,
-                                 mfem::ParFiniteElementSpace *fes)
-    : mfem::Solver(0, false),
-      _fes{fes},
-      _pfes{fes},
-      _comm{comm},
-      _parallel{true} {
-  auto vDim = _fes->GetVDim();
-  MFEM_ASSERT(vDim == 2 || vDim == 3, "Dimensions must be two or three");
-  SetRigidBodyFields();
-}
-#endif
-
-mfem::real_t RigidBodySolver::Dot(const mfem::Vector &x,
-                                  const mfem::Vector &y) const {
-#ifdef MFEM_USE_MPI
-  return _parallel ? mfem::InnerProduct(_comm, x, y) : mfem::InnerProduct(x, y);
-
-#else
-  return mfem::InnerProduct(x, y);
-#endif
-}
-
-mfem::real_t RigidBodySolver::Norm(const mfem::Vector &x) const {
-  return std::sqrt(Dot(x, x));
-}
-
-void RigidBodySolver::SetRigidBodyFields() {
-  auto vDim = _fes->GetVDim();
-
-  // Set up a local grid function.
-  std::unique_ptr<mfem::GridFunction> u;
-  if (_parallel) {
-#ifdef MFEM_USE_MPI
-    u = std::make_unique<mfem::ParGridFunction>(_pfes);
-#endif
-  } else {
-    u = std::make_unique<mfem::GridFunction>(_fes);
-  }
-
-  // Set the translations.
-  for (auto component = 0; component < vDim; component++) {
-    auto v = RigidTranslation(vDim, component);
-    u->ProjectCoefficient(v);
-    auto tv = std::make_unique<mfem::Vector>();
-    u->GetTrueDofs(*tv);
-    _u.push_back(std::move(tv));
-  }
-
-  // Set the rotations.
-  if (vDim == 2) {
-    auto v = RigidRotation(vDim, 2);
-    u->ProjectCoefficient(v);
-    auto tv = std::make_unique<mfem::Vector>();
-    u->GetTrueDofs(*tv);
-    _u.push_back(std::move(tv));
-
-  } else {
-    for (auto component = 0; component < vDim; component++) {
-      auto v = RigidRotation(vDim, component);
-      u->ProjectCoefficient(v);
-      auto tv = std::make_unique<mfem::Vector>();
-      u->GetTrueDofs(*tv);
-      _u.push_back(std::move(tv));
-    }
-  }
-
-  GramSchmidt();
-}
-
-void RigidBodySolver::GramSchmidt() {
-  for (auto i = 0; i < GetNullDim(); i++) {
-    auto &u = *_u[i];
-    for (auto j = 0; j < i; j++) {
-      auto &v = *_u[j];
-      auto product = Dot(u, v);
-      u.Add(-product, v);
-    }
-    auto norm = Norm(u);
-    u /= norm;
-  }
-}
-
-int RigidBodySolver::GetNullDim() const {
-  auto vDim = _fes->GetVDim();
-  return vDim * (vDim + 1) / 2;
-}
-
-void RigidBodySolver::ProjectOrthogonalToRigidBody(const mfem::Vector &x,
-                                                   mfem::Vector &y) const {
-  y = x;
-  for (auto i = 0; i < GetNullDim(); i++) {
-    auto &u = *_u[i];
-    auto product = Dot(y, u);
-    y.Add(-product, u);
-  }
-}
-
-void RigidBodySolver::SetSolver(mfem::Solver &solver) {
-  _solver = &solver;
-  height = _solver->Height();
-  width = _solver->Width();
-  MFEM_VERIFY(height == width, "Solver must be a square operator");
-}
-
-void RigidBodySolver::SetOperator(const mfem::Operator &op) {
-  MFEM_VERIFY(_solver, "Solver hasn't been set, call SetSolver() first.");
-  _solver->SetOperator(op);
-  height = _solver->Height();
-  width = _solver->Width();
-  MFEM_VERIFY(height == width, "Solver must be a square Operator!");
-}
-
-void RigidBodySolver::Mult(const mfem::Vector &b, mfem::Vector &x) const {
-  ProjectOrthogonalToRigidBody(b, _b);
-  _solver->iterative_mode = iterative_mode;
-  _solver->Mult(_b, x);
-  ProjectOrthogonalToRigidBody(x, x);
-}
-
 // ---------------------------------------------------------------------------
 
 mfem::real_t NullSpaceProjector::Dot(const mfem::Vector &x,
@@ -217,6 +92,51 @@ void NullSpaceProjector::Project(mfem::Vector &x) const {
   }
 }
 
+int AddRigidModes(NullSpaceProjector &P, mfem::FiniteElementSpace &fes) {
+  const int dim = fes.GetVDim();
+  MFEM_VERIFY(dim == 2 || dim == 3,
+              "AddRigidModes: the space must have vdim 2 or 3.");
+  auto gf = detail::MakeGridFunction(&fes);
+  mfem::Vector t;
+  int added = 0;
+  auto add = [&](mfem::VectorCoefficient &c) {
+    gf->ProjectCoefficient(c);
+    gf->GetTrueDofs(t);
+    if (P.Add(t)) {
+      added++;
+    }
+  };
+  for (int c = 0; c < dim; c++) {
+    RigidTranslation tr(dim, c);
+    add(tr);
+  }
+  if (dim == 2) {
+    RigidRotation rot(2, 2);
+    add(rot);
+  } else {
+    for (int c = 0; c < 3; c++) {
+      RigidRotation rot(3, c);
+      add(rot);
+    }
+  }
+  return added;
+}
+
+std::unique_ptr<NullSpaceProjector> MakeRigidModeProjector(
+    mfem::FiniteElementSpace &fes) {
+  std::unique_ptr<NullSpaceProjector> P;
+#ifdef MFEM_USE_MPI
+  if (auto *pfes = dynamic_cast<mfem::ParFiniteElementSpace *>(&fes)) {
+    P = std::make_unique<NullSpaceProjector>(pfes->GetComm());
+  } else
+#endif
+  {
+    P = std::make_unique<NullSpaceProjector>();
+  }
+  AddRigidModes(*P, fes);
+  return P;
+}
+
 void ProjectedOperator::Mult(const mfem::Vector &x, mfem::Vector &y) const {
   P_->Project(x, z_);
   A_->Mult(z_, y);
@@ -245,6 +165,62 @@ void ProjectedSolver::Mult(const mfem::Vector &b, mfem::Vector &x) const {
   }
   solver_->Mult(b_, x);
   P_->Project(x);
+  ApplyGauge(x);
+}
+
+void ProjectedSolver::SetGauge(const mfem::Operator *M) {
+  Mn_.clear();
+  gauge_idx_.clear();
+  if (!M) {
+    return;
+  }
+  // Basis vectors with a nonzero M-norm take part in the gauge; the others
+  // keep their Euclidean condition (x is projected before the gauge, and
+  // the basis is Euclidean-orthonormal, so adding multiples of the gauged
+  // vectors leaves the components along the others at zero).
+  mfem::Vector Mn(M->Height());
+  mfem::real_t max_norm = 0.0;
+  std::vector<mfem::real_t> norms;
+  for (int i = 0; i < P_->Size(); i++) {
+    M->Mult(P_->Basis(i), Mn);
+    norms.push_back(P_->Dot(P_->Basis(i), Mn));
+    max_norm = std::max(max_norm, norms.back());
+  }
+  for (int i = 0; i < P_->Size(); i++) {
+    if (norms[i] > 1e-12 * max_norm) {
+      gauge_idx_.push_back(i);
+      Mn_.emplace_back(M->Height());
+      M->Mult(P_->Basis(i), Mn_.back());
+    }
+  }
+  const int n = static_cast<int>(gauge_idx_.size());
+  if (n == 0) {
+    return;
+  }
+  mfem::DenseMatrix G(n);
+  for (int i = 0; i < n; i++) {
+    for (int j = 0; j < n; j++) {
+      G(i, j) = P_->Dot(P_->Basis(gauge_idx_[i]), Mn_[j]);
+    }
+  }
+  mfem::DenseMatrixInverse inv(G);
+  inv.GetInverseMatrix(Ginv_);
+}
+
+void ProjectedSolver::ApplyGauge(mfem::Vector &x) const {
+  const int n = static_cast<int>(gauge_idx_.size());
+  if (n == 0) {
+    return;
+  }
+  // x <- x - sum_i c_i n_i with G c = (M n . x): then n_i . M x = 0.
+  mfem::Vector r(n), c(n);
+  for (int i = 0; i < n; i++) {
+    r[i] = P_->Dot(Mn_[i], x);
+  }
+  Ginv_.Mult(r, c);
+  for (int i = 0; i < n; i++) {
+    x.Add(-c[i], P_->Basis(gauge_idx_[i]));
+  }
 }
 
 }  // namespace mfemElasticity

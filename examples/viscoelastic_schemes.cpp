@@ -94,7 +94,7 @@ struct Cost {
 struct Counters {
   int solves, assemblies, setups;
   long its;
-  explicit Counters(const LinearElasticProblemBase& p)
+  explicit Counters(const LinearQuasiStaticProblemBase& p)
       : solves(p.NumSolves()),
         assemblies(p.NumAssemblies()),
         setups(p.NumPreconditionerSetups()),
@@ -211,7 +211,8 @@ int main(int argc, char* argv[]) {
   auto run = [&](const std::string& name, ODESolver& ode, int n_steps,
                  bool adaptive, real_t rtol, Vector& m_out, Vector& u_out,
                  Cost& cost, int& steps_taken, int corrector = 1) {
-    ClampedProblem problem(&fes, rheology, ess_bdr, pull, marker);
+    LinearQuasiStaticClampedProblem problem(&fes, rheology, ess_bdr, pull,
+                                            marker);
     ViscoelasticOperator visco(problem);
     visco.SetCorrectorIterations(corrector, 1e-3);
     ode.Init(visco);

@@ -4,13 +4,15 @@
  * the abstract Rheology (a generalised Maxwell body with branch moduli that
  * may be scalar or tensorial), the per-problem ElasticStiffness it creates,
  * the purely elastic IsotropicElasticRheology and
- * AnisotropicElasticRheology, and the IsotropicMaxwellRheology and
- * AnisotropicMaxwellRheology.
+ * AnisotropicElasticRheology, the IsotropicMaxwellRheology and
+ * AnisotropicMaxwellRheology, and the CompositeRheology assigning different
+ * rheologies to different regions (element attributes) of one body.
  */
 
 #pragma once
 
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "mfem.hpp"
@@ -65,7 +67,7 @@ class RedirectableMatrixCoefficient : public mfem::MatrixCoefficient {
 }  // namespace detail
 
 /**
- * @brief The integrators a quasi-static elastic problem assembles its
+ * @brief The integrators a quasi-static problem assembles its
  * stiffness with, together with the switch between the unrelaxed modulus
  * and an effective one. One object per problem, created by
  * Rheology::MakeStiffness(), so that several problems may share a rheology
@@ -83,9 +85,14 @@ class ElasticStiffness {
  public:
   virtual ~ElasticStiffness() = default;
 
-  /** @brief Add the stiffness integrators to @p form (called once; the form
-   * does not own them). */
-  virtual void AddIntegrators(mfem::BilinearForm& form) = 0;
+  /**
+   * @brief Add the stiffness integrators to @p form (called once; the form
+   * does not own them). With @p marker (element attributes, not owned, must
+   * outlive the form and every form borrowing its integrators) they act on
+   * the marked elements only.
+   */
+  virtual void AddIntegrators(mfem::BilinearForm& form,
+                              mfem::Array<int>* marker = nullptr) = 0;
 
   /**
    * @brief Point the stiffness at @f$C_\infty + \sum_k \beta_k C_k@f$. One
@@ -121,7 +128,7 @@ class ElasticStiffness {
  * (IsotropicElasticRheology, AnisotropicElasticRheology); the branch
  * methods must not be called on it.
  *
- * The material data has one owner: the elastic problem assembles its
+ * The material data has one owner: the quasi-static problem assembles its
  * operator with the integrators of MakeStiffness(), and the viscoelastic
  * operator reads the branch data from here, so the two layers cannot
  * disagree. When TraceFreeInternalVariables() is true the internal
@@ -170,6 +177,16 @@ class Rheology {
 
   /** @brief The stiffness integrators for one problem. */
   virtual std::unique_ptr<ElasticStiffness> MakeStiffness() const = 0;
+
+  /** @brief A label for branch @p k, used in output field names; default
+   * "branch<k>". */
+  virtual std::string BranchLabel(int k) const;
+
+  /** @brief Element attributes on which branch @p k lives, or null for the
+   * whole mesh. The viscoelastic operator stores and evolves the branch's
+   * internal variable on the marked elements only; the branch modulus must
+   * vanish outside them. */
+  virtual const mfem::Array<int>* BranchMarker(int k) const { return nullptr; }
 };
 
 // ---------------------------------------------------------------------------
@@ -187,10 +204,9 @@ class Rheology {
  * \mu@f$ (see IsotropicMaxwellRheology).
  *
  * Holds pointers to the caller's coefficients, which must outlive it, plus
- * the @f$\lambda@f$ it builds. Movable, not copyable. A field with this
+ * the @f$\lambda@f$ it builds. Movable, not copyable. A problem with this
  * rheology passes through the viscoelastic operator with an empty internal
- * state, so an elastic layer may be coupled to a viscoelastic one in a
- * multi-field problem.
+ * state (a purely elastic evolution under time-dependent loads).
  */
 class IsotropicElasticRheology : public Rheology {
  public:
@@ -500,6 +516,131 @@ class AnisotropicMaxwellRheology : public Rheology {
   std::vector<AnisotropicBranch> branches_;
   std::vector<std::unique_ptr<mfem::MatrixCoefficient>> owned_;
   mfem::MatrixCoefficient* C_u_ = nullptr;
+};
+
+// ---------------------------------------------------------------------------
+// Composite rheology
+
+/**
+ * @brief One region of a CompositeRheology: a set of element attributes of
+ * the displacement mesh and the rheology that holds there. The rheology is
+ * not owned and must outlive the composite. The optional name appears in
+ * the output field names of the region's internal variables (default
+ * "region<r>").
+ */
+struct RheologyRegion {
+  mfem::Array<int> marker;             ///< sized to mesh.attributes.Max()
+  const Rheology* rheology = nullptr;  ///< not owned
+  std::string name;
+};
+
+/**
+ * @brief Different rheologies in different regions of one body (design doc
+ * doc/composite_rheology_design.md, Phase 1).
+ *
+ * Regions are sets of element attributes of the displacement mesh; they
+ * must be disjoint (checked at construction) and cover every attribute
+ * present on the mesh (checked when the stiffness is attached to a form).
+ * A region's rheology may be elastic (no branches), a Maxwell body with any
+ * number of branches, isotropic or anisotropic, with or without relaxation
+ * laws; its coefficients need only be meaningful inside the region.
+ *
+ * The composite's branches are the concatenation of the regions' branches
+ * in region order: global branch @f$k@f$ is local branch LocalBranch(k) of
+ * region BranchRegion(k). Its relaxable modulus vanishes outside its region
+ * (BranchShearModulus() and BranchModulus() are masked), so the internal
+ * variable there never enters the stress; the relaxation time outside is a
+ * large dummy, so that the internal variable stays put and never limits an
+ * explicit step. Internal variables are trace-free only when every region's
+ * are; otherwise the isotropic regions present their branches as full
+ * tensors @f$2\mu_k P_{dev}@f$. The stiffness is the sum of the regions'
+ * stiffnesses, each restricted to its marker; SetRelaxationWeights() takes
+ * one weight per global branch.
+ *
+ * The viscoelastic operator stores and evolves each branch's internal
+ * variable on its region only (BranchMarker(); Phase 2 of the design doc),
+ * so the state and the per-step work are the sum over regions of their own
+ * branches. Movable, not copyable.
+ */
+class CompositeRheology : public Rheology {
+ public:
+  /**
+   * @param dim Space dimension (2 or 3); every region's rheology must agree.
+   * @param regions Disjoint regions; the markers must have equal size.
+   */
+  CompositeRheology(int dim, std::vector<RheologyRegion> regions);
+
+  CompositeRheology(CompositeRheology&&) = default;
+  CompositeRheology& operator=(CompositeRheology&&) = default;
+  CompositeRheology(const CompositeRheology&) = delete;
+  CompositeRheology& operator=(const CompositeRheology&) = delete;
+
+  // --- regions --------------------------------------------------------------
+
+  int NumRegions() const { return static_cast<int>(regions_.size()); }
+  const Rheology& Region(int r) const { return *regions_[r].rheology; }
+  const mfem::Array<int>& RegionMarker(int r) const {
+    return regions_[r].marker;
+  }
+  const std::string& RegionName(int r) const { return regions_[r].name; }
+
+  /** @brief Region containing element attribute @p attribute, or -1. */
+  int RegionOf(int attribute) const;
+
+  /** @brief Region owning global branch @p k. */
+  int BranchRegion(int k) const { return branch_region_[k]; }
+
+  /** @brief Index of global branch @p k within its region. */
+  int LocalBranch(int k) const { return local_branch_[k]; }
+
+  /** @brief Global index of the first branch of region @p r (the region's
+   * branches are contiguous). */
+  int RegionBranchOffset(int r) const { return region_offset_[r]; }
+
+  /** @brief Abort unless every element attribute present on @p mesh belongs
+   * to a region (attributes absent from the mesh need not). */
+  void VerifyCoverage(const mfem::Mesh& mesh) const;
+
+  // --- Rheology -------------------------------------------------------------
+
+  int SpaceDim() const override { return dim_; }
+  int NumBranches() const override {
+    return static_cast<int>(branch_region_.size());
+  }
+  mfem::Coefficient& RelaxationTime(int k) const override { return *tau_[k]; }
+  const RelaxationLaw* Law(int k) const override {
+    return Region(branch_region_[k]).Law(local_branch_[k]);
+  }
+  void UnrelaxedModulus(mfem::ElementTransformation& T,
+                        const mfem::IntegrationPoint& ip,
+                        mfem::DenseMatrix& CU) const override;
+  bool TraceFreeInternalVariables() const override { return tracefree_; }
+  mfem::Coefficient& BranchShearModulus(int k) const override;
+  void BranchModulus(int k, mfem::ElementTransformation& T,
+                     const mfem::IntegrationPoint& ip,
+                     mfem::DenseMatrix& Ck) const override;
+  std::unique_ptr<ElasticStiffness> MakeStiffness() const override;
+
+  /** @brief "<region name>_<branch label of the region's rheology>". */
+  std::string BranchLabel(int k) const override;
+
+  /** @brief The marker of the branch's region. */
+  const mfem::Array<int>* BranchMarker(int k) const override {
+    return &regions_[branch_region_[k]].marker;
+  }
+
+  /** @brief The relaxation time used outside a branch's region. */
+  static constexpr mfem::real_t kOutsideRelaxationTime = 1e300;
+
+ private:
+  int dim_;
+  std::vector<RheologyRegion> regions_;
+  std::vector<int> attribute_region_;  ///< by attribute - 1; -1 = none
+  std::vector<int> branch_region_, local_branch_, region_offset_;
+  bool tracefree_ = true;
+  // Per global branch: the region's tau (dummy outside) and, when
+  // trace-free, the region's mu_k (zero outside).
+  std::vector<std::unique_ptr<mfem::Coefficient>> tau_, mu_;
 };
 
 }  // namespace mfemElasticity

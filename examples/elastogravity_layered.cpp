@@ -2,7 +2,7 @@
 // elastogravity_layered.cpp
 //
 // Self-gravitating elastic deformation of a layered Earth-like model with a
-// fluid outer core, as a driver of SelfGravitatingElasticProblem
+// fluid outer core, as a driver of LinearQuasiStaticSelfGravitatingProblem
 // (mfemElasticity/self_gravitating.hpp) with FluidRegion. Replaces the
 // hand-assembled elastogravity_two_layer / elastogravity_three_layer
 // examples; the models, meshes and loads are those of layered_model.hpp.
@@ -18,11 +18,13 @@
 //
 // Sample runs:
 //    ./elastogravity_layered -o 2
-//    ./elastogravity_layered -m ../data/elastogravity_three_layer_2d.msh -o 2 -s 2 -diag
+//    ./elastogravity_layered -m ../data/elastogravity_three_layer_2d.msh -o 2
+//    -s 2 -diag
 //    ./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1
 //    ./elastogravity_layered -o 2 -load 0 -tidal 1.0
 //    ./elastogravity_layered -o 2 -solid-core
-//    ./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1 -no-fluid-mass
+//    ./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1
+//    -no-fluid-mass
 //
 // -s 2 runs both solvers and reports their difference (they solve the same
 // restricted system and agree to solver tolerance). -diag prints the
@@ -56,8 +58,8 @@ struct Result {
   double seconds = 0.0;
 };
 
-Result Run(SelfGravitatingElasticProblem& p,
-           SelfGravitatingElasticProblem::SolverType type) {
+Result Run(LinearQuasiStaticSelfGravitatingProblem& p,
+           LinearQuasiStaticSelfGravitatingProblem::SolverType type) {
   p.SetSolverType(type);
   p.AssembleForce(0.0);
   const auto t0 = std::chrono::steady_clock::now();
@@ -67,7 +69,7 @@ Result Run(SelfGravitatingElasticProblem& p,
            p.LastInnerIterations(),
            std::chrono::duration<double>(t1 - t0).count()};
   const char* name =
-      type == SelfGravitatingElasticProblem::SolverType::SchurCG
+      type == LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG
           ? "Schur CG    "
           : "Block MINRES";
   std::cout.precision(10);
@@ -158,8 +160,8 @@ int main(int argc, char* argv[]) {
     fluids.push_back(f);
   }
 
-  SelfGravitatingElasticProblem problem(&fes_u, &fes_phi, rheology, rho, 1.0,
-                                        dtn_degree, nullptr, fluids);
+  LinearQuasiStaticSelfGravitatingProblem problem(
+      &fes_u, &fes_phi, rheology, rho, 1.0, dtn_degree, nullptr, fluids);
   if (load_factor != 0.0) {
     problem.SetSurfaceLoad(sigma, SurfaceMarker(solid));
   }
@@ -188,12 +190,13 @@ int main(int argc, char* argv[]) {
 
   std::unique_ptr<Result> schur, minres;
   if (solver == 0 || solver == 2) {
-    schur = std::make_unique<Result>(
-        Run(problem, SelfGravitatingElasticProblem::SolverType::SchurCG));
+    schur = std::make_unique<Result>(Run(
+        problem, LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG));
   }
   if (solver == 1 || solver == 2) {
     minres = std::make_unique<Result>(
-        Run(problem, SelfGravitatingElasticProblem::SolverType::BlockMINRES));
+        Run(problem,
+            LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES));
   }
   if (schur && minres) {
     GridFunction du(schur->u), dphi(schur->phi);

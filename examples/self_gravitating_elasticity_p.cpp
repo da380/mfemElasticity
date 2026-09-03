@@ -1,9 +1,10 @@
 // ============================================================================
 // self_gravitating_elasticity_p.cpp
 //
-// Parallel driver for SelfGravitatingElasticProblem (mfemElasticity/self_gravitating.hpp):
-// a self-gravitating elastic body under a degree-2 surface mass load, solved
-// with the Schur-complement CG and/or the block MINRES solver.
+// Parallel driver for LinearQuasiStaticSelfGravitatingProblem
+// (mfemElasticity/self_gravitating.hpp): a self-gravitating elastic body under
+// a degree-2 surface mass load, solved with the Schur-complement CG and/or the
+// block MINRES solver.
 //
 // The mesh is a ball (disc) inside a larger ball whose outer boundary is a
 // sphere (circle); domain attribute 1 is the body, the body surface is the
@@ -13,8 +14,9 @@
 //
 // Sample runs:
 //    mpirun -np 4 ./self_gravitating_elasticity_p -o 2
-//    mpirun -np 4 ./self_gravitating_elasticity_p -m ../data/coupled_poisson.msh -o 2 -s 2
-//    mpirun -np 2 ./self_gravitating_elasticity_p -o 2 -s 2 -diag
+//    mpirun -np 4 ./self_gravitating_elasticity_p -m
+//    ../data/coupled_poisson.msh -o 2 -s 2 mpirun -np 2
+//    ./self_gravitating_elasticity_p -o 2 -s 2 -diag
 //
 // With -s 2 both solvers are run and compared; since each fixes the rigid
 // gauge differently (the Schur solver makes u orthogonal to the rigid modes,
@@ -64,8 +66,8 @@ struct Result {
   double seconds = 0.0;
 };
 
-Result Run(SelfGravitatingElasticProblem& p,
-           SelfGravitatingElasticProblem::SolverType type) {
+Result Run(LinearQuasiStaticSelfGravitatingProblem& p,
+           LinearQuasiStaticSelfGravitatingProblem::SolverType type) {
   p.SetSolverType(type);
   p.AssembleForce(0.0);
   const auto t0 = std::chrono::steady_clock::now();
@@ -77,7 +79,7 @@ Result Run(SelfGravitatingElasticProblem& p,
            p.LastInnerIterations(),
            std::chrono::duration<double>(t1 - t0).count()};
   const char* name =
-      type == SelfGravitatingElasticProblem::SolverType::SchurCG
+      type == LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG
           ? "Schur CG   "
           : "Block MINRES";
   // The norms are collective: compute them on every rank before printing.
@@ -165,8 +167,8 @@ int main(int argc, char* argv[]) {
   surface = 0;
   surface[body.bdr_attributes.Max() - 1] = 1;
 
-  SelfGravitatingElasticProblem problem(&fes_u, &fes_phi, rheology, rho_coeff,
-                                        G, dtn_degree);
+  LinearQuasiStaticSelfGravitatingProblem problem(&fes_u, &fes_phi, rheology,
+                                                  rho_coeff, G, dtn_degree);
   problem.SetSurfaceLoad(sigma, surface);
   problem.SetRelTol(rel_tol);
 
@@ -189,12 +191,13 @@ int main(int argc, char* argv[]) {
 
   std::unique_ptr<Result> schur, minres;
   if (solver == 0 || solver == 2) {
-    schur = std::make_unique<Result>(
-        Run(problem, SelfGravitatingElasticProblem::SolverType::SchurCG));
+    schur = std::make_unique<Result>(Run(
+        problem, LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG));
   }
   if (solver == 1 || solver == 2) {
     minres = std::make_unique<Result>(
-        Run(problem, SelfGravitatingElasticProblem::SolverType::BlockMINRES));
+        Run(problem,
+            LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES));
   }
 
   if (schur && minres) {

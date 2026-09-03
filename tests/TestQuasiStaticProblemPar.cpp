@@ -1,7 +1,8 @@
 /*
-  Parallel tests for LinearElasticProblemBase / TractionProblem / ClampedProblem
-  on ParFiniteElementSpaces. Run with 1, 2 and 4 ranks; a standalone MPI
-  program returning the number of failed checks.
+  Parallel tests for LinearQuasiStaticProblemBase /
+  LinearQuasiStaticTractionProblem / LinearQuasiStaticClampedProblem on
+  ParFiniteElementSpaces. Run with 1, 2 and 4 ranks; a standalone MPI program
+  returning the number of failed checks.
 
   Every rank also solves the serial problem on the full mesh and compares
   partition-independent quantities: the L2 norm of the clamped
@@ -16,7 +17,7 @@
 #include <memory>
 #include <string>
 
-#include "ElasticTestCommon.hpp"
+#include "QuasiStaticTestCommon.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
@@ -81,8 +82,10 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
   // Clamped: serial reference norm vs parallel norm, then with an effective
   // modulus field on an L2 space.
   {
-    ClampedProblem serial(&sfes, rheology, ess_bdr, pull, pull_marker);
-    ClampedProblem par(&pfes, rheology, ess_bdr, pull, pull_marker);
+    LinearQuasiStaticClampedProblem serial(&sfes, rheology, ess_bdr, pull,
+                                           pull_marker);
+    LinearQuasiStaticClampedProblem par(&pfes, rheology, ess_bdr, pull,
+                                        pull_marker);
     Check(par.IsParallel() ? 0.0 : 1.0, 0.0, label + ": IsParallel");
 
     serial.AssembleForce(0.25);
@@ -103,8 +106,8 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
     smu.ProjectCoefficient(mu_var);
     pmu.ProjectCoefficient(mu_var);
     GridFunctionCoefficient smu_c(&smu), pmu_c(&pmu);
-    serial.SetRelaxationWeights(0, {&smu_c});
-    par.SetRelaxationWeights(0, {&pmu_c});
+    serial.SetRelaxationWeights({&smu_c});
+    par.SetRelaxationWeights({&pmu_c});
     serial.AssembleForce(0.25);
     Check(serial.Solve() ? 0.0 : 1.0, 0.0, label + ": serial solve (eff)");
     par.AssembleForce(0.25);
@@ -125,7 +128,7 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
 
   // Traction: exact uniaxial strain on every rank's elements.
   {
-    TractionProblem par(&pfes, rheology, uni, uni_marker);
+    LinearQuasiStaticTractionProblem par(&pfes, rheology, uni, uni_marker);
     double exx = 0.0, eyy = 0.0;
     UniaxialStrain(dim, kSigma, exx, eyy);
     par.AssembleForce(0.0);

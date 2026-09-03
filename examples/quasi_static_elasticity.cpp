@@ -2,9 +2,9 @@
 // quasi_static_elasticity.cpp
 //
 // Driver for the quasi-static linear elastic problems defined in
-// mfemElasticity/elastic_problem.hpp, exercising the AssembleForce / AddForce /
-// Solve protocol over a sequence of times. See
-// mfemElasticity/elastic_problem.hpp for the interface contract.
+// mfemElasticity/quasi_static_problem.hpp, exercising the AssembleForce /
+// AddForce / Solve protocol over a sequence of times. See
+// mfemElasticity/quasi_static_problem.hpp for the interface contract.
 //
 // Sample runs:
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2
@@ -95,10 +95,11 @@ int main(int argc, char* argv[]) {
   marker = 0;
 
   // Construct the requested problem behind the common interface.
-  unique_ptr<QuasiStaticLinearElasticProblem> problem;
+  unique_ptr<LinearQuasiStaticProblem> problem;
   if (problem_type == 0) {
     mesh.MarkExternalBoundaries(marker);
-    problem = make_unique<TractionProblem>(&fes, rheology, traction, marker);
+    problem = make_unique<LinearQuasiStaticTractionProblem>(&fes, rheology,
+                                                            traction, marker);
   } else if (problem_type == 1) {
     MFEM_VERIFY(mesh.bdr_attributes.Max() >= 2,
                 "Problem 1 needs boundary attributes 1 (clamped) and 2 "
@@ -107,13 +108,13 @@ int main(int argc, char* argv[]) {
     ess_bdr = 0;
     ess_bdr[0] = 1;
     marker[1] = 1;
-    problem =
-        make_unique<ClampedProblem>(&fes, rheology, ess_bdr, traction, marker);
+    problem = make_unique<LinearQuasiStaticClampedProblem>(
+        &fes, rheology, ess_bdr, traction, marker);
   } else {
     cerr << "Unknown problem type: " << problem_type << "\n";
     return 1;
   }
-  static_cast<LinearElasticProblemBase&>(*problem).SetPrintLevel(
+  static_cast<LinearQuasiStaticProblemBase&>(*problem).SetPrintLevel(
       IterativeSolver::PrintLevel().Summary());
   cout << "Displacement unknowns: "
        << problem->DisplacementSpace().GetTrueVSize() << "\n";

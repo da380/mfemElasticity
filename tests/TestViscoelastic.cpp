@@ -1,4 +1,4 @@
-#include "ElasticTestCommon.hpp"
+#include "QuasiStaticTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
@@ -19,8 +19,8 @@
     SDIRK23 (L-stable variant) -> 2.
   - Long-time limit of a clamped generalised Maxwell body equals the elastic
     solution with mu = mu_inf.
-  - A two-field mock problem: the block state layout and force routing
-    reproduce two independent single-field operators.
+  - An elastic rheology passes through the operator with an empty state;
+    its displacement is the static solution at every time.
   - Anisotropic rheology (full symmetric internal variables, tensor branch
     moduli) with an isotropic tensor reproduces the isotropic operator to
     round-off for every scheme, displacement and internal variables alike.
@@ -115,7 +115,8 @@ TEST_P(ViscoelasticTest, StrainMaps) {
   auto rheology = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, *tau);
   auto marker = Marker(nbdr, {x0_attr, x1_attr});
   VectorFunctionCoefficient traction(dim, ConstantUniaxial);
-  TractionProblem problem(fes.get(), rheology, traction, marker);
+  LinearQuasiStaticTractionProblem problem(fes.get(), rheology, traction,
+                                           marker);
 
   // u_i = sum_j a_ij x_j^p (degree p, represented exactly).
   const int p = order;
@@ -149,13 +150,12 @@ TEST_P(ViscoelasticTest, StrainMaps) {
   for (auto map : {ViscoelasticOperator::StrainMap::Galerkin,
                    ViscoelasticOperator::StrainMap::Interpolation}) {
     ViscoelasticOperator visco(problem, -1, map);
-    EXPECT_EQ(visco.NumFields(), 1);
-    EXPECT_EQ(visco.NumBranches(0), 1);
+    EXPECT_EQ(visco.NumBranches(), 1);
     EXPECT_EQ(visco.Height(), visco.BranchSize(0));
-    GridFunction d_exact(&visco.InternalVariableSpace(0));
+    GridFunction d_exact(&visco.InternalVariableSpace());
     d_exact.ProjectCoefficient(d_coef);
     Vector d;
-    visco.ComputeStrain(0, u, d);
+    visco.ComputeStrain(u, d);
     ASSERT_EQ(d.Size(), d_exact.Size());
     EXPECT_LT(RelMaxDiff(d, d_exact), 1e-10);
   }
@@ -165,7 +165,8 @@ TEST_P(ViscoelasticTest, CreepUnderConstantStress) {
   auto rheology = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, *tau);
   auto marker = Marker(nbdr, {x0_attr, x1_attr});
   VectorFunctionCoefficient traction(dim, ConstantUniaxial);
-  TractionProblem problem(fes.get(), rheology, traction, marker);
+  LinearQuasiStaticTractionProblem problem(fes.get(), rheology, traction,
+                                           marker);
   ViscoelasticOperator visco(problem);
 
   double exx0 = 0.0, eyy0 = 0.0;
@@ -234,21 +235,21 @@ TEST_P(ViscoelasticTest, RelaxationUnderPrescribedStrain) {
   Array<int> all(nbdr), none(nbdr);
   all = 1;
   none = 0;
-  ClampedProblem problem(fes.get(), rheology, all, no_traction, none,
-                         &dirichlet);
+  LinearQuasiStaticClampedProblem problem(fes.get(), rheology, all, no_traction,
+                                          none, &dirichlet);
   ViscoelasticOperator visco(problem);
-  ASSERT_EQ(visco.NumBranches(0), 2);
+  ASSERT_EQ(visco.NumBranches(), 2);
   EXPECT_NEAR(visco.MinRelaxationTime(), 1.0, 1e-14);
 
   const Vector d0 = DeviatoricPart(A);
-  const int nd = visco.InternalScalarSpace(0).GetVSize();
+  const int nd = visco.InternalScalarSpace().GetVSize();
   const double taus[2] = {1.0, 100.0};
 
   // m_k(t) at every node against the analytic value.
   const double d0_max = d0.Normlinf();
   auto check = [&](const Vector& m, double t, double tol, auto branch_factor) {
     for (int k = 0; k < 2; k++) {
-      Vector mk = visco.Branch(m, 0, k);
+      Vector mk = visco.Branch(m, k);
       const double factor = branch_factor(k, t);
       for (int c = 0; c < d0.Size(); c++) {
         for (int p = 0; p < nd; p++) {
@@ -316,7 +317,8 @@ TEST_P(ViscoelasticTest, LongTimeLimit) {
   auto pull_marker = Marker(nbdr, {x1_attr});
   VectorFunctionCoefficient pull(dim, ConstantPull);
 
-  ClampedProblem problem(fes.get(), rheology, ess_bdr, pull, pull_marker);
+  LinearQuasiStaticClampedProblem problem(fes.get(), rheology, ess_bdr, pull,
+                                          pull_marker);
   ViscoelasticOperator visco(problem);
   ExponentialTrapezoidSolver ode;
   ode.Init(visco);
@@ -329,14 +331,16 @@ TEST_P(ViscoelasticTest, LongTimeLimit) {
   ASSERT_TRUE(visco.SolveElastic(m, t));
 
   auto relaxed = rheology.LongTermElastic();
-  ClampedProblem limit(fes.get(), relaxed, ess_bdr, pull, pull_marker);
+  LinearQuasiStaticClampedProblem limit(fes.get(), relaxed, ess_bdr, pull,
+                                        pull_marker);
   limit.AssembleForce(t);
   ASSERT_TRUE(limit.Solve());
   EXPECT_LT(RelMaxDiff(problem.Displacement(), limit.Displacement()), 1e-6);
 
   // And the unrelaxed (t = 0) response differs from it.
   auto unrelaxed = rheology.UnrelaxedElastic();
-  ClampedProblem initial(fes.get(), unrelaxed, ess_bdr, pull, pull_marker);
+  LinearQuasiStaticClampedProblem initial(fes.get(), unrelaxed, ess_bdr, pull,
+                                          pull_marker);
   initial.AssembleForce(0.0);
   ASSERT_TRUE(initial.Solve());
   EXPECT_GT(RelMaxDiff(initial.Displacement(), limit.Displacement()), 0.1);
@@ -357,14 +361,14 @@ TEST_P(ViscoelasticTest, AnisotropicMatchesIsotropic) {
   std::vector<AnisotropicBranch> abranches{{&C_1, &tau1}};
   AnisotropicMaxwellRheology aniso(dim, C_inf, abranches);
 
-  TractionProblem pi(fes.get(), iso, traction, marker);
-  TractionProblem pa(fes.get(), aniso, traction, marker);
+  LinearQuasiStaticTractionProblem pi(fes.get(), iso, traction, marker);
+  LinearQuasiStaticTractionProblem pa(fes.get(), aniso, traction, marker);
 
   for (int scheme = 0; scheme < 4; scheme++) {
     ViscoelasticOperator vi(pi), va(pa);
-    ASSERT_TRUE(vi.TraceFree(0));
-    ASSERT_FALSE(va.TraceFree(0));
-    ASSERT_EQ(va.NumComponents(0), vi.NumComponents(0) + 1);
+    ASSERT_TRUE(vi.TraceFree());
+    ASSERT_FALSE(va.TraceFree());
+    ASSERT_EQ(va.NumComponents(), vi.NumComponents() + 1);
     auto make = [scheme]() -> std::unique_ptr<ODESolver> {
       switch (scheme) {
         case 0:
@@ -396,9 +400,9 @@ TEST_P(ViscoelasticTest, AnisotropicMatchesIsotropic) {
         << "scheme " << scheme;
 
     // The full internal variable's deviatoric part is the trace-free one.
-    const int nd = vi.InternalScalarSpace(0).GetVSize();
-    const int nc = vi.NumComponents(0);
-    Vector mtf = vi.Branch(mi, 0, 0), mfull = va.Branch(ma, 0, 0);
+    const int nd = vi.InternalScalarSpace().GetVSize();
+    const int nc = vi.NumComponents();
+    Vector mtf = vi.Branch(mi, 0), mfull = va.Branch(ma, 0);
     double err = 0.0;
     for (int p = 0; p < nd; p++) {
       double tr = 0.0;
@@ -438,7 +442,8 @@ TEST_P(ViscoelasticTest, TransverselyIsotropicHomogeneousCreep) {
   TransverselyIsotropicElasticTensorCoefficient C_ti(dim, A, C, F, L, N,
                                                      axis_coef);
   auto rheology = AnisotropicMaxwellRheology::DeviatoricMaxwell(dim, C_ti, tau);
-  TractionProblem problem(fes.get(), rheology, traction, marker);
+  LinearQuasiStaticTractionProblem problem(fes.get(), rheology, traction,
+                                           marker);
   ViscoelasticOperator visco(problem);
 
   // The Mandel matrices and the ODE reference.
@@ -546,8 +551,8 @@ TEST_P(ViscoelasticTest, PowerLawLinearLimit) {
   auto lawful = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, *tau, &law);
   EXPECT_TRUE(linear.IsLinear());
   EXPECT_FALSE(lawful.IsLinear());  // state-dependent by type, gamma = 0
-  TractionProblem pl(fes.get(), linear, traction, marker);
-  TractionProblem pn(fes.get(), lawful, traction, marker);
+  LinearQuasiStaticTractionProblem pl(fes.get(), linear, traction, marker);
+  LinearQuasiStaticTractionProblem pn(fes.get(), lawful, traction, marker);
   for (int scheme = 0; scheme < 4; scheme++) {
     ViscoelasticOperator vl(pl), vn(pn);
     EXPECT_TRUE(vl.IsLinear());
@@ -599,7 +604,8 @@ TEST_P(ViscoelasticTest, PowerLawCreepUnderConstantStress) {
         f[0] = -sigma;
       }
     });
-    TractionProblem problem(fes.get(), rheology, traction, marker);
+    LinearQuasiStaticTractionProblem problem(fes.get(), rheology, traction,
+                                             marker);
     ViscoelasticOperator visco(problem);
     ExponentialTrapezoidSolver ode;
     ode.Init(visco);
@@ -621,7 +627,7 @@ TEST_P(ViscoelasticTest, PowerLawCreepUnderConstantStress) {
     const double eyy = eyy0 - sigma / dim * t / (2.0 * eta);
     EXPECT_LT(MaxStrainError(problem.Displacement(), exx, eyy), 1e-8 * exx0);
     // The nodal times are tau0 F everywhere.
-    const Vector& itau = visco.InverseRelaxationTimes(0, 0);
+    const Vector& itau = visco.InverseRelaxationTimes(0);
     for (int p = 0; p < itau.Size(); p++) {
       EXPECT_NEAR(itau[p] * kTau * F, 1.0, 1e-8);
     }
@@ -666,8 +672,8 @@ TEST_P(ViscoelasticTest, PowerLawRelaxationOrders) {
   Array<int> all(nbdr), none(nbdr);
   all = 1;
   none = 0;
-  ClampedProblem problem(fes.get(), rheology, all, no_traction, none,
-                         &dirichlet);
+  LinearQuasiStaticClampedProblem problem(fes.get(), rheology, all, no_traction,
+                                          none, &dirichlet);
   ViscoelasticOperator visco(problem);
   const Vector d0 = DeviatoricPart(A);  // trace-free components
   const int nc = d0.Size();
@@ -713,10 +719,10 @@ TEST_P(ViscoelasticTest, PowerLawRelaxationOrders) {
     }
   }
   ASSERT_GT(m_ref.Normlinf(), 0.0);
-  const int nd = visco.InternalScalarSpace(0).GetVSize();
+  const int nd = visco.InternalScalarSpace().GetVSize();
   auto error = [&](const Vector& m) {
     double e = 0.0;
-    Vector mk = visco.Branch(m, 0, 0);
+    Vector mk = visco.Branch(m, 0);
     for (int c = 0; c < nc; c++) {
       for (int p = 0; p < nd; p++) {
         e = std::max(e, std::abs(mk[c * nd + p] - m_ref[c]));
@@ -816,7 +822,7 @@ TEST(ViscoelasticConvergence, TemporalOrders) {
           f[0] = -s;
         }
       });
-  TractionProblem problem(&fes, rheology, traction, marker);
+  LinearQuasiStaticTractionProblem problem(&fes, rheology, traction, marker);
   ViscoelasticOperator visco(problem);
   const double t_final = 1.0;
 
@@ -861,169 +867,57 @@ TEST(ViscoelasticConvergence, TemporalOrders) {
 
 // ---------------------------------------------------------------------------
 
-// A two-field problem delegating to two independent single-field problems.
-class TwoFieldProblem : public QuasiStaticLinearElasticProblem {
- public:
-  TwoFieldProblem(LinearElasticProblemBase& a, LinearElasticProblemBase& b) : p_{&a, &b} {}
-  int NumDisplacementFields() const override { return 2; }
-  FiniteElementSpace& DisplacementSpace(int i) override {
-    return p_[i]->DisplacementSpace();
-  }
-  const GridFunction& Displacement(int i) const override {
-    return p_[i]->Displacement();
-  }
-  const mfemElasticity::Rheology& Rheology(int i) const override {
-    return p_[i]->Rheology();
-  }
-  void AssembleForce(real_t t) override {
-    for (auto* p : p_) {
-      p->AssembleForce(t);
-    }
-  }
-  void AddForce(int i, const Vector& f) override { p_[i]->AddForce(0, f); }
-  using QuasiStaticLinearElasticProblem::AddForce;
-  bool Solve() override { return p_[0]->Solve() && p_[1]->Solve(); }
-  bool SupportsRelaxationWeights() const override { return true; }
-  void SetRelaxationWeights(int i,
-                            const std::vector<Coefficient*>& beta) override {
-    p_[i]->SetRelaxationWeights(0, beta);
-  }
-  void ClearRelaxationWeights() override {
-    for (auto* p : p_) {
-      p->ClearRelaxationWeights();
-    }
-  }
-  void RegisterFields(DataCollection&) override {}
-
- private:
-  LinearElasticProblemBase* p_[2];
-};
-
-TEST(ViscoelasticTwoField, RoutesForcesPerField) {
-  const int dim = 2;
-  Mesh mesh = Mesh::MakeCartesian2D(3, 3, Element::QUADRILATERAL);
-  H1_FECollection fec1(1, dim), fec2(2, dim);
-  FiniteElementSpace fes1(&mesh, &fec1, dim), fes2(&mesh, &fec2, dim);
-  ConstantCoefficient kappa(Kappa(dim)), mu(kMu), tau(1.0), mu_inf(0.4),
-      tau2(3.0);
-  auto rh1 = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
-  std::vector<MaxwellBranch> branches{{&mu, &tau}, {&mu, &tau2}};
-  IsotropicMaxwellRheology rh2(dim, kappa, mu_inf, branches);
-  const int x0 = BdrAttributeAt(mesh, 0, 0.0),
-            x1 = BdrAttributeAt(mesh, 0, 1.0);
-  auto ess = Marker(mesh.bdr_attributes.Max(), {x0});
-  auto pull_marker = Marker(mesh.bdr_attributes.Max(), {x1});
-  VectorFunctionCoefficient pull(dim, PullTraction);
-
-  ClampedProblem a1(&fes1, rh1, ess, pull, pull_marker);
-  ClampedProblem b1(&fes2, rh2, ess, pull, pull_marker);
-  TwoFieldProblem two(a1, b1);
-  ViscoelasticOperator visco_two(two);
-  ASSERT_EQ(visco_two.NumFields(), 2);
-  ASSERT_EQ(visco_two.NumBranches(0), 1);
-  ASSERT_EQ(visco_two.NumBranches(1), 2);
-  ASSERT_EQ(visco_two.Offsets().Size(), 4);
-  EXPECT_EQ(visco_two.BranchOffset(1, 1),
-            visco_two.BranchSize(0) + visco_two.BranchSize(1));
-  EXPECT_EQ(visco_two.Height(),
-            visco_two.BranchSize(0) + 2 * visco_two.BranchSize(1));
-
-  ClampedProblem a2(&fes1, rh1, ess, pull, pull_marker);
-  ClampedProblem b2(&fes2, rh2, ess, pull, pull_marker);
-  ViscoelasticOperator visco_a(a2), visco_b(b2);
-
-  for (int scheme = 0; scheme < 2; scheme++) {
-    auto make = [scheme]() -> std::unique_ptr<ODESolver> {
-      if (scheme == 0) {
-        return std::make_unique<ExponentialTrapezoidSolver>();
-      }
-      return std::make_unique<RK4Solver>();
-    };
-    auto ode_two = make(), ode_a = make(), ode_b = make();
-    ode_two->Init(visco_two);
-    ode_a->Init(visco_a);
-    ode_b->Init(visco_b);
-    Vector m_two(visco_two.Height()), m_a(visco_a.Height()),
-        m_b(visco_b.Height());
-    m_two = 0.0;
-    m_a = 0.0;
-    m_b = 0.0;
-    double t_two = 0.0, t_a = 0.0, t_b = 0.0, dt = 0.4;
-    for (int step = 0; step < 3; step++) {
-      ode_two->Step(m_two, t_two, dt);
-      ode_a->Step(m_a, t_a, dt);
-      ode_b->Step(m_b, t_b, dt);
-    }
-    EXPECT_LT(RelMaxDiff(visco_two.Branch(m_two, 0, 0), m_a), 1e-12);
-    for (int k = 0; k < 2; k++) {
-      EXPECT_LT(
-          RelMaxDiff(visco_two.Branch(m_two, 1, k), visco_b.Branch(m_b, 0, k)),
-          1e-12);
-    }
-    ASSERT_GT(m_a.Normlinf(), 0.0);
-    ASSERT_GT(m_b.Normlinf(), 0.0);
-  }
-}
-
-// An elastic field alongside a Maxwell one: the elastic field carries no
-// internal state and its displacement is the static solution at every
-// time, while the Maxwell field evolves as it would alone.
-TEST(ViscoelasticTwoField, ElasticFieldHasNoState) {
+// An elastic rheology through the operator: no internal state, and the
+// displacement is the static solution at every time for every scheme.
+TEST(ViscoelasticElastic, ElasticRheologyHasNoState) {
   const int dim = 2;
   Mesh mesh = Mesh::MakeCartesian2D(3, 3, Element::QUADRILATERAL);
   H1_FECollection fec(1, dim);
   FiniteElementSpace fes(&mesh, &fec, dim);
-  ConstantCoefficient kappa(Kappa(dim)), mu(kMu), tau(1.0);
+  ConstantCoefficient kappa(Kappa(dim)), mu(kMu);
   IsotropicElasticRheology elastic(dim, kappa, mu);
-  auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau);
   const int x0 = BdrAttributeAt(mesh, 0, 0.0),
             x1 = BdrAttributeAt(mesh, 0, 1.0);
   auto ess = Marker(mesh.bdr_attributes.Max(), {x0});
   auto pull_marker = Marker(mesh.bdr_attributes.Max(), {x1});
   VectorFunctionCoefficient pull(dim, PullTraction);
 
-  ClampedProblem a1(&fes, elastic, ess, pull, pull_marker);
-  ClampedProblem b1(&fes, maxwell, ess, pull, pull_marker);
-  TwoFieldProblem two(a1, b1);
-  ViscoelasticOperator visco_two(two);
-  ASSERT_EQ(visco_two.NumFields(), 2);
-  ASSERT_EQ(visco_two.NumBranches(0), 0);
-  ASSERT_EQ(visco_two.NumBranches(1), 1);
-  ASSERT_EQ(visco_two.Height(), visco_two.BranchSize(1));
-  EXPECT_EQ(visco_two.BranchOffset(1, 0), 0);
-  EXPECT_TRUE(visco_two.IsLinear());
+  LinearQuasiStaticClampedProblem problem(&fes, elastic, ess, pull,
+                                          pull_marker);
+  ViscoelasticOperator visco(problem);
+  ASSERT_EQ(visco.NumBranches(), 0);
+  ASSERT_EQ(visco.Height(), 0);
+  EXPECT_TRUE(visco.IsLinear());
+  EXPECT_EQ(visco.MinRelaxationTime(), infinity());
 
-  ClampedProblem b2(&fes, maxwell, ess, pull, pull_marker);
-  ViscoelasticOperator visco_b(b2);
-  ClampedProblem static_problem(&fes, elastic, ess, pull, pull_marker);
+  LinearQuasiStaticClampedProblem static_problem(&fes, elastic, ess, pull,
+                                                 pull_marker);
 
-  for (int scheme = 0; scheme < 2; scheme++) {
+  for (int scheme = 0; scheme < 3; scheme++) {
     auto make = [scheme]() -> std::unique_ptr<ODESolver> {
-      if (scheme == 0) {
-        return std::make_unique<ExponentialTrapezoidSolver>();
+      switch (scheme) {
+        case 0:
+          return std::make_unique<ExponentialTrapezoidSolver>();
+        case 1:
+          return std::make_unique<BackwardEulerSolver>();
+        default:
+          return std::make_unique<RK4Solver>();
       }
-      return std::make_unique<RK4Solver>();
     };
-    auto ode_two = make(), ode_b = make();
-    ode_two->Init(visco_two);
-    ode_b->Init(visco_b);
-    Vector m_two(visco_two.Height()), m_b(visco_b.Height());
-    m_two = 0.0;
-    m_b = 0.0;
-    double t_two = 0.0, t_b = 0.0, dt = 0.4;
+    auto ode = make();
+    ode->Init(visco);
+    Vector m(visco.Height());
+    double t = 0.0, dt = 0.4;
     for (int step = 0; step < 3; step++) {
-      ode_two->Step(m_two, t_two, dt);
-      ode_b->Step(m_b, t_b, dt);
+      ode->Step(m, t, dt);
     }
-    EXPECT_LT(RelMaxDiff(visco_two.Branch(m_two, 1, 0), m_b), 1e-12);
-    ASSERT_GT(m_b.Normlinf(), 0.0);
-
-    ASSERT_TRUE(visco_two.SolveElastic(m_two, t_two));
-    static_problem.AssembleForce(t_two);
+    ASSERT_TRUE(visco.SolveElastic(m, t));
+    static_problem.AssembleForce(t);
     ASSERT_TRUE(static_problem.Solve());
     EXPECT_GT(static_problem.Displacement().Normlinf(), 0.0);
-    EXPECT_LT(RelMaxDiff(a1.Displacement(), static_problem.Displacement()),
-              1e-12);
+    EXPECT_LT(RelMaxDiff(problem.Displacement(), static_problem.Displacement()),
+              1e-12)
+        << "scheme " << scheme;
   }
 }
 

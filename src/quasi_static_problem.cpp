@@ -1,10 +1,10 @@
 /**
- * @file elastic_problem.cpp
- * @brief Implementation of LinearElasticProblemBase, TractionProblem and
- * ClampedProblem.
+ * @file quasi_static_problem.cpp
+ * @brief Implementation of LinearQuasiStaticProblemBase,
+ * LinearQuasiStaticTractionProblem and LinearQuasiStaticClampedProblem.
  */
 
-#include "mfemElasticity/elastic_problem.hpp"
+#include "mfemElasticity/quasi_static_problem.hpp"
 
 #include <cmath>
 
@@ -14,18 +14,20 @@ namespace mfemElasticity {
 
 using namespace mfem;
 
-LinearElasticProblemBase::LinearElasticProblemBase(FiniteElementSpace* fes,
-                                       const mfemElasticity::Rheology& rheology)
+LinearQuasiStaticProblemBase::LinearQuasiStaticProblemBase(
+    FiniteElementSpace* fes, const mfemElasticity::Rheology& rheology)
     : fes_(fes),
       rheology_(&rheology),
       stiffness_(rheology.MakeStiffness()),
       A_(Operator::MFEM_SPARSEMAT) {
   const int dim = fes_->GetMesh()->Dimension();
-  MFEM_VERIFY(fes_->GetVDim() == dim,
-              "LinearElasticProblemBase: the displacement space must have vdim "
-              "equal to the space dimension.");
-  MFEM_VERIFY(rheology.SpaceDim() == dim,
-              "LinearElasticProblemBase: rheology and mesh dimensions differ.");
+  MFEM_VERIFY(
+      fes_->GetVDim() == dim,
+      "LinearQuasiStaticProblemBase: the displacement space must have vdim "
+      "equal to the space dimension.");
+  MFEM_VERIFY(
+      rheology.SpaceDim() == dim,
+      "LinearQuasiStaticProblemBase: rheology and mesh dimensions differ.");
 #ifdef MFEM_USE_MPI
   pfes_ = dynamic_cast<ParFiniteElementSpace*>(fes_);
   if (pfes_) {
@@ -46,7 +48,7 @@ LinearElasticProblemBase::LinearElasticProblemBase(FiniteElementSpace* fes,
   increment_ = 0.0;
 }
 
-bool LinearElasticProblemBase::IsParallel() const {
+bool LinearQuasiStaticProblemBase::IsParallel() const {
 #ifdef MFEM_USE_MPI
   return pfes_ != nullptr;
 #else
@@ -54,28 +56,14 @@ bool LinearElasticProblemBase::IsParallel() const {
 #endif
 }
 
-FiniteElementSpace& LinearElasticProblemBase::DisplacementSpace(int i) {
-  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
-  return *fes_;
-}
-
-const GridFunction& LinearElasticProblemBase::Displacement(int i) const {
-  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
-  return *u_;
-}
-
-const mfemElasticity::Rheology& LinearElasticProblemBase::Rheology(int i) const {
-  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
-  return *rheology_;
-}
-
-void LinearElasticProblemBase::SetEssentialBoundary(const Array<int>& ess_bdr) {
+void LinearQuasiStaticProblemBase::SetEssentialBoundary(
+    const Array<int>& ess_bdr) {
   Array<int> marker(ess_bdr);
   fes_->GetEssentialTrueDofs(marker, ess_tdof_list_);
   operator_dirty_ = true;
 }
 
-void LinearElasticProblemBase::AssembleForce(real_t t) {
+void LinearQuasiStaticProblemBase::AssembleForce(real_t t) {
   t_ = t;
   for (auto* c : td_coefs_) {
     c->SetTime(t);
@@ -89,30 +77,28 @@ void LinearElasticProblemBase::AssembleForce(real_t t) {
   UpdateBoundaryValues(t);
 }
 
-void LinearElasticProblemBase::AddForce(int i, const Vector& f) {
-  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
+void LinearQuasiStaticProblemBase::AddForce(const Vector& f) {
   MFEM_VERIFY(f.Size() == increment_.Size(),
               "AddForce: expected a dual vector in the vdof layout of "
               "DisplacementSpace().");
   increment_ += f;
 }
 
-void LinearElasticProblemBase::SetRelaxationWeights(
-    int i, const std::vector<Coefficient*>& beta) {
-  MFEM_VERIFY(i == 0, "LinearElasticProblemBase: single displacement field.");
+void LinearQuasiStaticProblemBase::SetRelaxationWeights(
+    const std::vector<Coefficient*>& beta) {
   // Always reassemble: the same coefficient objects may carry new values.
   stiffness_->SetRelaxationWeights(beta);
   operator_dirty_ = true;
 }
 
-void LinearElasticProblemBase::ClearRelaxationWeights() {
+void LinearQuasiStaticProblemBase::ClearRelaxationWeights() {
   if (stiffness_->IsRelaxed()) {
     stiffness_->ClearRelaxationWeights();
     operator_dirty_ = true;
   }
 }
 
-void LinearElasticProblemBase::AssembleOperator() {
+void LinearQuasiStaticProblemBase::AssembleOperator() {
   if (a_ && prec_ && !prec_stale_ && prec_reuse_ > 1.0 && !prec_form_) {
     // The preconditioner was built on the current matrix and stays on it:
     // keep that form and matrix alive while the preconditioner is reused.
@@ -130,7 +116,7 @@ void LinearElasticProblemBase::AssembleOperator() {
   assemblies_++;
 }
 
-void LinearElasticProblemBase::NoteIterations(int its) {
+void LinearQuasiStaticProblemBase::NoteIterations(int its) {
   total_its_ += its;
   if (prec_baseline_its_ < 0) {
     prec_baseline_its_ = its;
@@ -139,18 +125,18 @@ void LinearElasticProblemBase::NoteIterations(int its) {
   }
 }
 
-void LinearElasticProblemBase::EnsureOperator() {
+void LinearQuasiStaticProblemBase::EnsureOperator() {
   if (operator_dirty_) {
     AssembleOperator();
   }
 }
 
-const OperatorHandle& LinearElasticProblemBase::SystemMatrix() {
+const OperatorHandle& LinearQuasiStaticProblemBase::SystemMatrix() {
   EnsureOperator();
   return A_;
 }
 
-bool LinearElasticProblemBase::Solve() {
+bool LinearQuasiStaticProblemBase::Solve() {
   solves_++;
   EnsureOperator();
   rhs_ = *b_;
@@ -164,7 +150,13 @@ bool LinearElasticProblemBase::Solve() {
   return ok;
 }
 
-void LinearElasticProblemBase::SetupDefaultCG(OperatorHandle& A) {
+void LinearQuasiStaticProblemBase::SetupDefaultCG(OperatorHandle& A) {
+  SetupDefaultPreconditioner(A);
+  SetupCG(*A.Ptr(), *prec_);
+}
+
+void LinearQuasiStaticProblemBase::SetupDefaultPreconditioner(
+    OperatorHandle& A) {
   const bool rebuild = !prec_ || prec_stale_ || prec_reuse_ <= 1.0;
   if (rebuild) {
 #ifdef MFEM_USE_MPI
@@ -184,6 +176,9 @@ void LinearElasticProblemBase::SetupDefaultCG(OperatorHandle& A) {
     prec_baseline_its_ = -1;
     prec_setups_++;
   }
+}
+
+void LinearQuasiStaticProblemBase::SetupCG(const Operator& op, Solver& prec) {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     cg_ = std::make_unique<CGSolver>(pfes_->GetComm());
@@ -193,9 +188,9 @@ void LinearElasticProblemBase::SetupDefaultCG(OperatorHandle& A) {
     cg_ = std::make_unique<CGSolver>();
   }
   // Operator before preconditioner: SetOperator would otherwise reset the
-  // (reused) preconditioner onto the new matrix.
-  cg_->SetOperator(*A.Ptr());
-  cg_->SetPreconditioner(*prec_);
+  // (reused) preconditioner onto the new operator.
+  cg_->SetOperator(op);
+  cg_->SetPreconditioner(prec);
   cg_->SetRelTol(rel_tol_);
   cg_->SetAbsTol(0.0);
   cg_->SetMaxIter(10000);
@@ -203,9 +198,12 @@ void LinearElasticProblemBase::SetupDefaultCG(OperatorHandle& A) {
   cg_->iterative_mode = true;
 }
 
-void LinearElasticProblemBase::SetupSolver(OperatorHandle& A) { SetupDefaultCG(A); }
+void LinearQuasiStaticProblemBase::SetupSolver(OperatorHandle& A) {
+  SetupDefaultCG(A);
+}
 
-bool LinearElasticProblemBase::SolveLinearSystem(const Vector& B, Vector& X) {
+bool LinearQuasiStaticProblemBase::SolveLinearSystem(const Vector& B,
+                                                     Vector& X) {
   if (!SetWarmStartTolerance(*cg_, *prec_, B)) {
     X = 0.0;
     return true;
@@ -215,7 +213,24 @@ bool LinearElasticProblemBase::SolveLinearSystem(const Vector& B, Vector& X) {
   return cg_->GetConverged();
 }
 
-real_t LinearElasticProblemBase::Dot(const Vector& x, const Vector& y) const {
+std::unique_ptr<BilinearForm> LinearQuasiStaticProblemBase::AssembleMassOperator(
+    Coefficient* rho, OperatorHandle& M) {
+  auto form = detail::MakeBilinearForm(fes_);
+  form->AddDomainIntegrator(rho ? new VectorMassIntegrator(*rho)
+                                : new VectorMassIntegrator());
+  form->Assemble();
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    M.SetType(Operator::Hypre_ParCSR);
+  }
+#endif
+  Array<int> empty;
+  form->FormSystemMatrix(empty, M);
+  return form;
+}
+
+real_t LinearQuasiStaticProblemBase::Dot(const Vector& x,
+                                         const Vector& y) const {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     return InnerProduct(pfes_->GetComm(), x, y);
@@ -224,9 +239,8 @@ real_t LinearElasticProblemBase::Dot(const Vector& x, const Vector& y) const {
   return InnerProduct(x, y);
 }
 
-bool LinearElasticProblemBase::SetWarmStartTolerance(IterativeSolver& solver,
-                                               Solver& prec,
-                                               const Vector& B) const {
+bool LinearQuasiStaticProblemBase::SetWarmStartTolerance(
+    IterativeSolver& solver, Solver& prec, const Vector& B) const {
   Vector z(B.Size());
   prec.Mult(B, z);
   const real_t nom = Dot(B, z);
@@ -237,57 +251,79 @@ bool LinearElasticProblemBase::SetWarmStartTolerance(IterativeSolver& solver,
   return true;
 }
 
-void LinearElasticProblemBase::RegisterFields(DataCollection& dc) {
+void LinearQuasiStaticProblemBase::RegisterFields(DataCollection& dc) {
   dc.RegisterField("displacement", u_.get());
 }
 
 // ---------------------------------------------------------------------------
 
-TractionProblem::TractionProblem(FiniteElementSpace* fes,
-                                 const mfemElasticity::Rheology& rheology,
-                                 VectorCoefficient& traction,
-                                 const Array<int>& bdr_marker)
-    : LinearElasticProblemBase(fes, rheology), marker_(bdr_marker) {
+LinearQuasiStaticTractionProblem::LinearQuasiStaticTractionProblem(
+    FiniteElementSpace* fes, const mfemElasticity::Rheology& rheology,
+    VectorCoefficient& traction, const Array<int>& bdr_marker)
+    : LinearQuasiStaticProblemBase(fes, rheology), marker_(bdr_marker) {
   RegisterTimeDependent(traction);
   b_->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(traction), marker_);
 }
 
-void TractionProblem::SetupSolver(OperatorHandle& A) {
-  SetupDefaultCG(A);
-#ifdef MFEM_USE_MPI
-  if (pfes_) {
-    rigid_ = std::make_unique<RigidBodySolver>(pfes_->GetComm(), pfes_);
-  } else
-#endif
-  {
-    rigid_ = std::make_unique<RigidBodySolver>(fes_);
+const NullSpaceProjector& LinearQuasiStaticTractionProblem::RigidModes() {
+  if (!projector_) {
+    projector_ = MakeRigidModeProjector(*fes_);
   }
-  rigid_->SetSolver(*cg_);
-  // RigidBodySolver propagates its own iterative_mode to the wrapped solver
-  // on each Mult(); the final projection inside the wrapper removes any
-  // rigid component the warm start might carry along.
-  rigid_->iterative_mode = true;
+  return *projector_;
 }
 
-bool TractionProblem::SolveLinearSystem(const Vector& B, Vector& X) {
-  if (!SetWarmStartTolerance(*cg_, *prec_, B)) {
+void LinearQuasiStaticTractionProblem::SetupSolver(OperatorHandle& A) {
+  const auto& P = RigidModes();
+  SetupDefaultPreconditioner(A);
+  // CG on P A P with the preconditioner P M P: an unprojected preconditioner
+  // amplifies the round-off component along the (near-)null rigid modes.
+  projected_prec_ = std::make_unique<ProjectedSolver>(P);
+  projected_prec_->SetSolver(*prec_);
+  projected_op_ = std::make_unique<ProjectedOperator>(*A.Ptr(), P);
+  SetupCG(*projected_op_, *projected_prec_);
+  // The outer wrapper projects the load and the warm start before, and the
+  // solution after, the CG solve.
+  projected_ = std::make_unique<ProjectedSolver>(P);
+  projected_->SetSolver(*cg_);
+  projected_->iterative_mode = true;
+  projected_->SetGauge(gauge_M_.Ptr());
+}
+
+void LinearQuasiStaticTractionProblem::SetMassWeightedGauge(Coefficient* rho) {
+  gauge_M_.Clear();
+  gauge_form_ = AssembleMassOperator(rho, gauge_M_);
+  if (projected_) {
+    projected_->SetGauge(gauge_M_.Ptr());
+  }
+}
+
+void LinearQuasiStaticTractionProblem::SetEuclideanGauge() {
+  gauge_M_.Clear();
+  gauge_form_.reset();
+  if (projected_) {
+    projected_->SetGauge(nullptr);
+  }
+}
+
+bool LinearQuasiStaticTractionProblem::SolveLinearSystem(const Vector& B,
+                                                         Vector& X) {
+  // (P M P B, B) = (M P B, P B): the cold-start norm of the projected load.
+  if (!SetWarmStartTolerance(*cg_, *projected_prec_, B)) {
     X = 0.0;
     return true;
   }
-  rigid_->Mult(B, X);
+  projected_->Mult(B, X);
   NoteIterations(cg_->GetNumIterations());
   return cg_->GetConverged();
 }
 
 // ---------------------------------------------------------------------------
 
-ClampedProblem::ClampedProblem(FiniteElementSpace* fes,
-                               const mfemElasticity::Rheology& rheology,
-                               const Array<int>& ess_bdr,
-                               VectorCoefficient& traction,
-                               const Array<int>& traction_marker,
-                               VectorCoefficient* dirichlet)
-    : LinearElasticProblemBase(fes, rheology),
+LinearQuasiStaticClampedProblem::LinearQuasiStaticClampedProblem(
+    FiniteElementSpace* fes, const mfemElasticity::Rheology& rheology,
+    const Array<int>& ess_bdr, VectorCoefficient& traction,
+    const Array<int>& traction_marker, VectorCoefficient* dirichlet)
+    : LinearQuasiStaticProblemBase(fes, rheology),
       ess_bdr_(ess_bdr),
       marker_(traction_marker),
       dirichlet_(dirichlet) {
@@ -304,7 +340,7 @@ ClampedProblem::ClampedProblem(FiniteElementSpace* fes,
   b_->AddBoundaryIntegrator(new VectorBoundaryLFIntegrator(traction), marker_);
 }
 
-void ClampedProblem::UpdateBoundaryValues(real_t /*t*/) {
+void LinearQuasiStaticClampedProblem::UpdateBoundaryValues(real_t /*t*/) {
   u_->ProjectBdrCoefficient(*dirichlet_, ess_bdr_);
 }
 
