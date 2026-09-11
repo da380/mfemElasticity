@@ -14,6 +14,7 @@
 namespace mfemElasticity {
 namespace detail {
 
+/// Returns true if an FE space is parallel.
 inline bool IsParallel(const mfem::FiniteElementSpace& fes) {
 #ifdef MFEM_USE_MPI
   return dynamic_cast<const mfem::ParFiniteElementSpace*>(&fes) != nullptr;
@@ -37,6 +38,7 @@ inline std::unique_ptr<mfem::FiniteElementSpace> MakeFESpace(
                                                     ordering);
 }
 
+/// A GridFunction for a space, parallel if the space is.
 inline std::unique_ptr<mfem::GridFunction> MakeGridFunction(
     mfem::FiniteElementSpace* fes) {
 #ifdef MFEM_USE_MPI
@@ -47,6 +49,7 @@ inline std::unique_ptr<mfem::GridFunction> MakeGridFunction(
   return std::make_unique<mfem::GridFunction>(fes);
 }
 
+/// A LinearForm for a space, parallel is the space is.
 inline std::unique_ptr<mfem::LinearForm> MakeLinearForm(
     mfem::FiniteElementSpace* fes) {
 #ifdef MFEM_USE_MPI

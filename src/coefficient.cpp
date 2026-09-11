@@ -31,10 +31,12 @@ BarotropicDensityGradientCoefficient::BarotropicDensityGradientCoefficient(
 
 BarotropicDensityGradientCoefficient::BarotropicDensityGradientCoefficient(
     const GridFunction& rho, const GridFunction& phi0)
-    : owned_rho_(std::make_unique<GradientGridFunctionCoefficient>(&rho)),
-      owned_phi0_(std::make_unique<GradientGridFunctionCoefficient>(&phi0)),
-      grad_rho_(owned_rho_.get()),
-      grad_phi0_(owned_phi0_.get()) {
+    : grad_rho_from_rho_(
+          std::make_unique<GradientGridFunctionCoefficient>(&rho)),
+      grad_phi0_from_phi0_(
+          std::make_unique<GradientGridFunctionCoefficient>(&phi0)),
+      grad_rho_(grad_rho_from_rho_.get()),
+      grad_phi0_(grad_phi0_from_phi0_.get()) {
   MFEM_VERIFY(rho.FESpace()->GetMesh() == phi0.FESpace()->GetMesh(),
               "BarotropicDensityGradientCoefficient: the density and the "
               "potential must live on the same mesh.");

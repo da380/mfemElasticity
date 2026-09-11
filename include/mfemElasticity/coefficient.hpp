@@ -75,8 +75,8 @@ class BarotropicDensityGradientCoefficient : public mfem::Coefficient {
                     const mfem::IntegrationPoint& ip) override;
 
  private:
-  std::unique_ptr<mfem::GradientGridFunctionCoefficient> owned_rho_,
-      owned_phi0_;
+  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_rho_from_rho_,
+      grad_phi0_from_phi0_;
   mfem::VectorCoefficient* grad_rho_;
   mfem::VectorCoefficient* grad_phi0_;
   mfem::Vector gr_, gp_;
