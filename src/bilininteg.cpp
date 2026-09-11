@@ -38,7 +38,8 @@ void DomainVectorScalarIntegrator::AssembleElementMatrix2(
   } else {
     test_shape.SetSize(test_dof);
   }
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -92,7 +93,7 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
     qv.SetSize(space_dim);
   }
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -158,7 +159,7 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
   trial_shape.SetSize(trial_dof);
   part_elmat.SetSize(test_dof, trial_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -215,7 +216,7 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
     test_dshape.SetSize(test_dof, space_dim);
   }
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -285,7 +286,7 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
   trial_dshape.SetSize(trial_dof, space_dim);
   test_shape.SetSize(test_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -339,7 +340,7 @@ void DomainVectorDivVectorIntegrator::AssembleElementMatrix2(
   trial_dshape.SetSize(trial_dof, space_dim);
   test_shape.SetSize(test_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -385,7 +386,7 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
   elmat.SetSize(matrixIndex.Size(), vectorIndex.Size());
   elmat = 0.;
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
 #ifdef MFEM_THREAD_SAFE
   Vector test_shape;
@@ -449,7 +450,7 @@ void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
   trial_dshape.SetSize(trial_dof, space_dim);
   part_elmat.SetSize(test_dof, trial_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -508,7 +509,7 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
   trial_dshape.SetSize(trial_dof, space_dim);
   part_elmat.SetSize(test_dof, trial_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -705,7 +706,7 @@ void BoundaryNormalNormalIntegrator::AssembleElementMatrix(
   elmat.SetSize(dim * dof);
   elmat = 0.0;
 
-  const IntegrationRule* ir = IntRule ? IntRule : &GetRule(el, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     Trans.SetIntPoint(&ip);
@@ -750,8 +751,7 @@ void BoundaryNormalScalarIntegrator::AssembleElementMatrix2(
   elmat.SetSize(dim * test_dof, trial_dof);
   elmat = 0.0;
 
-  const IntegrationRule* ir =
-      IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
     Trans.SetIntPoint(&ip);
