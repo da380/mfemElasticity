@@ -4,6 +4,8 @@ Extensions to the [MFEM library](https://mfem.org) for quasi-static elastic and
 viscoelastic problems in geophysics, including self-gravitation. The main
 pieces are
 
+- the component ordering and node/component indexing of vector, matrix and
+  symmetric tensor fields (`index.hpp`);
 - mixed bilinear/linear form integrators between vector, scalar and tensor
   nodal spaces, and a general (anisotropic) linear elasticity integrator
   (`bilininteg.hpp`, `lininteg.hpp`);

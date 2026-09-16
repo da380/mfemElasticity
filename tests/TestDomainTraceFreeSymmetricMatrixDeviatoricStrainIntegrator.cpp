@@ -17,8 +17,8 @@ TEST_P(BilinearFormIntegratorTests,
   auto H1 = H1_FECollection(order, dim);
 
   auto vector_fes = FiniteElementSpace(&mesh, &H1, dim);
-  auto deviatoric_strain_fes =
-      FiniteElementSpace(&mesh, &L2, dim * (dim + 1) / 2 - 1);
+  auto deviatoric_strain_fes = FiniteElementSpace(
+      &mesh, &L2, SymmetricComponentOrder::TraceFreeCount(dim));
 
   auto q = FunctionCoefficient([](const Vector& x) { return x.Norml2(); });
 
@@ -40,7 +40,7 @@ TEST_P(BilinearFormIntegratorTests,
     A(i, i) -= trace / dim;
   }
 
-  auto a = Vector(dim * (dim + 1) / 2 - 1);
+  auto a = Vector(SymmetricComponentOrder::TraceFreeCount(dim));
   auto k = 0;
   for (auto j = 0; j < dim - 1; j++) {
     for (auto i = j; i < dim; i++) {

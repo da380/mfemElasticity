@@ -43,15 +43,6 @@ using namespace elastic_test;
 
 using Param = std::tuple<int, int, int>;  // (dim, elementType, order)
 
-// Trace-free component index: lower triangle, column-major, last diagonal
-// entry dropped (TraceFreeSymmetricMatrixIndex).
-int TFIndex(int dim, int j, int k) {
-  if (j < k) {
-    std::swap(j, k);
-  }
-  return j + k * dim - k * (k + 1) / 2;
-}
-
 void ConstantUniaxial(const Vector& x, Vector& f) {
   UniaxialTraction(x, 0.0, f);
 }
@@ -75,10 +66,10 @@ Vector DeviatoricPart(const DenseMatrix& A) {
     }
     tr += A(i, i);
   }
-  Vector d(dim * (dim + 1) / 2 - 1);
+  Vector d(SymmetricComponentOrder::TraceFreeCount(dim));
   for (int k = 0; k < dim; k++) {
     for (int j = k; j < dim; j++) {
-      const int idx = TFIndex(dim, j, k);
+      const int idx = SymmetricComponentOrder::Offset(dim, j, k);
       if (idx < d.Size()) {
         d[idx] = S(j, k) - (j == k ? tr / dim : 0.0);
       }
@@ -134,7 +125,7 @@ TEST_P(ViscoelasticTest, StrainMaps) {
       }
     }
   });
-  const int nc = dim * (dim + 1) / 2 - 1;
+  const int nc = SymmetricComponentOrder::TraceFreeCount(dim);
   VectorFunctionCoefficient d_coef(nc, [&](const Vector& x, Vector& d) {
     DenseMatrix G(dim);  // G(i, j) = d u_i / d x_j
     for (int i = 0; i < dim; i++) {
@@ -407,7 +398,7 @@ TEST_P(ViscoelasticTest, AnisotropicMatchesIsotropic) {
     for (int p = 0; p < nd; p++) {
       double tr = 0.0;
       for (int j = 0; j < dim; j++) {
-        tr += mfull[TFIndex(dim, j, j) * nd + p];
+        tr += mfull[SymmetricComponentOrder::Offset(dim, j, j) * nd + p];
       }
       for (int c = 0; c < nc; c++) {
         int j, k;
@@ -680,7 +671,7 @@ TEST_P(ViscoelasticTest, PowerLawRelaxationOrders) {
 
   // Nodal reference: full-tensor |T| from the trace-free components.
   auto dev_norm = [&](const Vector& r) {
-    Vector full(dim * (dim + 1) / 2);
+    Vector full(SymmetricComponentOrder::Count(dim));
     for (int c = 0; c < nc; c++) {
       full[c] = r[c];
     }

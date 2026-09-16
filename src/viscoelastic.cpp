@@ -58,17 +58,19 @@ std::unique_ptr<SparseMatrix> BuildBlockMassInverse(FiniteElementSpace& sfes) {
 }
 
 // Inverse of the Frobenius metric G_{cc'} = E_c : E_{c'} of the symmetric
-// basis tensors in the (TraceFree)SymmetricMatrixIndex layout: component
-// (j, k), j >= k, lower triangle column-major, with the last diagonal entry
-// dropped in the trace-free case. E = e_j e_k^T + e_k e_j^T off the
+// basis tensors in the SymmetricComponentOrder layout (component (j, k),
+// j >= k, lower triangle column-major) with the last diagonal entry dropped
+// in the trace-free case. E = e_j e_k^T + e_k e_j^T off the
 // diagonal; on it E = e_j e_j^T (full) or e_j e_j^T - e_{d-1} e_{d-1}^T
 // (trace-free).
 DenseMatrix MetricInverse(int dim, bool tracefree) {
-  const int nc = dim * (dim + 1) / 2 - (tracefree ? 1 : 0);
+  const int nc = tracefree ? SymmetricComponentOrder::TraceFreeCount(dim)
+                           : SymmetricComponentOrder::Count(dim);
   std::vector<DenseMatrix> E;
   for (int k = 0; k < dim; k++) {
     for (int j = k; j < dim; j++) {
-      if (tracefree && j == k && j == dim - 1) {
+      if (tracefree && SymmetricComponentOrder::Offset(dim, j, k) ==
+                           SymmetricComponentOrder::TraceFreeDropped(dim)) {
         continue;
       }
       DenseMatrix T(dim);
@@ -208,8 +210,8 @@ ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
   }
   fec_ = std::make_unique<L2_FECollection>(order, dim);
   tracefree_ = rh.TraceFreeInternalVariables();
-  ns_ = dim * (dim + 1) / 2;
-  nc_ = tracefree_ ? ns_ - 1 : ns_;
+  ns_ = SymmetricComponentOrder::Count(dim);
+  nc_ = tracefree_ ? SymmetricComponentOrder::TraceFreeCount(dim) : ns_;
   dfes_ = detail::MakeFESpace(*ufes_, fec_.get(), nc_, Ordering::byNODES);
   sfes_ = detail::MakeFESpace(*ufes_, fec_.get(), 1);
   nd_ = sfes_->GetVSize();
@@ -464,12 +466,12 @@ void ViscoelasticOperator::EvaluateRelaxationTimes(const Vector& d,
     mk[k] = Branch(m, k);
   }
   // Index of the dropped diagonal component in the trace-free layout.
-  const int last_diag = SymmetricTensorBasis::Index(dim, dim - 1, dim - 1);
+  const int last_diag = SymmetricComponentOrder::TraceFreeDropped(dim);
   auto complete = [&](Vector& full) {
     if (tracefree_) {
       real_t tr = 0.0;
       for (int j = 0; j < dim - 1; j++) {
-        tr += full[SymmetricTensorBasis::Index(dim, j, j)];
+        tr += full[SymmetricComponentOrder::Offset(dim, j, j)];
       }
       full[last_diag] = -tr;
     }

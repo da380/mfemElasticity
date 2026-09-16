@@ -8,7 +8,7 @@ MFEM's `ElasticityIntegrator` (`fem/bilininteg.cpp:3208`) assembles ∫ λ div u
 
 ## 1. Convention: the reduced tensor is a Mandel matrix in the library's own ordering
 
-A symmetric second-order tensor in `d` dimensions has `n_s = d(d+1)/2` components. The library already fixes an ordering for these through `SymmetricMatrixIndex::ComponentOffset(j,k)` (`bilininteg.hpp`): lower triangle, column-major,
+A symmetric second-order tensor in `d` dimensions has `n_s = d(d+1)/2` components. The library already fixes an ordering for these through `SymmetricMatrixIndex::ComponentOffset(j,k)` (since 16 Sep 2026 `SymmetricComponentOrder::Offset` in `index.hpp`, to which both `SymmetricMatrixIndex` and `SymmetricTensorBasis` delegate): lower triangle, column-major,
 
 ```
 d = 3:  s(0,0)=0  s(1,0)=1  s(2,0)=2  s(1,1)=3  s(2,1)=4  s(2,2)=5      (11, 12, 13, 22, 23, 33)

@@ -48,23 +48,16 @@ void Check(double err, double tol, const std::string& what) {
   }
 }
 
-int TFIndex(int dim, int j, int k) {
-  if (j < k) {
-    std::swap(j, k);
-  }
-  return j + k * dim - k * (k + 1) / 2;
-}
-
 Vector DeviatoricPart(const DenseMatrix& A) {
   const int dim = A.Height();
   double tr = 0.0;
   for (int i = 0; i < dim; i++) {
     tr += A(i, i);
   }
-  Vector d(dim * (dim + 1) / 2 - 1);
+  Vector d(SymmetricComponentOrder::TraceFreeCount(dim));
   for (int k = 0; k < dim; k++) {
     for (int j = k; j < dim; j++) {
-      const int idx = TFIndex(dim, j, k);
+      const int idx = SymmetricComponentOrder::Offset(dim, j, k);
       if (idx < d.Size()) {
         d[idx] = 0.5 * (A(j, k) + A(k, j)) - (j == k ? tr / dim : 0.0);
       }

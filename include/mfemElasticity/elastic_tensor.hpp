@@ -11,10 +11,10 @@
 #pragma once
 
 #include <memory>
-#include <utility>
 #include <vector>
 
 #include "mfem.hpp"
+#include "mfemElasticity/index.hpp"
 
 namespace mfemElasticity {
 
@@ -22,11 +22,12 @@ namespace mfemElasticity {
  * @brief The reduced basis for symmetric second-order tensors used
  * throughout the library, and conversions to and from Voigt form.
  *
- * Components are ordered as in SymmetricMatrixIndex: lower triangle,
- * column-major, i.e. (11, 12, 13, 22, 23, 33) in 3-D and (11, 12, 22) in
- * 2-D. The reduced vectors and matrices use the **Mandel** (orthonormal)
- * scaling, @f$\hat\varepsilon_s = a_s \varepsilon_{jk}@f$ with @f$a_s =
- * 1@f$ on the diagonal and @f$\sqrt 2@f$ off it, so that
+ * Components are ordered as in SymmetricComponentOrder (index.hpp), shared
+ * with SymmetricMatrixIndex: lower triangle, column-major, i.e. (11, 12, 13,
+ * 22, 23, 33) in 3-D and (11, 12, 22) in 2-D. The reduced vectors and matrices
+ * use the **Mandel** (orthonormal) scaling, @f$\hat\varepsilon_s = a_s
+ * \varepsilon_{jk}@f$ with @f$a_s = 1@f$ on the diagonal and @f$\sqrt 2@f$ off
+ * it, so that
  * @f$\varepsilon:\sigma = \hat\varepsilon\cdot\hat\sigma@f$ and the
  * elasticity tensor becomes a symmetric @f$n_s \times n_s@f$ matrix
  * @f$\hat C_{st} = a_s a_t C_{(jk)(lm)}@f$ whose eigenvalues are the
@@ -37,15 +38,16 @@ namespace mfemElasticity {
  * input convention of VoigtElasticTensorCoefficient only.
  */
 struct SymmetricTensorBasis {
-  /// Number of reduced components, d(d+1)/2.
-  static int Size(int dim) { return dim * (dim + 1) / 2; }
+  /// Number of reduced components, d(d+1)/2
+  /// (SymmetricComponentOrder::Count).
+  static constexpr int Size(int dim) {
+    return SymmetricComponentOrder::Count(dim);
+  }
 
-  /// Reduced index of component (j, k) (either order).
-  static int Index(int dim, int j, int k) {
-    if (j < k) {
-      std::swap(j, k);
-    }
-    return j + k * dim - k * (k + 1) / 2;
+  /// Reduced index of component (j, k), either order
+  /// (SymmetricComponentOrder::Offset).
+  static constexpr int Index(int dim, int j, int k) {
+    return SymmetricComponentOrder::Offset(dim, j, k);
   }
 
   /// The component (j >= k) of reduced index s.

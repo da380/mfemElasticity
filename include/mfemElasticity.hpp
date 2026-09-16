@@ -4,6 +4,7 @@
 #include "mfemElasticity/bilininteg.hpp"
 #include "mfemElasticity/coefficient.hpp"
 #include "mfemElasticity/elastic_tensor.hpp"
+#include "mfemElasticity/index.hpp"
 #include "mfemElasticity/legendre.hpp"
 #include "mfemElasticity/lininteg.hpp"
 #include "mfemElasticity/mesh.hpp"
