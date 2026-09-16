@@ -1,7 +1,7 @@
 /**
  * @file elastic_tensor.cpp
- * @brief Implementation of SymmetricTensorBasis, the elastic tensor
- * coefficients and ElasticTensorIntegrator.
+ * @brief Implementation of SymmetricTensorBasis and the elastic tensor
+ * coefficients.
  */
 
 #include "mfemElasticity/elastic_tensor.hpp"
@@ -396,70 +396,6 @@ void RadialUnitVectorCoefficient::Eval(Vector& V, ElementTransformation& T,
   } else {
     V = 0.0;
     V[vdim - 1] = 1.0;
-  }
-}
-
-// --- Integrator --------------------------------------------------------------
-
-void ElasticTensorIntegrator::StrainDisplacementMatrix(
-    int dim, const DenseMatrix& gshape, DenseMatrix& B) {
-  const int dof = gshape.Height();
-  const int n = SymmetricTensorBasis::Size(dim);
-  B.SetSize(n, dim * dof);
-  B = 0.0;
-  for (int k = 0; k < dim; k++) {
-    for (int j = k; j < dim; j++) {
-      const int s = SymmetricTensorBasis::Index(dim, j, k);
-      if (j == k) {
-        for (int i = 0; i < dof; i++) {
-          B(s, dof * j + i) = gshape(i, j);
-        }
-      } else {
-        for (int i = 0; i < dof; i++) {
-          B(s, dof * j + i) = gshape(i, k) / std::numbers::sqrt2_v<real_t>;
-          B(s, dof * k + i) = gshape(i, j) / std::numbers::sqrt2_v<real_t>;
-        }
-      }
-    }
-  }
-}
-
-void ElasticTensorIntegrator::AssembleElementMatrix(
-    const FiniteElement& el, ElementTransformation& Trans, DenseMatrix& elmat) {
-  const int dof = el.GetDof();
-  const int dim = el.GetDim();
-  const int n = SymmetricTensorBasis::Size(dim);
-  MFEM_VERIFY(dim == Trans.GetSpaceDim(),
-              "ElasticTensorIntegrator: manifold elements are not "
-              "supported.");
-  MFEM_VERIFY(C_->GetHeight() == n && C_->GetWidth() == n,
-              "ElasticTensorIntegrator: the tensor coefficient must be "
-              "n_s x n_s with n_s = d(d+1)/2.");
-
-#ifdef MFEM_THREAD_SAFE
-  DenseMatrix dshape_, gshape_, B_, Cq_, CB_;
-#endif
-  dshape_.SetSize(dof, dim);
-  gshape_.SetSize(dof, dim);
-  elmat.SetSize(dof * dim);
-  elmat = 0.0;
-
-  const IntegrationRule* ir = IntRule;
-  if (ir == nullptr) {
-    ir = &IntRules.Get(el.GetGeomType(), 2 * Trans.OrderGrad(&el));
-  }
-
-  for (int q = 0; q < ir->GetNPoints(); q++) {
-    const IntegrationPoint& ip = ir->IntPoint(q);
-    Trans.SetIntPoint(&ip);
-    el.CalcDShape(ip, dshape_);
-    Mult(dshape_, Trans.InverseJacobian(), gshape_);
-    StrainDisplacementMatrix(dim, gshape_, B_);
-    C_->Eval(Cq_, Trans, ip);
-    const real_t w = ip.weight * Trans.Weight();
-    CB_.SetSize(n, dim * dof);
-    Mult(Cq_, B_, CB_);
-    AddMult_a_AtB(w, B_, CB_, elmat);
   }
 }
 

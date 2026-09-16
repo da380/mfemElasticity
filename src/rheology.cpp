@@ -9,6 +9,8 @@
 #include <functional>
 #include <string>
 
+#include "mfemElasticity/bilininteg.hpp"
+
 namespace mfemElasticity {
 
 using namespace mfem;

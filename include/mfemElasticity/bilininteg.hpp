@@ -1141,6 +1141,76 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
 };
 
 /**
+ * @brief Bilinear form integrator for general linear elasticity,
+ * \f[
+ * (\bvec{u}, \bvec{v}) \mapsto \int_{\Omega} \bvec{\varepsilon}(\bvec{v})
+ * : \bvec{C} : \bvec{\varepsilon}(\bvec{u}) \, \mathrm{d}x,
+ * \f]
+ * where \f$\bvec{\varepsilon}\f$ is the symmetric strain and \f$\bvec{C}\f$ an
+ * arbitrary elasticity tensor.
+ *
+ * The tensor is supplied as an \f$n_s \times n_s\f$ `mfem::MatrixCoefficient`,
+ * \f$n_s = d(d+1)/2\f$, in Mandel form and `SymmetricMatrixIndex` component
+ * ordering (lower triangle, column-major, with off-diagonal components scaled
+ * by \f$\sqrt{2}\f$). This is the representation produced by the
+ * `ElasticTensorCoefficient` classes of `elastic_tensor.hpp`; sums and scalar
+ * products of them through MFEM's matrix-coefficient algebra are fine too.
+ *
+ * The vector field must be defined on a nodal H1 finite element space with
+ * `Ordering::byNODES`. The element matrix has the layout
+ * `elmat(dof c + i, dof c' + i')` and the default quadrature order is
+ * `2 OrderGrad(el)`, as for `mfem::ElasticityIntegrator`. Per quadrature
+ * point the reduced strain-displacement matrix \f$B\f$
+ * (\f$\hat{\varepsilon} = B u\f$) is formed and \f$w B^T C B\f$ added.
+ * Manifold elements are not supported; in 2-D the semantics are plane strain.
+ */
+class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::MatrixCoefficient* C_; /**< Pointer to the elasticity tensor
+                                  coefficient in Mandel form. */
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape_, gshape_, B_, Cq_,
+      CB_; /**< Internal buffers: reference and physical shape gradients,
+              strain-displacement matrix, tensor at the point and C B. */
+#endif
+
+ public:
+  /**
+   * @brief Constructor for ElasticTensorIntegrator.
+   * @param C The \f$n_s \times n_s\f$ Mandel-form elasticity tensor
+   * coefficient.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  explicit ElasticTensorIntegrator(mfem::MatrixCoefficient& C,
+                                   const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), C_(&C) {}
+
+  /**
+   * @brief Implementation of element-level calculations for the bilinear form.
+   * @param el The finite element (shared by trial and test spaces).
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+
+  /**
+   * @brief Builds the reduced strain-displacement matrix \f$B\f$ (size
+   * \f$n_s \times d\,\mathrm{dof}\f$) from the physical shape-function
+   * gradients.
+   * @param dim The spatial dimension.
+   * @param gshape The physical gradients of the shape functions
+   * (\f$\mathrm{dof} \times d\f$).
+   * @param B The output matrix, resized as needed.
+   */
+  static void StrainDisplacementMatrix(int dim, const mfem::DenseMatrix& gshape,
+                                       mfem::DenseMatrix& B);
+};
+
+/**
  * @brief DiscreteInterpolator that acts on a vector field, \f$\bvec{u}\f$, to
  * return the matrix field, \f$\deriv \bvec{u}\f$, with components:
  * \f[

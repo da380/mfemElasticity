@@ -4,7 +4,8 @@
  * of symmetric tensors in the library's component ordering, a family of
  * MatrixCoefficients producing elasticity tensors in that representation
  * (isotropic, transversely isotropic, general Voigt input, rotated frames,
- * deviatoric splits), and the ElasticTensorIntegrator consuming them.
+ * deviatoric splits). The integrator consuming them, ElasticTensorIntegrator,
+ * lives in bilininteg.hpp with the other bilinear form integrators.
  */
 
 #pragma once
@@ -253,40 +254,6 @@ class RadialUnitVectorCoefficient : public mfem::VectorCoefficient {
 
  private:
   mfem::Vector x0_, x_;
-};
-
-/**
- * @brief @f$(u, v) \mapsto \int_\Omega \varepsilon(v) : C : \varepsilon(u)@f$
- * for an elasticity tensor supplied as an n_s x n_s MatrixCoefficient in
- * Mandel form and SymmetricTensorBasis ordering (as produced by the
- * ElasticTensorCoefficient classes; sums and scalar products of them through
- * MFEM's matrix-coefficient algebra are fine too).
- *
- * Vector H1 space with Ordering::byNODES, element matrix layout
- * elmat(dof c + i, dof c' + i') and default quadrature order
- * 2 OrderGrad(el), as for mfem::ElasticityIntegrator. Per quadrature point
- * the reduced strain-displacement matrix B (eps^ = B u) is formed and
- * w B^T C B added.
- */
-class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
- public:
-  explicit ElasticTensorIntegrator(mfem::MatrixCoefficient& C,
-                                   const mfem::IntegrationRule* ir = nullptr)
-      : mfem::BilinearFormIntegrator(ir), C_(&C) {}
-
-  void AssembleElementMatrix(const mfem::FiniteElement& el,
-                             mfem::ElementTransformation& Trans,
-                             mfem::DenseMatrix& elmat) override;
-
-  /// Build B (n_s x d dof) from the physical gradients gshape (dof x d).
-  static void StrainDisplacementMatrix(int dim, const mfem::DenseMatrix& gshape,
-                                       mfem::DenseMatrix& B);
-
- private:
-  mfem::MatrixCoefficient* C_;
-#ifndef MFEM_THREAD_SAFE
-  mfem::DenseMatrix dshape_, gshape_, B_, Cq_, CB_;
-#endif
 };
 
 }  // namespace mfemElasticity

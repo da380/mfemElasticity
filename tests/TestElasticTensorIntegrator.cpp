@@ -1,7 +1,8 @@
 #include "TestCommon.hpp"
 
 /*
-  Element- and matrix-level tests for ElasticTensorIntegrator (design doc
+  Element- and matrix-level tests for ElasticTensorIntegrator, the general
+  linear elasticity integrator of bilininteg.hpp (design doc
   doc/anisotropic_elasticity_design.md, section 4, tests 5-9).
 
   - Isotropic tensor: element matrices equal mfem::ElasticityIntegrator's on

@@ -129,6 +129,8 @@ Either is then combined with MFEM's own `ScalarMatrixProductCoefficient(s, C_r)`
 
 ## 3. The integrator
 
+Declared in `bilininteg.hpp` alongside the other bilinear form integrators (moved there from `elastic_tensor.hpp` on 16 Sep 2026); the coefficients it consumes stay in `elastic_tensor.hpp`.
+
 ```cpp
 /// (u, v) ↦ ∫_Ω ε(v) : C : ε(u) dx for an anisotropic elasticity tensor C
 /// supplied as an n_s × n_s MatrixCoefficient in Mandel form and
@@ -213,5 +215,5 @@ Phase A/B are independent of the SubMesh work and of the solver work; they can b
 
 - **Ordering**: library `SymmetricMatrixIndex` order with Mandel scaling internally; Voigt only at input/output. (Alternative — Voigt throughout — would force per-node permutations and √2 bookkeeping in the viscoelastic coupling; not recommended.)
 - **Integrator argument type**: plain `MatrixCoefficient&` (composable with MFEM algebra) rather than the narrower `ElasticTensorCoefficient&` (safer). Recommendation: `MatrixCoefficient&`, with the size assertion; the convention is documented on the integrator.
-- **Name**: `ElasticTensorIntegrator` (says what it takes) vs `AnisotropicElasticityIntegrator` (says what it is for). Either; pick one and use it for the header `elastic_tensor.hpp` too.
+- **Name**: `ElasticTensorIntegrator` (says what it takes) vs `AnisotropicElasticityIntegrator` (says what it is for). Either; pick one and use it for the header `elastic_tensor.hpp` too. (Resolved: `ElasticTensorIntegrator`, now housed in `bilininteg.hpp`; the coefficients keep `elastic_tensor.hpp`.)
 - **2-D semantics**: plane strain only.

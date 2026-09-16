@@ -5,9 +5,10 @@ viscoelastic problems in geophysics, including self-gravitation. The main
 pieces are
 
 - mixed bilinear/linear form integrators between vector, scalar and tensor
-  nodal spaces (`bilininteg.hpp`, `lininteg.hpp`);
-- an anisotropic elasticity integrator with isotropic, transversely isotropic
-  (radially anisotropic), Voigt-matrix and rotated tensor coefficients
+  nodal spaces, and a general (anisotropic) linear elasticity integrator
+  (`bilininteg.hpp`, `lininteg.hpp`);
+- isotropic, transversely isotropic (radially anisotropic), Voigt-matrix and
+  rotated elasticity tensor coefficients for that integrator
   (`elastic_tensor.hpp`);
 - the exterior Poisson machinery: a matrix-free Dirichlet-to-Neumann operator
   on a spherical outer boundary and multipole right-hand-side operators

@@ -218,7 +218,7 @@ PREM is available through planetmodel (`data/prem.nocrust` was removed on 16 Sep
 
 ### 7.1 What exists
 
-`elastic_tensor.hpp` (2 Sep): Mandel-basis reduced tensors in the library's `SymmetricMatrixIndex` order, `IsotropicElasticTensorCoefficient`, `TransverselyIsotropicElasticTensorCoefficient` (Love's A, C, F, L, N and a radial or given axis), `VoigtElasticTensorCoefficient`, `RotatedElasticTensorCoefficient`, `DeviatoricProjectionElasticTensorCoefficient` (P_dev C P_dev and its complement), `ElasticTensorIntegrator(MatrixCoefficient&)`. All tested. Nothing in the problem layer uses them.
+`elastic_tensor.hpp` (2 Sep): Mandel-basis reduced tensors in the library's `SymmetricMatrixIndex` order, `IsotropicElasticTensorCoefficient`, `TransverselyIsotropicElasticTensorCoefficient` (Love's A, C, F, L, N and a radial or given axis), `VoigtElasticTensorCoefficient`, `RotatedElasticTensorCoefficient`, `DeviatoricProjectionElasticTensorCoefficient` (P_dev C P_dev and its complement), `ElasticTensorIntegrator(MatrixCoefficient&)` (moved to `bilininteg.hpp` 16 Sep 2026). All tested. Nothing in the problem layer uses them.
 
 The problem layer is isotropic by construction in three places: `IsotropicMaxwellRheology` (κ, μ_∞, branches (μ_k, τ_k)); `LinearQuasiStaticProblemBase` assembles two `ElasticityIntegrator`s and swaps a *scalar* effective shear modulus; `ViscoelasticOperator` keeps *trace-free* internal variables m_k with force Bᵀ(2μ_k m_k) through the trace-free coupling form B and forms μ_eff = μ_∞ + Σ_k β_k μ_k pointwise.
 
