@@ -17,6 +17,7 @@ Before you begin, ensure you have the following installed on your system:
     * Examples include GCC (g++) 10 or newer, Clang (clang++) 11 or newer, or MSVC (Visual Studio) 2019 or newer.
 
 3.  **MFEM Library:** The `mfemElasticity` project depends on the [MFEM library](https://mfem.org/). You'll need to have MFEM built and/or installed on your system.
+4.  **Python 3.12+ (examples and tests only):** the gmsh meshes the examples and tests use are generated at build time by the scripts in `meshes/`, which need the `planetmodel[meshing,mfem]` package. If the Python CMake finds lacks it, a virtual environment is created under the build directory and the package installed there; pass `-DMESHES_PYTHON=<python>` to use your own, or `-DGENERATE_MESHES=OFF` to skip generation.
     * Refer to the [MFEM documentation](https://mfem.org/build/) for build and installation instructions.
     * **Important:** You'll likely need to know the path to your MFEM build or installation directory (e.g., where `MFEMConfig.cmake` is located).
 

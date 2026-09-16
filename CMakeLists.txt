@@ -71,12 +71,6 @@ if(BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-# Optionally build gmsh programs. 
-option(BUILD_GMSH "Build the gmsh programs" OFF)
-if(BUILD_GMSH)
-    add_subdirectory(meshing)
-endif()
-
 # Optionally build tests
 option(BUILD_TESTS "Build the test programs" OFF)
 if(BUILD_TESTS)
@@ -86,13 +80,31 @@ endif()
 
 
 
+# The examples and tests read their meshes from <build>/data: the small
+# MFEM-native meshes are copied there from data/, and the gmsh meshes are
+# generated there by the Python scripts in meshes/ (see meshes/CMakeLists.txt).
 if(BUILD_EXAMPLES OR BUILD_TESTS)
-    add_custom_target(CopyData        
+    set(_generate_meshes_default ON)
+else()
+    set(_generate_meshes_default OFF)
+endif()
+option(GENERATE_MESHES
+       "Generate the gmsh meshes in <build>/data with planetmodel (needs Python)"
+       ${_generate_meshes_default})
+
+if(BUILD_EXAMPLES OR BUILD_TESTS)
+    add_custom_target(CopyData
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/data
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/data        
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/data
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             )
-    add_dependencies(mfemElasticity CopyData)        
+    add_dependencies(mfemElasticity CopyData)
+endif()
+if(GENERATE_MESHES)
+    add_subdirectory(meshes)
+    if(TARGET CopyData)
+        add_dependencies(CopyData meshes)
+    endif()
 endif()
 
 # Add standard install locations. 

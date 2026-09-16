@@ -10,6 +10,7 @@
 #pragma once
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "mfem.hpp"
@@ -41,9 +42,7 @@ struct SymmetricTensorBasis {
   /// Reduced index of component (j, k) (either order).
   static int Index(int dim, int j, int k) {
     if (j < k) {
-      const int t = j;
-      j = k;
-      k = t;
+      std::swap(j, k);
     }
     return j + k * dim - k * (k + 1) / 2;
   }

@@ -71,10 +71,10 @@ All default to `OFF`.
 - `BUILD_EXAMPLES`: build the programs in `examples/`.
 - `BUILD_TESTS`: build the googletest suite in `tests/` (googletest is fetched
   at configure time); run with `ctest` in the build directory.
-- `BUILD_GMSH`: build the gmsh-based mesh generators in `meshing/` (requires
-  the gmsh C++ SDK). These are being replaced by the Python package in
-  `sphmesh/`; see `doc/meshing_design.md`.
 - `BUILD_DOCS`: generate the Doxygen API documentation.
+- `GENERATE_MESHES`: generate the gmsh meshes in the build's `data/` with
+  the scripts in `meshes/` (default: on when examples or tests are on; see
+  Meshes below). `MESHES_PYTHON` names the Python to use.
 
 ## Examples
 
@@ -98,5 +98,24 @@ has `-h` for its options.
 | `viscoelastic_loading` | GIA-style loading and rebound of a layered Cartesian box with a low-viscosity channel |
 | `anisotropic_elasticity` | Radially anisotropic (transversely isotropic) elasticity with `ElasticTensorIntegrator` |
 
-The gmsh meshes in `data/` were produced with the tools in `meshing/`; the
-generating command is recorded at the top of each example that uses one.
+### Meshes
+
+The gmsh meshes the examples and tests read are not in the repository. They
+are generated into the build's `data/` directory, at build time, by the
+Python scripts in `meshes/`, which use the
+[planetmodel](https://pypi.org/project/planetmodel/) package to drive gmsh.
+The scripts are short and meant to be copied and changed; `meshes/README.md`
+lists them, the files they write and the attribute conventions. Each `.msh`
+file comes with a JSON manifest beside it saying which attribute is which
+layer or interface and at what radius. `meshes/aspherical_body.py` shows how
+a body gets a non-spherical shape from a formula, with and without a buffer
+shell, and any example accepts the result through `-m`.
+
+Generation is on whenever examples or tests are built (`GENERATE_MESHES`,
+default follows those two options). It needs a Python 3.12 or later that can
+import `planetmodel.mesh3d`. CMake uses the one named by `MESHES_PYTHON` if
+given, otherwise the Python it finds, and if that lacks planetmodel it creates
+a virtual environment under the build directory and installs
+`planetmodel[meshing,mfem]` into it (about 100 MB, once per build directory). A
+fresh build spends a few minutes generating meshes, most of it on the two
+large 3D ones; later builds regenerate a mesh only when its script changes.

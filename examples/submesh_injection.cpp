@@ -1,8 +1,9 @@
 // -----------------------------------------------------------------------------
 // A tour of SubMeshDofInjection (serial).
 //
-// Mesh: data/circular_offset.msh — a disk M (attribute 1) inside a larger
-// offset disk Ω (attribute 2 is the surrounding annulus). Boundary attribute
+// Mesh: data/circular_offset.msh (meshes/offset_disc.py) — a disk M
+// (attribute 1) inside a larger offset disk Ω (attribute 2 is the surrounding
+// region). Boundary attribute
 // 1 is the internal circle ∂M, attribute 2 the outer circle ∂Ω.
 //
 // Part A. Moving fields between the parent mesh and the submesh.

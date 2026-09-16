@@ -10,7 +10,9 @@
 // sphere (circle); domain attribute 1 is the body, the body surface is the
 // SubMesh's largest boundary attribute. The canned meshes in ../data are
 //     elastogravity_2d.msh     2-D, order 2, radii 1 and 1.2
+//                              (meshes/disc_with_buffer.py)
 //     coupled_poisson.msh      3-D, order 2, radii 1 and 2 (coarse)
+//                              (meshes/ball_with_buffer.py)
 //
 // Sample runs:
 //    ./self_gravitating_elasticity -o 2

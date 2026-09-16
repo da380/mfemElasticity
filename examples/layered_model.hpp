@@ -11,7 +11,7 @@
 //                4 buffer; boundary attributes 1 ICB, 2 CMB, 3 surface,
 //                4 outer)
 // with radii 1230/6371 (ICB), 3483/6371 (CMB) and 1 (surface), as produced by
-// meshing/concentric_circles and meshing/concentric_spheres.
+// meshes/layered_earth.py.
 //
 // Profiles are piecewise linear in radius (dimensional values below), with a
 // degree-2 polar and an azimuthal perturbation of the mantle moduli and of

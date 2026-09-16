@@ -7,14 +7,13 @@
 #include "mfemElasticity/elastic_tensor.hpp"
 
 #include <cmath>
+#include <numbers>
 
 namespace mfemElasticity {
 
 using namespace mfem;
 
 namespace {
-
-constexpr real_t kSqrt2 = 1.4142135623730950488;
 
 inline int Flat(int dim, int i, int j, int k, int l) {
   return ((i * dim + j) * dim + k) * dim + l;
@@ -37,7 +36,7 @@ void SymmetricTensorBasis::Component(int dim, int s, int& j, int& k) {
 }
 
 real_t SymmetricTensorBasis::Scale(int j, int k) {
-  return j == k ? 1.0 : kSqrt2;
+  return j == k ? 1.0 : std::numbers::sqrt2_v<real_t>;
 }
 
 int SymmetricTensorBasis::VoigtIndex(int dim, int j, int k) {
@@ -165,8 +164,8 @@ void SymmetricTensorBasis::RotationMatrix(int dim, const DenseMatrix& R,
     if (j == k) {
       E(j, j) = 1.0;
     } else {
-      E(j, k) = 1.0 / kSqrt2;
-      E(k, j) = 1.0 / kSqrt2;
+      E(j, k) = 1.0 / std::numbers::sqrt2_v<real_t>;
+      E(k, j) = 1.0 / std::numbers::sqrt2_v<real_t>;
     }
     Mult(R, E, RE);
     MultABt(RE, R, RERt);
@@ -417,8 +416,8 @@ void ElasticTensorIntegrator::StrainDisplacementMatrix(
         }
       } else {
         for (int i = 0; i < dof; i++) {
-          B(s, dof * j + i) = gshape(i, k) / kSqrt2;
-          B(s, dof * k + i) = gshape(i, j) / kSqrt2;
+          B(s, dof * j + i) = gshape(i, k) / std::numbers::sqrt2_v<real_t>;
+          B(s, dof * k + i) = gshape(i, j) / std::numbers::sqrt2_v<real_t>;
         }
       }
     }

@@ -13,10 +13,10 @@
 //
 // Notes:
 // - The system is solved in the block manner.
-// - Mesh: ../data/coupled_poisson.msh, made with
-//       meshing/concentric_spheres -r 1-2 -s 0.5-1.0 -out coupled_poisson.msh
+// - Mesh: ../data/coupled_poisson.msh, made by meshes/ball_with_buffer.py.
 //   The canned mesh is deliberately coarse (relative L2 errors of order 0.2 to
-//   0.5) to keep the repository small; -s 0.02-0.1 was used originally.
+//   0.5) to keep the repository small; halve the sizes in that script for a
+//   converged run.
 // - Parallel version: coupled_poisson_p.cpp.
 // -----------------------------------------------------------------------------
 #include <cmath>

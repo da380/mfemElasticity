@@ -81,8 +81,8 @@ int main(int argc, char *argv[]) {
   // ===  Set default options and parse command-line arguments ===
 
   // Default mesh files
-  string mesh_file2 = "../data/disk.msh";  // 2D unit disk
-  string mesh_file3 = "../data/ball.msh";  // 3D unit ball
+  string mesh_file2 = "../data/disk.msh";  // 2D unit disk (meshes/unit_disc.py)
+  string mesh_file3 = "../data/ball.msh";  // 3D unit ball (meshes/unit_ball.py)
   // Default finite element polynomial order
   int order = 2;
   // Default number of uniform mesh refinements

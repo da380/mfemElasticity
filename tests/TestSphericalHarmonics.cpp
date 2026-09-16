@@ -132,8 +132,9 @@ TEST_P(SphericalHarmonicsTest, MatchesDtNOperator) {
   }
   ASSERT_GT(scale, 0.0);
   // The DtN operator weights each quadrature point by its own radius; the
-  // difference is the radius spread of the curved faces.
-  const double tol = (dim == 2 ? 1e-6 : 1e-4) * scale;
+  // difference is the radius spread of the curved faces, so the tolerance
+  // depends on the mesh (the canned meshes sit well inside it).
+  const double tol = (dim == 2 ? 5e-6 : 1e-4) * scale;
   const auto& basis = bhc.Basis();
   if (dim == 2) {
     for (int k = 1; k <= L; k++) {

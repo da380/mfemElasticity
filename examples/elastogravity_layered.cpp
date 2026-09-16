@@ -13,7 +13,7 @@
 // hydrostatic Poisson term and the fluid–solid interface terms). The
 // inner core's near-null rotations are projected out.
 //
-// Meshes (../data): elastogravity_two_layer_2d.msh,
+// Meshes (../data, from meshes/layered_earth.py): elastogravity_two_layer_2d.msh,
 // elastogravity_three_layer_2d.msh, elastogravity_three_layer_3d.msh.
 //
 // Sample runs:

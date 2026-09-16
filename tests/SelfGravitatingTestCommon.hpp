@@ -5,7 +5,7 @@
   program): the canned two-layer meshes in ../data, the attribute
   conventions of those meshes, and a degree-2 surface load.
 
-  Both meshes come from meshing/concentric_* : domain attribute 1 is the
+  Both meshes come from the scripts in meshes/: domain attribute 1 is the
   body (radius 1), attribute 2 the buffer shell; the body surface carries
   boundary attribute 1 and the outer sphere boundary attribute 2. On the
   body SubMesh the surface is the only boundary and keeps attribute 1.
