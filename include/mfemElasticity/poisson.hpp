@@ -63,48 +63,48 @@ class PoissonDtNOperator : public mfem::Operator,
                            protected SphericalMeshHelper {
  private:
   /** @brief Pointer to the finite element space on which the operator acts. */
-  mfem::FiniteElementSpace* _fes;
+  mfem::FiniteElementSpace* fes_;
   /** @brief Spatial dimension of the problem (2 for 2D, 3 for 3D). */
-  int _dim;
+  int dim_;
   /** @brief Harmonic degree of the expansion */
-  int _degree;
+  int degree_;
   /** @brief Dimension of the coefficient space (e.g., 1 for scalar Poisson). */
-  int _coeff_dim;
+  int coeff_dim_;
   /** @brief The sparse matrix representing the assembled DtN operator. */
-  mfem::SparseMatrix _mat;
+  mfem::SparseMatrix mat_;
 
 #ifdef MFEM_USE_MPI
   /** @brief Flag indicating if the operator is used in a parallel context. */
-  bool _parallel = false;
+  bool parallel_ = false;
   /** @brief Pointer to the parallel finite element space (if in parallel). */
-  mfem::ParFiniteElementSpace* _pfes;
+  mfem::ParFiniteElementSpace* pfes_;
   /** @brief MPI communicator used for parallel operations. */
-  MPI_Comm _comm;
+  MPI_Comm comm_;
 
   /** @brief Communicator for ranks owning the relevant boundary. */
-  MPI_Comm _bdr_comm;
-  /** @brief Global rank of the root processor in _bdr_comm. */
-  int _bdr_root_rank;
-  /** @brief True if this rank is part of the _bdr_comm. */
-  bool _has_boundary;
+  MPI_Comm bdr_comm_;
+  /** @brief Global rank of the root processor in bdr_comm_. */
+  int bdr_root_rank_;
+  /** @brief True if this rank is part of the bdr_comm_. */
+  bool has_boundary_;
 
 #endif
 
 #ifndef MFEM_THREAD_SAFE
   /** @brief Mutable workspace vector for coefficient evaluation. */
-  mutable mfem::Vector _c;
+  mutable mfem::Vector c_;
   /** @brief Workspace for shape functions. */
   mfem::Vector shape;
   /** @brief Workspace for physical coordinates. */
-  mfem::Vector _x;
+  mfem::Vector x_;
   /** @brief Workspace for sine values in spherical coordinates. */
-  mfem::Vector _sin;
+  mfem::Vector sin_;
   /** @brief Workspace for cosine values in spherical coordinates. */
-  mfem::Vector _cos;
+  mfem::Vector cos_;
   /** @brief Workspace for Legendre polynomials \f$ P_l^m \f$. */
-  mfem::Vector _p;
+  mfem::Vector p_;
   /** @brief Workspace for Legendre polynomials \f$ P_{l-1}^m \f$. */
-  mfem::Vector _pm1;
+  mfem::Vector pm1_;
   /** @brief Workspace for element matrix assembly. */
   mfem::DenseMatrix elmat;
 #endif
@@ -198,7 +198,7 @@ class PoissonDtNOperator : public mfem::Operator,
   /**
    * @brief Assembles the sparse matrix associated with the DtN operator's
    * Galerkin representation. This method needs to be called after construction
-   * to build the internal `_mat`.
+   * to build the internal `mat_`.
    */
   void Assemble();
 
@@ -211,9 +211,9 @@ class PoissonDtNOperator : public mfem::Operator,
   mfem::RAPOperator RAP() const;
 #endif
 
-  mfem::real_t BoundaryRadius() const { return _bdr_radius; }
+  mfem::real_t BoundaryRadius() const { return bdr_radius_; }
 
-  mfem::Vector Centroid() const { return _x0; }
+  mfem::Vector Centroid() const { return x0_; }
 };
 
 /**
@@ -236,53 +236,53 @@ class PoissonMultipoleOperator : public mfem::Operator,
                                  protected SphericalMeshHelper {
  private:
   /** @brief Pointer to the trial finite element space. */
-  mfem::FiniteElementSpace* _tr_fes;
+  mfem::FiniteElementSpace* tr_fes_;
   /** @brief Pointer to the test finite element space. */
-  mfem::FiniteElementSpace* _te_fes;
+  mfem::FiniteElementSpace* te_fes_;
   /** @brief Spatial dimension of the problem (2 for 2D, 3 for 3D). */
-  int _dim;
+  int dim_;
   /** @brief Polynomial degree of the finite element spaces. */
-  int _degree;
+  int degree_;
   /** @brief Dimension of the coefficient space (e.g., 1 for scalar Poisson). */
-  int _coeff_dim;
+  int coeff_dim_;
   /** @brief Marker array indicating which domain attributes are included in the
    * operation. */
-  mfem::Array<int> _dom_marker;
+  mfem::Array<int> dom_marker_;
   /** @brief The sparse matrix for the left-hand side contribution of the
    * operator. */
-  mfem::SparseMatrix _lmat;
+  mfem::SparseMatrix lmat_;
   /** @brief The sparse matrix for the right-hand side contribution of the
    * operator. */
-  mfem::SparseMatrix _rmat;
+  mfem::SparseMatrix rmat_;
 
 #ifdef MFEM_USE_MPI
   /** @brief Flag indicating if the operator is used in a parallel context. */
-  bool _parallel = false;
+  bool parallel_ = false;
   /** @brief Pointer to the parallel trial finite element space (if in
    * parallel). */
-  mfem::ParFiniteElementSpace* _tr_pfes;
+  mfem::ParFiniteElementSpace* tr_pfes_;
   /** @brief Pointer to the parallel test finite element space (if in parallel).
    */
-  mfem::ParFiniteElementSpace* _te_pfes;
+  mfem::ParFiniteElementSpace* te_pfes_;
   /** @brief MPI communicator used for parallel operations. */
-  MPI_Comm _comm;
+  MPI_Comm comm_;
 #endif
 
 #ifndef MFEM_THREAD_SAFE
   /** @brief Mutable workspace vector for coefficient evaluation. */
-  mutable mfem::Vector _c;
+  mutable mfem::Vector c_;
   /** @brief Workspace for shape functions. */
   mfem::Vector shape;
   /** @brief Workspace for physical coordinates. */
-  mfem::Vector _x;
+  mfem::Vector x_;
   /** @brief Workspace for sine values in spherical coordinates. */
-  mfem::Vector _sin;
+  mfem::Vector sin_;
   /** @brief Workspace for cosine values in spherical coordinates. */
-  mfem::Vector _cos;
+  mfem::Vector cos_;
   /** @brief Workspace for Legendre polynomials \f$ P_l^m \f$. */
-  mfem::Vector _p;
+  mfem::Vector p_;
   /** @brief Workspace for Legendre polynomials \f$ P_{l-1}^m \f$. */
-  mfem::Vector _pm1;
+  mfem::Vector pm1_;
   /** @brief Workspace for element matrix assembly. */
   mfem::DenseMatrix elmat;
 #endif
@@ -448,7 +448,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
   /**
    * @brief Assembles the sparse matrices associated with the Multipole
    * operator's Galerkin representation. This method needs to be called after
-   * construction to build the internal `_lmat` and `_rmat`.
+   * construction to build the internal `lmat_` and `rmat_`.
    */
   void Assemble();
 
@@ -483,59 +483,59 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
                                            protected SphericalMeshHelper {
  private:
   /** @brief Pointer to the trial finite element space. */
-  mfem::FiniteElementSpace* _tr_fes;
+  mfem::FiniteElementSpace* tr_fes_;
   /** @brief Pointer to the test finite element space. */
-  mfem::FiniteElementSpace* _te_fes;
+  mfem::FiniteElementSpace* te_fes_;
   /** @brief Pointer to mfem::Coefficient for the density */
-  mfem::Coefficient* _density = nullptr;
+  mfem::Coefficient* density_ = nullptr;
   /** @brief Spatial dimension of the problem (2 for 2D, 3 for 3D). */
-  int _dim;
+  int dim_;
   /** @brief Polynomial degree of the finite element spaces. */
-  int _degree;
+  int degree_;
   /** @brief Dimension of the coefficient space. */
-  int _coeff_dim;
+  int coeff_dim_;
   /** @brief Marker array indicating which domain attributes are included in the
    * operation. */
-  mfem::Array<int> _dom_marker;
+  mfem::Array<int> dom_marker_;
   /** @brief The sparse matrix for the left-hand side contribution of the
    * operator. */
-  mfem::SparseMatrix _lmat;
+  mfem::SparseMatrix lmat_;
   /** @brief The sparse matrix for the right-hand side contribution of the
    * operator. */
-  mfem::SparseMatrix _rmat;
+  mfem::SparseMatrix rmat_;
 
 #ifdef MFEM_USE_MPI
   /** @brief Flag indicating if the operator is used in a parallel context. */
-  bool _parallel = false;
+  bool parallel_ = false;
   /** @brief Pointer to the parallel trial finite element space (if in
    * parallel). */
-  mfem::ParFiniteElementSpace* _tr_pfes;
+  mfem::ParFiniteElementSpace* tr_pfes_;
   /** @brief Pointer to the parallel test finite element space (if in parallel).
    */
-  mfem::ParFiniteElementSpace* _te_pfes;
+  mfem::ParFiniteElementSpace* te_pfes_;
   /** @brief MPI communicator used for parallel operations. */
-  MPI_Comm _comm;
+  MPI_Comm comm_;
 #endif
 
 #ifndef MFEM_THREAD_SAFE
   /** @brief Mutable workspace vector for constant coefficient evaluation. */
-  mutable mfem::Vector _c0;
+  mutable mfem::Vector c0_;
   /** @brief Workspace for shape functions. */
   mfem::Vector shape;
   /** @brief Workspace for physical coordinates. */
-  mfem::Vector _x;
+  mfem::Vector x_;
   /** @brief Workspace for sine values in spherical coordinates. */
-  mfem::Vector _sin;
+  mfem::Vector sin_;
   /** @brief Workspace for cosine values in spherical coordinates. */
-  mfem::Vector _cos;
+  mfem::Vector cos_;
   /** @brief Workspace for Legendre polynomials \f$ P_l^m \f$. */
-  mfem::Vector _p;
+  mfem::Vector p_;
   /** @brief Workspace for Legendre polynomials \f$ P_{l-1}^m \f$. */
-  mfem::Vector _pm1;
+  mfem::Vector pm1_;
   /** @brief Workspace for linearised coefficient `c1`. */
-  mfem::Vector _c1;
+  mfem::Vector c1_;
   /** @brief Workspace for linearised coefficient `c2`. */
-  mfem::Vector _c2;
+  mfem::Vector c2_;
   /** @brief Workspace for element matrix assembly. */
   mfem::DenseMatrix elmat;
   /** @brief Workspace for partial element matrix assembly. */
@@ -826,7 +826,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
   /**
    * @brief Assembles the sparse matrices associated with the Linearised
    * Multipole operator's Galerkin representation. This method needs to be
-   * called after construction to build the internal `_lmat` and `_rmat`.
+   * called after construction to build the internal `lmat_` and `rmat_`.
    */
   void Assemble();
 
@@ -982,8 +982,8 @@ and intermediate matrices during integration. */
 
 class RadialDiffeomorphismCoefficient : public mfem::VectorCoefficient {
  private:
-  mfem::VectorCoefficient* _QV = nullptr;
-  mfem::Coefficient* _Q = nullptr;
+  mfem::VectorCoefficient* QV_ = nullptr;
+  mfem::Coefficient* Q_ = nullptr;
 
  public:
   RadialDiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);

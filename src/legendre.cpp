@@ -3,30 +3,30 @@
 namespace mfemElasticity {
 
 void LegendreHelper::SetSquareRoots(int lMax) {
-  _sqrt.SetSize(2 * lMax + 2);
-  _isqrt.SetSize(2 * lMax + 2);
+  sqrt_.SetSize(2 * lMax + 2);
+  isqrt_.SetSize(2 * lMax + 2);
   for (auto l = 0; l <= 2 * lMax + 1; l++) {
-    _sqrt(l) = std::sqrt(static_cast<mfem::real_t>(l));
+    sqrt_(l) = std::sqrt(static_cast<mfem::real_t>(l));
   }
   for (auto l = 1; l <= 2 * lMax + 1; l++) {
-    _isqrt(l) = 1 / _sqrt(l);
+    isqrt_(l) = 1 / sqrt_(l);
   }
 }
 
 void LegendreHelper::SetSquareRoots(int dim, int degree) {
   if (dim == 3) {
-    _sqrt.SetSize(2 * degree + 2);
-    _isqrt.SetSize(2 * degree + 2);
+    sqrt_.SetSize(2 * degree + 2);
+    isqrt_.SetSize(2 * degree + 2);
     for (auto l = 0; l <= 2 * degree + 1; l++) {
-      _sqrt(l) = std::sqrt(static_cast<mfem::real_t>(l));
+      sqrt_(l) = std::sqrt(static_cast<mfem::real_t>(l));
     }
     for (auto l = 1; l <= 2 * degree + 1; l++) {
-      _isqrt(l) = 1 / _sqrt(l);
+      isqrt_(l) = 1 / sqrt_(l);
     }
   } else {
-    _sqrt.SetSize(degree + 1);
+    sqrt_.SetSize(degree + 1);
     for (auto k = 0; k <= degree; k++) {
-      _sqrt(k) = std::sqrt(static_cast<mfem::real_t>(k));
+      sqrt_(k) = std::sqrt(static_cast<mfem::real_t>(k));
     }
   }
 }
@@ -54,9 +54,9 @@ mfem::real_t LegendreHelper::Pll(int l, mfem::real_t x) const {
 std::pair<mfem::real_t, mfem::real_t> LegendreHelper::RecursionCoefficients(
     int l, int m) const {
   auto alpha =
-      _sqrt[2 * l + 1] * _sqrt[2 * l - 1] * _isqrt[l + m] * _isqrt[l - m];
-  auto beta = _sqrt[l - 1 + m] * _sqrt[l - 1 - m] * _isqrt[2 * (l - 1) + 1] *
-              _isqrt[2 * (l - 1) - 1];
+      sqrt_[2 * l + 1] * sqrt_[2 * l - 1] * isqrt_[l + m] * isqrt_[l - m];
+  auto beta = sqrt_[l - 1 + m] * sqrt_[l - 1 - m] * isqrt_[2 * (l - 1) + 1] *
+              isqrt_[2 * (l - 1) - 1];
   return {alpha, beta};
 }
 

@@ -268,20 +268,20 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order) {
 #endif
 
 void SphericalMeshHelper::SetBoundaryMarker(mfem::Mesh* mesh) {
-  _x0 = MeshCentroid(mesh);
-  _bdr_marker = ExternalBoundaryMarker(mesh);
-  auto [found, same, radius] = SphericalBoundaryRadius(mesh, _bdr_marker, _x0);
+  x0_ = MeshCentroid(mesh);
+  bdr_marker_ = ExternalBoundaryMarker(mesh);
+  auto [found, same, radius] = SphericalBoundaryRadius(mesh, bdr_marker_, x0_);
   assert(found == 1 && same == 1);
-  _bdr_radius = radius;
+  bdr_radius_ = radius;
 }
 
 #ifdef MFEM_USE_MPI
 void SphericalMeshHelper::SetBoundaryMarker(mfem::ParMesh* mesh) {
-  _x0 = MeshCentroid(mesh);
-  _bdr_marker = ExternalBoundaryMarker(mesh);
-  auto [found, same, radius] = SphericalBoundaryRadius(mesh, _bdr_marker, _x0);
+  x0_ = MeshCentroid(mesh);
+  bdr_marker_ = ExternalBoundaryMarker(mesh);
+  auto [found, same, radius] = SphericalBoundaryRadius(mesh, bdr_marker_, x0_);
   assert(found == 1 && same == 1);
-  _bdr_radius = radius;
+  bdr_radius_ = radius;
 }
 #endif
 

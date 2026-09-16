@@ -395,16 +395,16 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order = 1);
  */
 struct SphericalMeshHelper {
   /** @brief The radius of the spherical external boundary. */
-  mfem::real_t _bdr_radius;
+  mfem::real_t bdr_radius_;
   /** @brief The center coordinates of the spherical boundary. */
-  mfem::Vector _x0;
+  mfem::Vector x0_;
   /** @brief Marker array identifying the external boundary attributes. */
-  mfem::Array<int> _bdr_marker;
+  mfem::Array<int> bdr_marker_;
 
   /**
    * @brief Determines and sets the external boundary marker for a serial mesh.
    *
-   * This method populates `_bdr_marker`, `_bdr_radius`, and `_x0` by
+   * This method populates `bdr_marker_`, `bdr_radius_`, and `x0_` by
    * analyzing the provided serial mesh.
    * @param mesh Pointer to the mfem::Mesh object.
    */
@@ -415,7 +415,7 @@ struct SphericalMeshHelper {
    * @brief Determines and sets the external boundary marker for a parallel
    * mesh.
    *
-   * This method populates `_bdr_marker`, `_bdr_radius`, and `_x0` by
+   * This method populates `bdr_marker_`, `bdr_radius_`, and `x0_` by
    * analyzing the provided parallel mesh, performing necessary MPI
    * communication to ensure global consistency.
    * @param mesh Pointer to the mfem::ParMesh object.

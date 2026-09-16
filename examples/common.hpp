@@ -71,7 +71,7 @@ struct Constants {
   static constexpr real_t G = 6.6743e-11;
   static constexpr real_t c = 2.99792458e8;
   static constexpr real_t h = 6.62607015e-34;
-  static constexpr real_t _h = 1.054571817e-34;
+  static constexpr real_t hbar = 1.054571817e-34;
   static constexpr real_t kB = 1.380649e-23;
   static constexpr real_t NA = 6.02214076e23;
   static constexpr real_t e = 1.602176634e-19;

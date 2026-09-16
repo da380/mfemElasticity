@@ -7,51 +7,51 @@
 namespace mfemElasticity {
 
 RigidTranslation::RigidTranslation(int dimension, int component)
-    : mfem::VectorCoefficient(dimension), _component{component} {
+    : mfem::VectorCoefficient(dimension), component_{component} {
   MFEM_ASSERT(component >= 0 && component < dimension,
               "component out of range");
 }
 
-void RigidTranslation::SetComponent(int component) { _component = component; }
+void RigidTranslation::SetComponent(int component) { component_ = component; }
 
 void RigidTranslation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                             const mfem::IntegrationPoint &ip) {
   V.SetSize(vdim);
   V = 0.;
-  V[_component] = 1;
+  V[component_] = 1;
 }
 
 RigidRotation::RigidRotation(int dimension, int component)
-    : mfem::VectorCoefficient(dimension), _component{component} {
+    : mfem::VectorCoefficient(dimension), component_{component} {
   MFEM_ASSERT(component >= 0 && component < dimension,
               "component out of range");
   MFEM_ASSERT(dimension == 3 || component == 2,
               "In two dimensions only z-rotation defined");
 #ifndef MFEM_THREAD_SAFE
-  _x.SetSize(dimension);
+  x_.SetSize(dimension);
 #endif
 }
 
-void RigidRotation::SetComponent(int component) { _component = component; }
+void RigidRotation::SetComponent(int component) { component_ = component; }
 
 void RigidRotation::Eval(mfem::Vector &V, mfem::ElementTransformation &T,
                          const mfem::IntegrationPoint &ip) {
   V.SetSize(vdim);
 #ifdef MFEM_THREAD_SAFE
-  mfem::Vector _x(vdim);
+  mfem::Vector x_(vdim);
 #endif
-  T.Transform(ip, _x);
-  if (_component == 0) {
+  T.Transform(ip, x_);
+  if (component_ == 0) {
     V[0] = 0;
-    V[1] = -_x[2];
-    V[2] = _x[1];
-  } else if (_component == 1) {
-    V[0] = _x[2];
+    V[1] = -x_[2];
+    V[2] = x_[1];
+  } else if (component_ == 1) {
+    V[0] = x_[2];
     V[1] = 0;
-    V[2] = -_x[0];
+    V[2] = -x_[0];
   } else {
-    V[0] = -_x[1];
-    V[1] = _x[0];
+    V[0] = -x_[1];
+    V[1] = x_[0];
     if (vdim == 3) V[2] = 0;
   }
 }

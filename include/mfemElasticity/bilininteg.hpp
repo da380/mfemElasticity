@@ -11,13 +11,13 @@ namespace mfemElasticity {
  *
  * This abstract base class provides common functionalities for indexing
  * components within vector, matrix, and tensor fields  defined
- * over a finite element space. It stores the spatial dimension (`_dim`)
- * and the number of degrees of freedom per component (`_dof`).
+ * over a finite element space. It stores the spatial dimension (`dim_`)
+ * and the number of degrees of freedom per component (`dof_`).
  */
 class Index {
  private:
-  int _dim; /**< The spatial dimension (e.g., 2 for 2D, 3 for 3D). */
-  int _dof; /**< The number of degrees of freedom per component (e.g., number of
+  int dim_; /**< The spatial dimension (e.g., 2 for 2D, 3 for 3D). */
+  int dof_; /**< The number of degrees of freedom per component (e.g., number of
                nodes in an element). */
 
  public:
@@ -26,19 +26,19 @@ class Index {
    * @param dim The spatial dimension of the field.
    * @param dof The number of degrees of freedom associated with each component.
    */
-  Index(int dim, int dof) : _dim{dim}, _dof{dof} {}
+  Index(int dim, int dof) : dim_{dim}, dof_{dof} {}
 
   /**
    * @brief Returns the spatial dimension of the field.
    * @return The dimension.
    */
-  int Dim() const { return _dim; }
+  int Dim() const { return dim_; }
 
   /**
    * @brief Returns the number of degrees of freedom per component.
    * @return The degrees of freedom.
    */
-  int Dof() const { return _dof; }
+  int Dof() const { return dof_; }
 
   /**
    * @brief Pure virtual method to return the number of components in the field
@@ -49,10 +49,10 @@ class Index {
   virtual int ComponentSize() const = 0;
 
   /**
-   * @brief Returns the total size of the field, i.e., `_dof * ComponentSize()`.
+   * @brief Returns the total size of the field, i.e., `dof_ * ComponentSize()`.
    * @return The total size of the field.
    */
-  int Size() const { return _dof * ComponentSize(); }
+  int Size() const { return dof_ * ComponentSize(); }
 };
 
 /**

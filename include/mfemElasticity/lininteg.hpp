@@ -37,7 +37,7 @@ class DomainLFDeformationGradientIntegrator
  private:
   /** @brief The matrix coefficient \f$\bvec{m}\f$ (components \f$m_{ij}\f$)
    * used in the integral. */
-  mfem::MatrixCoefficient& _M;
+  mfem::MatrixCoefficient& M_;
 
 #ifndef MFEM_THREAD_SAFE
   /** @brief Workspace vector for element vector computations (non-thread-safe).
@@ -59,7 +59,7 @@ class DomainLFDeformationGradientIntegrator
    */
   DomainLFDeformationGradientIntegrator(
       mfem::MatrixCoefficient& M, const mfem::IntegrationRule* ir = nullptr)
-      : mfem::LinearFormIntegrator(ir), _M{M} {}
+      : mfem::LinearFormIntegrator(ir), M_{M} {}
 
   /**
    * @brief Assembles the element vector for a given finite element.

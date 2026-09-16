@@ -9,7 +9,7 @@ void DomainLFDeformationGradientIntegrator::AssembleRHSElementVect(
 
   auto dof = el.GetDof();
   auto space_dim = Trans.GetSpaceDim();
-  MFEM_ASSERT(_M.GetHeight() == space_dim && _M.GetWidth() == space_dim,
+  MFEM_ASSERT(M_.GetHeight() == space_dim && M_.GetWidth() == space_dim,
               "Width of matrix coefficient must equal spatial dimension");
 
 #ifdef MFEM_THREAD_SAFE
@@ -35,7 +35,7 @@ void DomainLFDeformationGradientIntegrator::AssembleRHSElementVect(
     Trans.SetIntPoint(&ip);
     auto factor = Trans.Weight() * ip.weight;
     el.CalcPhysDShape(Trans, dshape);
-    _M.Eval(m, Trans, ip);
+    M_.Eval(m, Trans, ip);
     MultABt(dshape, m, vm);
     elvect.Add(factor, v);
   }

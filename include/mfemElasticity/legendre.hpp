@@ -34,9 +34,9 @@ struct LegendreHelper {
   static constexpr mfem::real_t log2 = std::log(static_cast<mfem::real_t>(2));
 
   mfem::Vector
-      _sqrt; /**< Precomputed square roots of integers: `_sqrt[k] = sqrt(k)`. */
-  mfem::Vector _isqrt; /**< Precomputed inverse square roots of integers:
-                            `_isqrt[k] = 1/sqrt(k)`. */
+      sqrt_; /**< Precomputed square roots of integers: `sqrt_[k] = sqrt(k)`. */
+  mfem::Vector isqrt_; /**< Precomputed inverse square roots of integers:
+                            `isqrt_[k] = 1/sqrt(k)`. */
 
   /**
    * @brief Precomputes integer square roots and inverse square roots up to \f$2

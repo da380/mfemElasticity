@@ -17,7 +17,7 @@ namespace mfemElasticity {
  */
 class RigidTranslation : public mfem::VectorCoefficient {
  private:
-  int _component; /**< The component (spatial dimension) along which the
+  int component_; /**< The component (spatial dimension) along which the
                        translation occurs (0 for x, 1 for y, 2 for z). */
 
  public:
@@ -44,7 +44,7 @@ class RigidTranslation : public mfem::VectorCoefficient {
    * @brief Overload of the Eval method for VectorCoefficients.
    *
    * This method evaluates the rigid translation vector at a given point.
-   * The resulting vector will have a value of 1.0 in the specified `_component`
+   * The resulting vector will have a value of 1.0 in the specified `component_`
    * and 0.0 in all other components.
    *
    * @param V The output vector where the evaluated translation will be stored.
@@ -69,13 +69,13 @@ class RigidTranslation : public mfem::VectorCoefficient {
  */
 class RigidRotation : public mfem::VectorCoefficient {
  private:
-  int _component; /**< The component representing the axis of rotation.
+  int component_; /**< The component representing the axis of rotation.
                        In 2D, only 2 (z-axis) is valid. In 3D, 0 (x-axis),
                        1 (y-axis), or 2 (z-axis) are valid. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector
-      _x; /**< Internal buffer for the transformed spatial coordinates. */
+      x_; /**< Internal buffer for the transformed spatial coordinates. */
 #endif
 
  public:
