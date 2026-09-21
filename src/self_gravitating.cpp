@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <random>
 
 #include "mfemElasticity/bilininteg.hpp"
@@ -18,7 +19,7 @@ namespace mfemElasticity {
 using namespace mfem;
 
 namespace {
-constexpr real_t kPi = 3.141592653589793238462643383279502884;
+constexpr real_t kPi = std::numbers::pi_v<real_t>;
 constexpr real_t kMinInnerRelTol = 1e-13;
 }
 

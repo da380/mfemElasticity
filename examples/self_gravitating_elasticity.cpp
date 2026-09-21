@@ -32,6 +32,7 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
+#include <numbers>
 
 #include "mfemElasticity.hpp"
 
@@ -158,7 +159,7 @@ int main(int argc, char* argv[]) {
   problem.SetSurfaceLoad(sigma, surface);
   problem.SetRelTol(rel_tol);
 
-  const real_t g_surface = 4.0 * M_PI * G * rho / dim;  // uniform body
+  const real_t g_surface = 4.0 * std::numbers::pi * G * rho / dim;  // uniform body
   std::cout << "Coupling strength rho g R / mu = " << rho * g_surface / mu
             << "\n";
 

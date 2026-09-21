@@ -5,10 +5,12 @@
  * 3-D), the synthesis of a field from a coefficient vector, and the analysis
  * of a finite-element field on a spherical boundary into coefficients.
  *
- * The analysis operator is the boundary counterpart of the coefficient
- * matrix inside PoissonDtNOperator, made available for any spherical
- * boundary of any mesh (the surface of the body on its SubMesh, say) and for
- * the radial component of a vector field as well as a scalar. With it, a
+ * SurfaceHarmonics is the one implementation of the harmonics in the
+ * library; the operators of poisson.hpp are built on it. The analysis
+ * operator is the boundary counterpart of the coefficient matrix inside
+ * PoissonDtNOperator, made available for any spherical boundary of any mesh
+ * (the surface of the body on its SubMesh, say) and for the radial component
+ * of a vector field as well as a scalar. With it, a
  * load or potential set from a coefficient vector and the harmonic
  * coefficients of the solution read off afterwards give Love numbers from
  * one solve per degree (examples/love_numbers.cpp).
@@ -55,11 +57,27 @@ class SurfaceHarmonics : protected LegendreHelper {
   int Degree(int i) const { return degree_[i]; }
   int Order(int i) const { return order_[i]; }
 
-  /** @brief All harmonics at the direction of @p x (any nonzero length,
-   * relative to the centre), in @p Y (resized to Size()). */
+  /** @brief All harmonics at the direction of @p x (any length, relative to
+   * the centre; the direction @f$\theta = 0@f$ is taken at @p x = 0), in
+   * @p Y (resized to Size()). */
   void Eval(const mfem::Vector& x, mfem::Vector& Y) const;
 
+  /**
+   * @brief Eval() together with the surface gradients on the unit sphere
+   * (circle), @f$\nabla_1 Y_i = \hat\theta\,\partial_\theta Y_i +
+   * \hat\phi\,(\sin\theta)^{-1}\partial_\phi Y_i@f$, as the Cartesian
+   * columns of @p gradY (dim x Size()). The gradient of a solid harmonic
+   * follows as @f$\nabla(r^l Y_i) = r^{l-1}(l\,Y_i\,\hat x + \nabla_1
+   * Y_i)@f$. Finite on the polar axis (the @f$m = \pm 1@f$ limits are
+   * taken).
+   */
+  void EvalWithGradient(const mfem::Vector& x, mfem::Vector& Y,
+                        mfem::DenseMatrix& gradY) const;
+
  private:
+  void EvalImpl(const mfem::Vector& x, mfem::Vector& Y,
+                mfem::DenseMatrix* gradY) const;
+
   int dim_, lmax_, size_;
   std::vector<int> degree_, order_;
 #ifndef MFEM_THREAD_SAFE

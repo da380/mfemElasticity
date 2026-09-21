@@ -1,3 +1,5 @@
+#include <numbers>
+
 #include "TestCommon.hpp"
 
 /*
@@ -19,6 +21,8 @@
 
 namespace {
 
+constexpr double kPi = std::numbers::pi;
+
 using Param = std::tuple<int, int, int>;  // (dim, elementType, order)
 
 Mesh SmallMesh(int dim, int elementType, int n = 3) {
@@ -34,10 +38,10 @@ Mesh SmallMesh(int dim, int elementType, int n = 3) {
 void Jiggle(const Vector& x, Vector& y) {
   y = x;
   const double s = 0.08;
-  y[0] += s * std::sin(M_PI * x[0]) * std::sin(M_PI * x[1]);
-  y[1] += s * std::cos(0.5 * M_PI * x[0]) * std::sin(M_PI * x[1]);
+  y[0] += s * std::sin(kPi * x[0]) * std::sin(kPi * x[1]);
+  y[1] += s * std::cos(0.5 * kPi * x[0]) * std::sin(kPi * x[1]);
   if (x.Size() == 3) {
-    y[2] += s * std::sin(M_PI * x[2]) * std::cos(M_PI * x[0]);
+    y[2] += s * std::sin(kPi * x[2]) * std::cos(kPi * x[0]);
   }
 }
 

@@ -614,6 +614,121 @@ void ElasticTensorIntegrator::AssembleElementMatrix(
   }
 }
 
+const mfem::IntegrationRule& TransformedDiffusionIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void TransformedDiffusionIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto dim = Trans.GetSpaceDim();
+  auto trial_dof = trial_fe.GetDof();
+  auto test_dof = test_fe.GetDof();
+
+  auto same_spaces = &test_fe == &trial_fe;
+
+  elmat.SetSize(test_dof, trial_dof);
+  elmat = 0.;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector fs, df, x;
+  DenseMatrix trial_dshape, test_dshape, xis, F, a, trial_dshape_trans;
+#endif
+  trial_dshape.SetSize(trial_dof, dim);
+
+  if (same_spaces) {
+    test_dshape.Reset(trial_dshape.GetData(), test_dof, dim);
+  } else {
+    test_dshape.SetSize(test_dof, dim);
+  }
+
+  if (Q || QV) {
+    F.SetSize(dim, dim);
+  }
+
+  if (Q || QV || QM) {
+    a.SetSize(dim, dim);
+    trial_dshape_trans.SetSize(trial_dof, dim);
+  }
+
+  if (Q) {
+    // Evaluate radial function at trial nodes.
+    x.SetSize(dim);
+    df.SetSize(dim);
+    fs.SetSize(trial_dof);
+    const auto& ir = trial_fe.GetNodes();
+    for (auto i = 0; i < ir.GetNPoints(); i++) {
+      const auto& ip = ir.IntPoint(i);
+      Trans.SetIntPoint(&ip);
+      fs(i) = Q->Eval(Trans, ip);
+    }
+  }
+
+  if (QV) {
+    // Evaluate mapping at all trial nodes.
+    const auto& ir = trial_fe.GetNodes();
+    QV->Eval(xis, Trans, ir);
+  }
+
+  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  for (auto i = 0; i < ir->GetNPoints(); i++) {
+    const auto& ip = ir->IntPoint(i);
+    Trans.SetIntPoint(&ip);
+
+    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    if (!same_spaces) {
+      test_fe.CalcPhysDShape(Trans, test_dshape);
+    }
+
+    auto w = Trans.Weight() * ip.weight;
+
+    if (Q) {
+      // Compute F at the integration point from the radial mapping.
+      Trans.Transform(ip, x);
+      auto f = Q->Eval(Trans, ip);
+      trial_dshape.MultTranspose(fs, df);
+      for (auto k = 0; k < dim; k++) {
+        for (auto j = 0; j < dim; j++) {
+          F(j, k) = x(j) * df(k);
+        }
+        F(k, k) += f;
+      }
+    }
+
+    if (QV) {
+      // Compute F at the integration point from the mapping.
+      Mult(xis, trial_dshape, F);
+    }
+
+    if (Q || QV) {
+      // Form the matrix a = J F^{-1} F^{-T}
+      auto J = F.Det();
+      F.Invert();
+      MultABt(F, F, a);
+      a *= J;
+    }
+
+    if (QM) {
+      // Evaluate a.
+      QM->Eval(a, Trans, ip);
+    }
+
+    // Form the contribution to the local element matrix.
+    if (Q || QV || QM) {
+      Mult(trial_dshape, a, trial_dshape_trans);
+      AddMult_a_ABt(w, test_dshape, trial_dshape_trans, elmat);
+    } else {
+      AddMult_a_ABt(w, test_dshape, trial_dshape, elmat);
+    }
+  }
+}
+
 void DeformationGradientInterpolator::AssembleElementMatrix2(
     const mfem::FiniteElement& in_fe, const mfem::FiniteElement& out_fe,
     mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {

@@ -9,6 +9,51 @@ namespace mfemElasticity {
 
 using namespace mfem;
 
+RadialUnitVectorCoefficient::RadialUnitVectorCoefficient(int dim)
+    : VectorCoefficient(dim), x0_(dim), x_(dim) {
+  x0_ = 0.0;
+}
+
+RadialUnitVectorCoefficient::RadialUnitVectorCoefficient(int dim,
+                                                         const Vector& x0)
+    : VectorCoefficient(dim), x0_(x0), x_(dim) {
+  MFEM_VERIFY(x0.Size() == dim, "RadialUnitVectorCoefficient: x0 size.");
+}
+
+void RadialUnitVectorCoefficient::Eval(Vector& V, ElementTransformation& T,
+                                       const IntegrationPoint& ip) {
+  T.Transform(ip, x_);
+  V.SetSize(vdim);
+  V = x_;
+  V -= x0_;
+  const real_t r = V.Norml2();
+  if (r > 0.0) {
+    V /= r;
+  } else {
+    V = 0.0;
+    V[vdim - 1] = 1.0;
+  }
+}
+
+RadialDiffeomorphismCoefficient::RadialDiffeomorphismCoefficient(int dim,
+                                                                 Coefficient& Q)
+    : VectorCoefficient(dim), Q_{&Q} {}
+
+void RadialDiffeomorphismCoefficient::Eval(Vector& V, ElementTransformation& T,
+                                           const IntegrationPoint& ip) {
+  V.SetSize(vdim);
+  T.Transform(ip, V);
+  V *= Q_->Eval(T, ip);
+}
+
+real_t TransformedFunctionCoefficient::Eval(ElementTransformation& T,
+                                            const IntegrationPoint& ip) {
+  real_t data[3];
+  Vector y(data, 3);
+  xi_->Eval(y, T, ip);
+  return f_(y);
+}
+
 real_t BoundaryNormalDotCoefficient::Eval(ElementTransformation& T,
                                           const IntegrationPoint& ip) {
   MFEM_VERIFY(T.ElementType == ElementTransformation::BDR_ELEMENT,

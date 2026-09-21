@@ -10,7 +10,7 @@
  * The `mfemElasticity` library extends MFEM with specialized components for
  * elasticity and viscoelasticity problems. Key components include:
  *
- * @subsection solvers Solvers
+ * @subsection null_space Null-space projection
  * NullSpaceProjector holds an orthonormal basis of a (near-)null space and
  * ProjectedSolver / ProjectedOperator run a Krylov method on the projected
  * system @f$P A P@f$ with the projected preconditioner @f$P M P@f$. The free

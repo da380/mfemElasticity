@@ -18,7 +18,7 @@
 
 #include "mfem.hpp"
 #include "mfemElasticity/rheology.hpp"
-#include "mfemElasticity/solvers.hpp"
+#include "mfemElasticity/null_space.hpp"
 
 namespace mfemElasticity {
 

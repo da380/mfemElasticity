@@ -1,3 +1,9 @@
+/**
+ * @file legendre.hpp
+ * @brief Normalised associated Legendre functions by recurrence
+ * (LegendreHelper), the base of SurfaceHarmonics in spherical_harmonics.hpp.
+ */
+
 #pragma once
 
 #include <cassert>
@@ -20,18 +26,19 @@ namespace mfemElasticity {
  * square roots to speed up calculations of recursion coefficients.
  */
 struct LegendreHelper {
-  /** @brief Value of pi, computed as \f$4 \times \text{atan}(1)\f$. */
-  // static constexpr mfem::real_t pi = std::atan(1) * 4;
+  /** @brief Value of \f$\pi\f$. */
   static constexpr mfem::real_t pi = std::numbers::pi_v<mfem::real_t>;
   /** @brief Value of \f$\sqrt{\pi}\f$. */
-  static constexpr mfem::real_t sqrtPi = std::sqrt(pi);
+  static constexpr mfem::real_t sqrtPi =
+      1 / std::numbers::inv_sqrtpi_v<mfem::real_t>;
   /** @brief Value of \f$1/\sqrt{4\pi}\f$. Used in spherical harmonic
    * normalization. */
-  static constexpr mfem::real_t invSqrtFourPi = 1 / std::sqrt(4 * pi);
+  static constexpr mfem::real_t invSqrtFourPi =
+      std::numbers::inv_sqrtpi_v<mfem::real_t> / 2;
   /** @brief Value of \f$\log(\sqrt{\pi})\f$. */
-  static constexpr mfem::real_t logSqrtPi = std::log(std::sqrt(pi));
+  static inline const mfem::real_t logSqrtPi = std::log(sqrtPi);
   /** @brief Value of \f$\log(2)\f$. */
-  static constexpr mfem::real_t log2 = std::log(static_cast<mfem::real_t>(2));
+  static constexpr mfem::real_t log2 = std::numbers::ln2_v<mfem::real_t>;
 
   mfem::Vector
       sqrt_; /**< Precomputed square roots of integers: `sqrt_[k] = sqrt(k)`. */

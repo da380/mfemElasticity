@@ -243,19 +243,4 @@ class DeviatoricProjectionElasticTensorCoefficient
   mfem::DenseMatrix P_, Cq_, tmp_;
 };
 
-/**
- * @brief The unit radial vector (x - x0)/|x - x0|; e_d at x = x0.
- */
-class RadialUnitVectorCoefficient : public mfem::VectorCoefficient {
- public:
-  explicit RadialUnitVectorCoefficient(int dim);
-  RadialUnitVectorCoefficient(int dim, const mfem::Vector& x0);
-
-  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
-            const mfem::IntegrationPoint& ip) override;
-
- private:
-  mfem::Vector x0_, x_;
-};
-
 }  // namespace mfemElasticity

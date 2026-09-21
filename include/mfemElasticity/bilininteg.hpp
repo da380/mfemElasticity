@@ -1,3 +1,12 @@
+/**
+ * @file bilininteg.hpp
+ * @brief Bilinear form integrators and discrete interpolators: couplings
+ * between scalar, vector and matrix fields on nodal spaces, the general
+ * (anisotropic) elasticity integrator, the transformed diffusion integrator,
+ * the strain interpolators, and the boundary normal integrators of the
+ * fluid–solid problems.
+ */
+
 #pragma once
 
 #include <array>
@@ -993,6 +1002,147 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
    */
   static void StrainDisplacementMatrix(int dim, const mfem::DenseMatrix& gshape,
                                        mfem::DenseMatrix& B);
+};
+
+/**
+ * @brief BilinearFormIntegrator for the transformed Laplace integrator.
+ *
+ * The bilinear form acts on a pair of scalar fields through
+ * \f[
+ *  (v,u) \mapsto \int_{\Omega} \grad v \cdot \bvec{a} \cdot \grad u \dd x,
+ * \f]
+ * with \f$\Omega\f$ the domain and $where the symmetric matrix field,
+ * \f$\bvec{a}\f$, takes the form
+ * \f[
+ * \bvec{a} = J \bvec{C}^{-1}  = J \bvec{F}^{-1} \bvec{F}^{-T},
+ * \f]
+ * with \f$\bvec{F} = \deriv \boldsymbol{\xi}\f$ for a diffeomorphism,
+ * \f$\boldsymbol{\xi}\f$, on
+ * \f$\Omega\f$.
+ *
+ *
+ * The diffeomorphism and/or resulting matrix field can be specified in three
+ * ways:
+ *
+ * -# A `mfem::Coefficient` is provided which specifies the scalar part,
+ * \f$f\f$, of a radial mapping \f$\boldsymbol{\xi}(\bvec{x}) = f(\bvec{x})
+ * \bvec{x}\f$. The form of \f$\bvec{a}\f$ is then calculated numerically.
+ * -# A `mfem::VectorCoefficient` which directly specifies
+ * \f$\boldsymbol{\xi}\f$ is provided. The form of \f$\bvec{a}\f$ is then
+ * calculated numerically.
+ * -# A `mfem::MatrixCoefficient` specifying \f$\bvec{a}\f$ is given directly.
+ *
+ * There is also a constructor for which no coefficients are provided, this
+ * corresponding to the identity transformation.
+ */
+class TransformedDiffusionIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* Q =
+      nullptr; /**< Scalar coefficient for radial transformation. */
+  mfem::VectorCoefficient* QV =
+      nullptr; /**< Vector coefficient for diagonal transformation. */
+  mfem::MatrixCoefficient* QM =
+      nullptr; /**< Matrix coefficient for general transformation. */
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector fs, df, x;
+  mfem::DenseMatrix trial_dshape, test_dshape, xis, F, a,
+      trial_dshape_trans; /**< Internal buffers for shape function derivatives
+and intermediate matrices during integration. */
+#endif
+
+ public:
+  /**
+   * @brief Constructor for the idenity mapping.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  TransformedDiffusionIntegrator(const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir) {}
+
+  /**
+   * @brief Constructor for a radial mapping specified by a scalar
+   * function.
+   * @param q A reference to the `mfem::Coefficient` \f$ q \f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  TransformedDiffusionIntegrator(mfem::Coefficient& q,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /**
+   * @brief Constructor for a general transformation specified by a
+   * VectorCoefficient.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$ q \f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  TransformedDiffusionIntegrator(mfem::VectorCoefficient& qv,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
+
+  /**
+   * @brief Constructor for which the matrix \f$\bvec{a}\f$ is provided
+   * directly.
+   * @param qm A reference to the `mfem::MatrixCoefficient` \f$ q \f$.
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  TransformedDiffusionIntegrator(mfem::MatrixCoefficient& qm,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QM{&qm} {}
+
+  /**
+   * @brief Sets the default integration rule.
+   *
+   * The orders of the trial space, test space, and element transformation are
+   * taken into account. Variations in the coefficient are not considered.
+   *
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @return A constant reference to the chosen `mfem::IntegrationRule`.
+   */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  /**
+   * @brief Implementation of the element level assembly for the bilinear form.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+
+  /**
+   * @brief Assembly method when the trial and test spaces are equal.
+   * @param fe The finite element for both trial and test spaces.
+   * @param Trans The element transformation.
+   * @param elmat The output dense matrix representing the element stiffness
+   * matrix.
+   */
+  void AssembleElementMatrix(const mfem::FiniteElement& fe,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override {
+    AssembleElementMatrix2(fe, fe, Trans, elmat);
+  }
+
+ protected:
+  /**
+   * @brief Protected method to get the default integration rule.
+   * @param trial_fe The trial finite element.
+   * @param test_fe The test finite element.
+   * @param trans The element transformation.
+   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
+   */
+  const mfem::IntegrationRule* GetDefaultIntegrationRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& trans) const {
+    return &GetRule(trial_fe, test_fe, trans);
+  }
 };
 
 /**

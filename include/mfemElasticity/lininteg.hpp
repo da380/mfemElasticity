@@ -1,8 +1,9 @@
 /**
- * @file DomainLFDeformationGradientIntegrator.hpp
- * @brief Defines a LinearFormIntegrator for terms involving the deformation
- * gradient.
+ * @file lininteg.hpp
+ * @brief Linear form integrators: the pairing of a matrix coefficient with
+ * the deformation gradient of a vector test field.
  */
+
 #pragma once
 
 #include "mfem.hpp"

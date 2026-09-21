@@ -13,7 +13,7 @@
 #include "mfemElasticity/relaxation_law.hpp"
 #include "mfemElasticity/rheology.hpp"
 #include "mfemElasticity/self_gravitating.hpp"
-#include "mfemElasticity/solvers.hpp"
+#include "mfemElasticity/null_space.hpp"
 #include "mfemElasticity/spherical_harmonics.hpp"
 #include "mfemElasticity/submesh.hpp"
 #include "mfemElasticity/viscoelastic.hpp"

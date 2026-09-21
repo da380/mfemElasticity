@@ -181,7 +181,7 @@ Pointwise (coefficient) tests, random points, d = 2 and 3:
 Element-matrix tests (existing `TestCommon.hpp` machinery, all element types, orders 1–3):
 
 5. Isotropic tensor: `ElasticTensorIntegrator` element matrices equal `mfem::ElasticityIntegrator` to round-off on every element of a random-jiggled mesh.
-6. Symmetry of `elmat`; positive semi-definiteness; the rigid modes (translations, rotations from `solvers.hpp`) are in the null space of the assembled matrix for a TI material with a random axis field.
+6. Symmetry of `elmat`; positive semi-definiteness; the rigid modes (translations, rotations from `null_space.hpp`) are in the null space of the assembled matrix for a TI material with a random axis field.
 7. Energy patch test: for a linear displacement field u = G x on a single element or a small mesh, `½ uᵀ A u = |Ω| ½ ε̂ᵀ Ĉ ε̂` exactly (up to quadrature round-off) for a *constant* TI tensor — checks B, scaling and assembly together.
 8. Rotation covariance at element level: rotate the mesh nodes by R and the axis by R; `elmat' = (I_dof ⊗ R) elmat (I_dof ⊗ R)ᵀ` (in byNODES layout this is a block permutation, easy to apply).
 9. 2-D/3-D consistency: a plane-strain 2-D TI problem with in-plane axis versus a 3-D slab with one element through thickness and `u_z = 0` — same in-plane element energies.

@@ -1,3 +1,5 @@
+#include <numbers>
+
 #include "SelfGravitatingTestCommon.hpp"
 #include "TestCommon.hpp"
 
@@ -8,11 +10,13 @@
   gmsh spheres/circles) and on the parent mesh's outer boundary.
 
   - Index map: Index(l, m) inverts Degree/Order; 2-D and 3-D sizes.
+  - Surface gradient: EvalWithGradient against central differences of the
+    solid harmonics r^l Y_i, at generic points, on the polar axis and at the
+    centre.
   - Orthonormality: the coefficients of the synthesised harmonic Y_i on the
     curved surface are e_i to the geometry's accuracy.
   - Against PoissonDtNOperator::HarmonicCoefficients on the outer boundary
-    (index permutation; 2-D DtN coefficients are those of the unnormalised
-    Fourier basis).
+    (the same basis; the 2-D DtN operator carries no degree-zero term).
   - Radial component: u = Y_i n gives e_i, from a VectorCoefficient and from
     its interpolant on the vector space.
   - LoadVector against a BoundaryLFIntegrator of the same expansion.
@@ -72,7 +76,7 @@ TEST_P(SphericalHarmonicsTest, IndexMap) {
   x[dim - 1] = 0.9;
   basis.Eval(x, Y);
   EXPECT_EQ(Y.Size(), basis.Size());
-  EXPECT_NEAR(Y[0], 1.0 / std::sqrt(dim == 2 ? 2.0 * M_PI : 4.0 * M_PI),
+  EXPECT_NEAR(Y[0], 1.0 / std::sqrt(dim == 2 ? 2.0 * std::numbers::pi : 4.0 * std::numbers::pi),
               1e-14);
   // Direction only.
   Vector Y2;
@@ -80,6 +84,79 @@ TEST_P(SphericalHarmonicsTest, IndexMap) {
   basis.Eval(x, Y2);
   Y2 -= Y;
   EXPECT_LT(Y2.Normlinf(), 1e-13);
+}
+
+TEST_P(SphericalHarmonicsTest, SurfaceGradient) {
+  const int dim = GetParam();
+  const int L = 5;
+  SurfaceHarmonics basis(dim, L);
+  const int n = basis.Size();
+
+  // The solid harmonics r^l Y_i are polynomials, so smooth everywhere.
+  auto solid = [&](const Vector& x, Vector& S) {
+    basis.Eval(x, S);
+    const real_t r = x.Norml2();
+    for (int i = 0; i < n; i++) {
+      S[i] *= std::pow(r, basis.Degree(i));
+    }
+  };
+
+  std::vector<Vector> points;
+  for (int k = 0; k < 4; k++) {
+    Vector x(dim);
+    for (int d = 0; d < dim; d++) {
+      x[d] = std::sin(1.7 * k + 2.3 * d + 0.4);
+    }
+    points.push_back(x);
+  }
+  // The polar axis (both poles) and the centre.
+  for (real_t z : {0.8, -1.3, 0.0}) {
+    Vector x(dim);
+    x = 0.0;
+    x[dim - 1] = z;
+    points.push_back(x);
+  }
+
+  // Sixth-order central differences: exact for these polynomials (degree
+  // <= 5), so the step can be large and the comparison sharp.
+  const real_t h = 0.1;
+  const real_t stencil[3] = {3.0 / 4.0, -3.0 / 20.0, 1.0 / 60.0};
+  for (const auto& x : points) {
+    Vector Y, Sp, Sm;
+    DenseMatrix gradY;
+    basis.EvalWithGradient(x, Y, gradY);
+    ASSERT_EQ(gradY.Height(), dim);
+    ASSERT_EQ(gradY.Width(), n);
+    Vector Y_only;
+    basis.Eval(x, Y_only);
+    const real_t r = x.Norml2();
+    for (int i = 0; i < n; i++) {
+      EXPECT_EQ(Y[i], Y_only[i]);
+      const int l = basis.Degree(i);
+      real_t radial = 0.0;
+      for (int d = 0; d < dim; d++) {
+        real_t fd = 0.0;
+        for (int k = 1; k <= 3; k++) {
+          Vector xp(x), xm(x);
+          xp[d] += k * h;
+          xm[d] -= k * h;
+          solid(xp, Sp);
+          solid(xm, Sm);
+          fd += stencil[k - 1] * (Sp[i] - Sm[i]) / h;
+        }
+        // grad(r^l Y) = r^(l-1) (l Y x_hat + grad_1 Y); at the centre only
+        // l = 1 survives, and x_hat is the direction theta = 0 that Eval
+        // takes there (the polar axis in 3-D, the x axis in 2-D).
+        const int axis = dim == 2 ? 0 : 2;
+        real_t xhat = r > 0 ? x[d] / r : (d == axis ? 1.0 : 0.0);
+        real_t rpow = l == 0 ? 0.0 : std::pow(r, l - 1);
+        EXPECT_NEAR(rpow * (l * Y[i] * xhat + gradY(d, i)), fd, 1e-11)
+            << "i = " << i << ", d = " << d << ", r = " << r;
+        radial += xhat * gradY(d, i);
+      }
+      EXPECT_NEAR(radial, 0.0, 1e-13) << "i = " << i;
+    }
+  }
 }
 
 TEST_P(SphericalHarmonicsTest, Orthonormality) {
@@ -135,24 +212,14 @@ TEST_P(SphericalHarmonicsTest, MatchesDtNOperator) {
   // difference is the radius spread of the curved faces, so the tolerance
   // depends on the mesh (the canned meshes sit well inside it).
   const double tol = (dim == 2 ? 5e-6 : 1e-4) * scale;
-  const auto& basis = bhc.Basis();
-  if (dim == 2) {
-    for (int k = 1; k <= L; k++) {
-      EXPECT_NEAR(c_dtn[2 * (k - 1)] * std::sqrt(M_PI), c[basis.Index(k, k)],
-                  tol);
-      EXPECT_NEAR(c_dtn[2 * (k - 1) + 1] * std::sqrt(M_PI),
-                  c[basis.Index(k, -k)], tol);
-    }
-  } else {
-    EXPECT_NEAR(c_dtn[0], c[0], tol);
-    for (int l = 1; l <= L; l++) {
-      EXPECT_NEAR(c_dtn[l * l], c[basis.Index(l, 0)], tol);
-      for (int m = 1; m <= l; m++) {
-        EXPECT_NEAR(c_dtn[l * l + 2 * m - 1], c[basis.Index(l, m)],
-                    tol);
-        EXPECT_NEAR(c_dtn[l * l + 2 * m], c[basis.Index(l, -m)],
-                    tol);
-      }
+  // Same ordering and normalisation; the 2-D DtN operator has no
+  // degree-zero term and returns that coefficient as zero.
+  ASSERT_EQ(c_dtn.Size(), c.Size());
+  for (int i = 0; i < c.Size(); i++) {
+    if (dim == 2 && i == 0) {
+      EXPECT_EQ(c_dtn[i], 0.0);
+    } else {
+      EXPECT_NEAR(c_dtn[i], c[i], tol) << "i = " << i;
     }
   }
 }

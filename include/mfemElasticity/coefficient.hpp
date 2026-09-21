@@ -1,17 +1,76 @@
 /**
  * @file coefficient.hpp
- * @brief Coefficients used by the self-gravitating fluid–solid problems: the
- * normal component of a vector coefficient on boundary elements, and the
- * barotropic density gradient @f$d\rho/d\Phi_0@f$ of a fluid.
+ * @brief General-purpose coefficients: the unit radial vector, a radial
+ * diffeomorphism and the pull-back of a function by a mapping (for problems
+ * posed on a reference domain, see TransformedDiffusionIntegrator), and, for
+ * the self-gravitating fluid–solid problems, the normal component of a vector
+ * coefficient on boundary elements and the barotropic density gradient
+ * @f$d\rho/d\Phi_0@f$ of a fluid.
+ *
+ * Coefficients tied to one subsystem live with it: the elasticity tensors in
+ * elastic_tensor.hpp, harmonic expansions in spherical_harmonics.hpp, the
+ * rigid modes in null_space.hpp.
  */
 
 #pragma once
 
+#include <functional>
 #include <memory>
 
 #include "mfem.hpp"
 
 namespace mfemElasticity {
+
+/**
+ * @brief The unit radial vector (x - x0)/|x - x0|; e_d at x = x0.
+ */
+class RadialUnitVectorCoefficient : public mfem::VectorCoefficient {
+ public:
+  explicit RadialUnitVectorCoefficient(int dim);
+  RadialUnitVectorCoefficient(int dim, const mfem::Vector& x0);
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::Vector x0_, x_;
+};
+
+/**
+ * @brief The radial mapping @f$\boldsymbol{\xi}(\mathbf{x}) =
+ * f(\mathbf{x})\,\mathbf{x}@f$ for a scalar coefficient @f$f@f$ (not owned),
+ * with position measured from the origin.
+ */
+class RadialDiffeomorphismCoefficient : public mfem::VectorCoefficient {
+ public:
+  RadialDiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::Coefficient* Q_ = nullptr;
+};
+
+/**
+ * @brief The pull-back @f$f \circ \boldsymbol{\xi}@f$ of a function of
+ * position by a mapping @f$\boldsymbol{\xi}@f$ (not owned): a field given on
+ * the physical domain, evaluated on the reference domain.
+ */
+class TransformedFunctionCoefficient : public mfem::Coefficient {
+ public:
+  TransformedFunctionCoefficient(
+      mfem::VectorCoefficient& xi,
+      std::function<mfem::real_t(const mfem::Vector&)> f)
+      : xi_{&xi}, f_{std::move(f)} {}
+
+  mfem::real_t Eval(mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::VectorCoefficient* xi_;
+  std::function<mfem::real_t(const mfem::Vector&)> f_;
+};
 
 /**
  * @brief @f$\mathbf{V}\cdot\mathbf{n}@f$ on boundary elements, with

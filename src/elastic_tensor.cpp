@@ -371,32 +371,4 @@ void DeviatoricProjectionElasticTensorCoefficient::Eval(
   }
 }
 
-// --- Radial axis -------------------------------------------------------------
-
-RadialUnitVectorCoefficient::RadialUnitVectorCoefficient(int dim)
-    : VectorCoefficient(dim), x0_(dim), x_(dim) {
-  x0_ = 0.0;
-}
-
-RadialUnitVectorCoefficient::RadialUnitVectorCoefficient(int dim,
-                                                         const Vector& x0)
-    : VectorCoefficient(dim), x0_(x0), x_(dim) {
-  MFEM_VERIFY(x0.Size() == dim, "RadialUnitVectorCoefficient: x0 size.");
-}
-
-void RadialUnitVectorCoefficient::Eval(Vector& V, ElementTransformation& T,
-                                       const IntegrationPoint& ip) {
-  T.Transform(ip, x_);
-  V.SetSize(vdim);
-  V = x_;
-  V -= x0_;
-  const real_t r = V.Norml2();
-  if (r > 0.0) {
-    V /= r;
-  } else {
-    V = 0.0;
-    V[vdim - 1] = 1.0;
-  }
-}
-
 }  // namespace mfemElasticity

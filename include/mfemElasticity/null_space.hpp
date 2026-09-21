@@ -1,3 +1,11 @@
+/**
+ * @file null_space.hpp
+ * @brief Singular symmetric systems: the rigid-body modes as
+ * VectorCoefficients, an orthonormal basis of a (near-)null space
+ * (NullSpaceProjector, MakeRigidModeProjector()), and the projected operator
+ * and solver built on it.
+ */
+
 #pragma once
 
 #include <memory>

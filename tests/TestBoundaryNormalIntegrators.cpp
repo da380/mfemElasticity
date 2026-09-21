@@ -1,3 +1,5 @@
+#include <numbers>
+
 #include "TestCommon.hpp"
 
 /*
@@ -24,6 +26,8 @@
 */
 
 namespace {
+
+constexpr double kPi = std::numbers::pi;
 
 double LinearQ(const Vector& x) {
   double v = 1.0;
@@ -235,7 +239,7 @@ std::string TwoLayerMesh(int dim) {
 }
 
 double SphereArea(int dim, double r) {
-  return dim == 2 ? 2.0 * M_PI * r : 4.0 * M_PI * r * r;
+  return dim == 2 ? 2.0 * kPi * r : 4.0 * kPi * r * r;
 }
 
 TEST(BoundaryNormalSphere, AnalyticValues) {
@@ -333,12 +337,12 @@ TEST(BoundaryNormalOrientation, InheritedInterfaces2D) {
     const int order = 2;
     const double tol = 1e-4;
     // ICB from the inner core: m = +r_hat; CMB from the mantle: m = -r_hat.
-    EXPECT_NEAR(NormalFlux(mesh, 1, order), 2.0 * M_PI * r_icb * r_icb,
-                tol * 2.0 * M_PI * r_icb * r_icb);
-    EXPECT_NEAR(NormalFlux(mesh, 2, order), -2.0 * M_PI * r_cmb * r_cmb,
-                tol * 2.0 * M_PI * r_cmb * r_cmb);
-    EXPECT_NEAR(NormalFlux(mesh, 3, order), 2.0 * M_PI * r_s * r_s,
-                tol * 2.0 * M_PI * r_s * r_s);
+    EXPECT_NEAR(NormalFlux(mesh, 1, order), 2.0 * kPi * r_icb * r_icb,
+                tol * 2.0 * kPi * r_icb * r_icb);
+    EXPECT_NEAR(NormalFlux(mesh, 2, order), -2.0 * kPi * r_cmb * r_cmb,
+                tol * 2.0 * kPi * r_cmb * r_cmb);
+    EXPECT_NEAR(NormalFlux(mesh, 3, order), 2.0 * kPi * r_s * r_s,
+                tol * 2.0 * kPi * r_s * r_s);
   }
 }
 
@@ -352,8 +356,8 @@ TEST(BoundaryNormalOrientation, InheritedInterface3D) {
   SubMesh mesh(SubMesh::CreateFromDomain(parent, shell));
   ASSERT_EQ(mesh.bdr_attributes.Max(), 2);
   const double tol = 2e-3;
-  EXPECT_NEAR(NormalFlux(mesh, 1, 2), -4.0 * M_PI, tol * 4.0 * M_PI);
-  EXPECT_NEAR(NormalFlux(mesh, 2, 2), 4.0 * M_PI * 8.0, tol * 4.0 * M_PI * 8.0);
+  EXPECT_NEAR(NormalFlux(mesh, 1, 2), -4.0 * kPi, tol * 4.0 * kPi);
+  EXPECT_NEAR(NormalFlux(mesh, 2, 2), 4.0 * kPi * 8.0, tol * 4.0 * kPi * 8.0);
 }
 
 TEST(BoundaryNormalOrientation, CutInterface) {

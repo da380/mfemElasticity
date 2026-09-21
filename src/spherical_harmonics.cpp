@@ -6,14 +6,16 @@
 #include "mfemElasticity/spherical_harmonics.hpp"
 
 #include <cmath>
+#include <numbers>
 
 namespace mfemElasticity {
 
 using namespace mfem;
 
 namespace {
-constexpr real_t kPi = 3.141592653589793238462643383279502884;
-}
+constexpr real_t kInvSqrtPi = std::numbers::inv_sqrtpi_v<real_t>;
+constexpr real_t kSqrt2 = std::numbers::sqrt2_v<real_t>;
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // SurfaceHarmonics
@@ -63,12 +65,29 @@ int SurfaceHarmonics::Index(int l, int m) const {
 }
 
 void SurfaceHarmonics::Eval(const Vector& x, Vector& Y) const {
+  EvalImpl(x, Y, nullptr);
+}
+
+void SurfaceHarmonics::EvalWithGradient(const Vector& x, Vector& Y,
+                                        DenseMatrix& gradY) const {
+  EvalImpl(x, Y, &gradY);
+}
+
+void SurfaceHarmonics::EvalImpl(const Vector& x, Vector& Y,
+                                DenseMatrix* gradY) const {
   Y.SetSize(size_);
+  if (gradY) {
+    gradY->SetSize(dim_, size_);
+  }
   if (dim_ == 2) {
     const real_t r = std::sqrt(x[0] * x[0] + x[1] * x[1]);
     const real_t c = r > 0 ? x[0] / r : 1.0, s = r > 0 ? x[1] / r : 0.0;
-    Y[0] = 1.0 / std::sqrt(2.0 * kPi);
-    const real_t fac = 1.0 / std::sqrt(kPi);
+    Y[0] = kInvSqrtPi / kSqrt2;
+    if (gradY) {
+      (*gradY)(0, 0) = 0.0;
+      (*gradY)(1, 0) = 0.0;
+    }
+    const real_t fac = kInvSqrtPi;
     real_t ck = 1.0, sk = 0.0;  // cos k theta, sin k theta
     for (int k = 1; k <= lmax_; k++) {
       const real_t ck1 = ck * c - sk * s, sk1 = sk * c + ck * s;
@@ -76,6 +95,14 @@ void SurfaceHarmonics::Eval(const Vector& x, Vector& Y) const {
       sk = sk1;
       Y[2 * k - 1] = fac * ck;
       Y[2 * k] = fac * sk;
+      if (gradY) {
+        // theta_hat = (-s, c).
+        const real_t dc = -fac * k * sk, ds = fac * k * ck;
+        (*gradY)(0, 2 * k - 1) = -s * dc;
+        (*gradY)(1, 2 * k - 1) = c * dc;
+        (*gradY)(0, 2 * k) = -s * ds;
+        (*gradY)(1, 2 * k) = c * ds;
+      }
     }
     return;
   }
@@ -83,12 +110,21 @@ void SurfaceHarmonics::Eval(const Vector& x, Vector& Y) const {
 #ifdef MFEM_THREAD_SAFE
   Vector p_(lmax_ + 1), pm1_(lmax_ + 1), cos_(lmax_ + 1), sin_(lmax_ + 1);
 #endif
+  // At the centre the direction is arbitrary; take theta = 0.
   const real_t r = x.Norml2();
-  MFEM_ASSERT(r > 0.0, "SurfaceHarmonics::Eval: zero vector.");
-  const real_t cos_theta = x[2] / r;
+  const real_t cos_theta = r > 0 ? x[2] / r : 1.0;
   const real_t rxy = std::sqrt(x[0] * x[0] + x[1] * x[1]);
+  const real_t sin_theta = r > 0 ? rxy / r : 0.0;
   const real_t c = rxy > 0 ? x[0] / rxy : 1.0;
   const real_t s = rxy > 0 ? x[1] / rxy : 0.0;
+
+  // d/dtheta of Y and (1/sin theta) d/dphi of Y, on the local frame
+  // theta_hat = (cos_theta c, cos_theta s, -sin_theta), phi_hat = (-s, c, 0).
+  auto set_gradient = [&](int i, real_t dtheta, real_t dphi) {
+    (*gradY)(0, i) = cos_theta * c * dtheta - s * dphi;
+    (*gradY)(1, i) = cos_theta * s * dtheta + c * dphi;
+    (*gradY)(2, i) = -sin_theta * dtheta;
+  };
 
   cos_[0] = 1.0;
   sin_[0] = 0.0;
@@ -96,7 +132,9 @@ void SurfaceHarmonics::Eval(const Vector& x, Vector& Y) const {
   p_ = 0.0;
   p_[0] = Pll(0, cos_theta);
   Y[0] = p_[0];
-  const real_t sqrt2 = std::sqrt(2.0);
+  if (gradY) {
+    set_gradient(0, 0.0, 0.0);
+  }
   for (int l = 1; l <= lmax_; l++) {
     cos_[l] = cos_[l - 1] * c - sin_[l - 1] * s;
     sin_[l] = sin_[l - 1] * c + cos_[l - 1] * s;
@@ -111,8 +149,33 @@ void SurfaceHarmonics::Eval(const Vector& x, Vector& Y) const {
     const int base = l * l + l;
     Y[base] = p_[0];
     for (int m = 1; m <= l; m++) {
-      Y[base + m] = sqrt2 * p_[m] * cos_[m];
-      Y[base - m] = sqrt2 * p_[m] * sin_[m];
+      Y[base + m] = kSqrt2 * p_[m] * cos_[m];
+      Y[base - m] = kSqrt2 * p_[m] * sin_[m];
+    }
+    if (!gradY) {
+      continue;
+    }
+    // dX_{lm}/dtheta from X_{l,m+1} and X_{l,m-1} (X_{l,l+1} = 0).
+    auto dtheta = [&](int m) {
+      if (m == 0) {
+        return sqrt_[l] * sqrt_[l + 1] * p_[1];
+      }
+      const real_t up =
+          m < l ? sqrt_[l - m] * sqrt_[l + m + 1] * p_[m + 1] : real_t{0};
+      return real_t{0.5} * (up - sqrt_[l + m] * sqrt_[l - m + 1] * p_[m - 1]);
+    };
+    set_gradient(base, dtheta(0), 0.0);
+    for (int m = 1; m <= l; m++) {
+      const real_t dX = dtheta(m);
+      // X_{lm} / sin theta; on the polar axis only m = 1 survives, with
+      // the limit cos_theta dX_{l1}/dtheta.
+      const real_t X_over_sin = sin_theta > 0
+                                    ? p_[m] / sin_theta
+                                    : (m == 1 ? cos_theta * dX : real_t{0});
+      set_gradient(base + m, kSqrt2 * dX * cos_[m],
+                   -kSqrt2 * m * X_over_sin * sin_[m]);
+      set_gradient(base - m, kSqrt2 * dX * sin_[m],
+                   kSqrt2 * m * X_over_sin * cos_[m]);
     }
   }
 }
@@ -154,8 +217,7 @@ real_t HarmonicExpansionCoefficient::Eval(ElementTransformation& T,
   if (!(r > 0.0)) {
     // Only the constant survives at the centre (interior); a surface
     // field is undefined there, take the constant too.
-    return c_[0] * (basis_->Dim() == 2 ? 1.0 / std::sqrt(2.0 * kPi)
-                                       : 1.0 / std::sqrt(4.0 * kPi));
+    return c_[0] * (basis_->Dim() == 2 ? kInvSqrtPi / kSqrt2 : kInvSqrtPi / 2);
   }
   basis_->Eval(x_, Y_);
   real_t f = 0.0;
@@ -265,12 +327,12 @@ void BoundaryHarmonicCoefficients::MeasureRadius(real_t tolerance) {
   }
 #ifdef MFEM_USE_MPI
   if (parallel_) {
-    MPI_Allreduce(MPI_IN_PLACE, sums, 2, MPITypeMap<real_t>::mpi_type,
-                  MPI_SUM, comm_);
-    MPI_Allreduce(MPI_IN_PLACE, &rmin, 1, MPITypeMap<real_t>::mpi_type,
-                  MPI_MIN, comm_);
-    MPI_Allreduce(MPI_IN_PLACE, &rmax, 1, MPITypeMap<real_t>::mpi_type,
-                  MPI_MAX, comm_);
+    MPI_Allreduce(MPI_IN_PLACE, sums, 2, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                  comm_);
+    MPI_Allreduce(MPI_IN_PLACE, &rmin, 1, MPITypeMap<real_t>::mpi_type, MPI_MIN,
+                  comm_);
+    MPI_Allreduce(MPI_IN_PLACE, &rmax, 1, MPITypeMap<real_t>::mpi_type, MPI_MAX,
+                  comm_);
   }
 #endif
   MFEM_VERIFY(sums[0] > 0.0,
@@ -358,12 +420,10 @@ void BoundaryHarmonicCoefficients::Coefficients(Coefficient& f,
               "operator.");
   c.SetSize(Size());
   c = 0.0;
-  ForEachQuadraturePoint([&](int, const FiniteElement&,
-                             ElementTransformation& T,
-                             const IntegrationPoint& ip, const Vector&,
-                             const Vector& Y, real_t w) {
-    c.Add(w * f.Eval(T, ip), Y);
-  });
+  ForEachQuadraturePoint(
+      [&](int, const FiniteElement&, ElementTransformation& T,
+          const IntegrationPoint& ip, const Vector&, const Vector& Y,
+          real_t w) { c.Add(w * f.Eval(T, ip), Y); });
   Reduce(c);
 }
 

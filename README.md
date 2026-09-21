@@ -7,14 +7,16 @@ pieces are
 - the component ordering and node/component indexing of vector, matrix and
   symmetric tensor fields (`index.hpp`);
 - mixed bilinear/linear form integrators between vector, scalar and tensor
-  nodal spaces, and a general (anisotropic) linear elasticity integrator
-  (`bilininteg.hpp`, `lininteg.hpp`);
+  nodal spaces, a general (anisotropic) linear elasticity integrator and the
+  transformed diffusion integrator for problems posed on a reference domain
+  (`bilininteg.hpp`, `lininteg.hpp`), with general-purpose coefficients
+  (`coefficient.hpp`);
 - isotropic, transversely isotropic (radially anisotropic), Voigt-matrix and
   rotated elasticity tensor coefficients for that integrator
   (`elastic_tensor.hpp`);
 - the exterior Poisson machinery: a matrix-free Dirichlet-to-Neumann operator
   on a spherical outer boundary and multipole right-hand-side operators
-  (`poisson.hpp`, `mesh.hpp`, `legendre.hpp`);
+  built on the harmonics below (`poisson.hpp`, `mesh.hpp`);
 - coupling of forms between a mesh and one of its `SubMesh`es through a
   boolean dof injection (`submesh.hpp`);
 - a linear quasi-static problem interface with traction and clamped
@@ -26,12 +28,12 @@ pieces are
   DtN outer condition, implementing the same interface so the viscoelastic
   layer runs on it unchanged (`self_gravitating.hpp`);
 - rigid-body and general null-space projectors for singular systems
-  (`solvers.hpp`);
+  (`null_space.hpp`);
 - real orthonormal harmonics on a circle or sphere, synthesis of surface
   fields and interior harmonic potentials from coefficients, and the
   analysis of a finite-element field (scalar, or the radial component of a
   vector) on any spherical boundary into coefficients, serial and parallel
-  (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads load and
+  (`spherical_harmonics.hpp`, `legendre.hpp`; `examples/love_numbers.cpp` reads load and
   tidal Love numbers off one solve per degree).
 
 Serial and parallel (MPI) paths are provided throughout. Design notes and the

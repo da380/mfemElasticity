@@ -45,6 +45,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <numbers>
 
 #include "mfemElasticity.hpp"
 
@@ -53,7 +54,7 @@ using namespace mfemElasticity;
 
 namespace {
 
-constexpr real_t kPi = 3.141592653589793238462643383279502884;
+constexpr real_t kPi = std::numbers::pi_v<real_t>;
 
 struct Analytic {
   real_t h, k, h_load, k_load;

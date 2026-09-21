@@ -66,20 +66,10 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
 }
 
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker, const mfem::Vector& x0) {
-  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
-}
-
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker) {
   auto x0 = mfem::Vector(mesh->Dimension());
   x0 = 0.0;
   return SphericalBoundaryRadius(mesh, bdr_marker, x0);
-}
-
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker) {
-  return SphericalBoundaryRadius(mesh, bdr_marker);
 }
 
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
@@ -151,20 +141,7 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
 }
 
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker,
-    const mfem::Vector& x0) {
-  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
-}
-
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker) {
-  auto x0 = mfem::Vector(mesh->Dimension());
-  x0 = 0.0;
-  return SphericalBoundaryRadius(mesh, bdr_marker, x0);
-}
-
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker) {
   auto x0 = mfem::Vector(mesh->Dimension());
   x0 = 0.0;
   return SphericalBoundaryRadius(mesh, bdr_marker, x0);
@@ -184,9 +161,11 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
 
 #endif
 
-mfem::Vector MeshCentroid(mfem::Mesh* mesh, mfem::Array<int>& dom_marker,
+mfem::Vector MeshCentroid(mfem::Mesh* mesh, const mfem::Array<int>& dom_marker,
                           int order) {
   using namespace mfem;
+  // The linear forms keep a pointer to a non-const marker.
+  auto marker = Array<int>(dom_marker);
   auto dim = mesh->Dimension();
   auto x0 = Vector(dim);
   x0 = 0.0;
@@ -196,7 +175,7 @@ mfem::Vector MeshCentroid(mfem::Mesh* mesh, mfem::Array<int>& dom_marker,
 
   auto c = ConstantCoefficient(1);
   auto f = LinearForm(&fes);
-  f.AddDomainIntegrator(new DomainLFIntegrator(c), dom_marker);
+  f.AddDomainIntegrator(new DomainLFIntegrator(c), marker);
   f.Assemble();
 
   auto u = GridFunction(&fes);
@@ -206,7 +185,7 @@ mfem::Vector MeshCentroid(mfem::Mesh* mesh, mfem::Array<int>& dom_marker,
   for (auto i = 0; i < dim; i++) {
     auto f = LinearForm(&fes);
     auto c = FunctionCoefficient([i](const Vector& x) { return x[i]; });
-    f.AddDomainIntegrator(new DomainLFIntegrator(c), dom_marker);
+    f.AddDomainIntegrator(new DomainLFIntegrator(c), marker);
     f.Assemble();
     x0(i) = f(u) / m;
   }
@@ -214,21 +193,17 @@ mfem::Vector MeshCentroid(mfem::Mesh* mesh, mfem::Array<int>& dom_marker,
   return x0;
 }
 
-mfem::Vector MeshCentroid(mfem::Mesh* mesh, mfem::Array<int>&& dom_marker,
-                          int order) {
-  return MeshCentroid(mesh, dom_marker, order);
-}
-
 mfem::Vector MeshCentroid(mfem::Mesh* mesh, int order) {
-  auto dom_marker = AllDomainsMarker(mesh);
-  return MeshCentroid(mesh, dom_marker, order);
+  return MeshCentroid(mesh, AllDomainsMarker(mesh), order);
 }
 
 #ifdef MFEM_USE_MPI
 
-mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>& dom_marker,
-                          int order) {
+mfem::Vector MeshCentroid(mfem::ParMesh* mesh,
+                          const mfem::Array<int>& dom_marker, int order) {
   using namespace mfem;
+  // The linear forms keep a pointer to a non-const marker.
+  auto marker = Array<int>(dom_marker);
   auto dim = mesh->Dimension();
   auto x0 = Vector(dim);
   x0 = 0.0;
@@ -238,7 +213,7 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>& dom_marker,
 
   auto c = ConstantCoefficient(1);
   auto f = ParLinearForm(&fes);
-  f.AddDomainIntegrator(new DomainLFIntegrator(c), dom_marker);
+  f.AddDomainIntegrator(new DomainLFIntegrator(c), marker);
   f.Assemble();
 
   auto u = ParGridFunction(&fes);
@@ -248,7 +223,7 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>& dom_marker,
   for (auto i = 0; i < dim; i++) {
     auto f = ParLinearForm(&fes);
     auto c = FunctionCoefficient([i](const Vector& x) { return x[i]; });
-    f.AddDomainIntegrator(new DomainLFIntegrator(c), dom_marker);
+    f.AddDomainIntegrator(new DomainLFIntegrator(c), marker);
     f.Assemble();
     x0(i) = f(u) / m;
   }
@@ -256,14 +231,8 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>& dom_marker,
   return x0;
 }
 
-mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>&& dom_marker,
-                          int order) {
-  return MeshCentroid(mesh, dom_marker, order);
-}
-
 mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order) {
-  auto dom_marker = AllDomainsMarker(mesh);
-  return MeshCentroid(mesh, dom_marker, order);
+  return MeshCentroid(mesh, AllDomainsMarker(mesh), order);
 }
 #endif
 

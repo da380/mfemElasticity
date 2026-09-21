@@ -1,11 +1,19 @@
+/**
+ * @file poisson.hpp
+ * @brief Exterior boundary conditions for Poisson's equation on a domain
+ * with a spherical (circular in 2-D) outer boundary: the Dirichlet-to-Neumann
+ * operator, and the multipole operators (and their linearisation about a
+ * mapped geometry) coupling a source region to that boundary.
+ */
+
 #pragma once
 
 #include <cassert>
 #include <cmath>
 #include <memory>
 
-#include "mesh.hpp"
-#include "mfemElasticity/legendre.hpp"
+#include "mfemElasticity/mesh.hpp"
+#include "mfemElasticity/spherical_harmonics.hpp"
 
 namespace mfemElasticity {
 
@@ -53,13 +61,12 @@ namespace mfemElasticity {
  * defined in Appendix B of Dahlen & Tromp (1998).
  *
  * It inherits from `mfem::Operator` for its matrix-vector product capabilities,
- * `LegendreHelper` for spherical harmonic related computations, and
+ * a `SurfaceHarmonics` basis for the harmonic expansions, and
  * `SphericalMeshHelper` for managing spherical mesh properties.
  *
  * The implementation considers both 2D (circular) and 3D (spherical) cases.
  */
 class PoissonDtNOperator : public mfem::Operator,
-                           protected LegendreHelper,
                            protected SphericalMeshHelper {
  private:
   /** @brief Pointer to the finite element space on which the operator acts. */
@@ -68,7 +75,9 @@ class PoissonDtNOperator : public mfem::Operator,
   int dim_;
   /** @brief Harmonic degree of the expansion */
   int degree_;
-  /** @brief Dimension of the coefficient space (e.g., 1 for scalar Poisson). */
+  /** @brief The harmonics about the boundary centroid, up to degree_. */
+  SurfaceHarmonics basis_;
+  /** @brief Number of harmonic coefficients, basis_.Size(). */
   int coeff_dim_;
   /** @brief The sparse matrix representing the assembled DtN operator. */
   mfem::SparseMatrix mat_;
@@ -91,63 +100,28 @@ class PoissonDtNOperator : public mfem::Operator,
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  /** @brief Mutable workspace vector for coefficient evaluation. */
+  /** @brief Workspace for the harmonic coefficients in Mult(). */
   mutable mfem::Vector c_;
-  /** @brief Workspace for shape functions. */
-  mfem::Vector shape;
-  /** @brief Workspace for physical coordinates. */
-  mfem::Vector x_;
-  /** @brief Workspace for sine values in spherical coordinates. */
-  mfem::Vector sin_;
-  /** @brief Workspace for cosine values in spherical coordinates. */
-  mfem::Vector cos_;
-  /** @brief Workspace for Legendre polynomials \f$ P_l^m \f$. */
-  mfem::Vector p_;
-  /** @brief Workspace for Legendre polynomials \f$ P_{l-1}^m \f$. */
-  mfem::Vector pm1_;
-  /** @brief Workspace for element matrix assembly. */
-  mfem::DenseMatrix elmat;
 #endif
 
   /**
-   * @brief Returns the dimension of the coefficient space.
-   * @return The coefficient dimension.
-   */
-  int CoeffDim() const;
-
-  /**
    * @brief Common setup routine called by both serial and parallel
-   * constructors. Initializes common parameters and helper classes.
+   * constructors: finds the spherical boundary and its centroid.
    */
   void SetUp();
 
   /**
-   * @brief Assembles the 2D element matrix for the DtN operator.
+   * @brief Element matrix of the factor @f$C@f$ of the operator,
+   * @f$B = C C^T@f$: the pairing of the boundary element's shape functions
+   * with the weighted harmonics.
    *
-   * This method computes the local contribution of the operator for a
-   * given 2D finite element, typically a boundary segment.
-   *
-   * @param fe The finite element.
+   * @param fe The (boundary) finite element.
    * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
+   * @param elmat The element matrix, dofs by harmonic coefficients.
    */
-  void AssembleElementMatrix2D(const mfem::FiniteElement& fe,
-                               mfem::ElementTransformation& Trans,
-                               mfem::DenseMatrix& elmat);
-
-  /**
-   * @brief Assembles the 3D element matrix for the DtN operator.
-   *
-   * This method computes the local contribution of the operator for a
-   * given 3D finite element, typically a boundary face.
-   *
-   * @param fe The finite element.
-   * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
-   */
-  void AssembleElementMatrix3D(const mfem::FiniteElement& fe,
-                               mfem::ElementTransformation& Trans,
-                               mfem::DenseMatrix& elmat);
+  void AssembleElementMatrix(const mfem::FiniteElement& fe,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat);
 
  public:
   /**
@@ -188,10 +162,14 @@ class PoissonDtNOperator : public mfem::Operator,
   }
 
   /**
-   * @brief Given a gridfunction (or associated vector), returns the
-   * a vector of the harmonic coefficients of the field computed on the boundary
+   * @brief The harmonic coefficients of a field on the boundary,
+   * @f$c_i = b^{1-d}\int_{\partial\Omega} u\,Y_i \dd S@f$, in the ordering
+   * and normalisation of SurfaceHarmonics (as returned by
+   * BoundaryHarmonicCoefficients, which serves any spherical boundary). The
+   * 2-D operator has no degree-zero term, and that coefficient is returned
+   * as zero.
    * @param x The input vector (Dirichlet data).
-   * @param y Harmonic coefficients in a vector.
+   * @param y Harmonic coefficients, sized to the basis.
    */
   void HarmonicCoefficients(const mfem::Vector& x, mfem::Vector& y) const;
 
@@ -228,11 +206,10 @@ class PoissonDtNOperator : public mfem::Operator,
  *
  *
  * It inherits from `mfem::Operator` for its matrix-vector product capabilities,
- * `LegendreHelper` for spherical harmonic related computations, and
+ * a `SurfaceHarmonics` basis for the harmonic expansions, and
  * `SphericalMeshHelper` for managing spherical mesh properties.
  */
 class PoissonMultipoleOperator : public mfem::Operator,
-                                 protected LegendreHelper,
                                  protected SphericalMeshHelper {
  private:
   /** @brief Pointer to the trial finite element space. */
@@ -243,7 +220,9 @@ class PoissonMultipoleOperator : public mfem::Operator,
   int dim_;
   /** @brief Polynomial degree of the finite element spaces. */
   int degree_;
-  /** @brief Dimension of the coefficient space (e.g., 1 for scalar Poisson). */
+  /** @brief The harmonics about the boundary centroid, up to degree_. */
+  SurfaceHarmonics basis_;
+  /** @brief Number of harmonic coefficients, basis_.Size(). */
   int coeff_dim_;
   /** @brief Marker array indicating which domain attributes are included in the
    * operation. */
@@ -269,79 +248,39 @@ class PoissonMultipoleOperator : public mfem::Operator,
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  /** @brief Mutable workspace vector for coefficient evaluation. */
+  /** @brief Workspace for the harmonic coefficients in Mult(). */
   mutable mfem::Vector c_;
-  /** @brief Workspace for shape functions. */
-  mfem::Vector shape;
-  /** @brief Workspace for physical coordinates. */
-  mfem::Vector x_;
-  /** @brief Workspace for sine values in spherical coordinates. */
-  mfem::Vector sin_;
-  /** @brief Workspace for cosine values in spherical coordinates. */
-  mfem::Vector cos_;
-  /** @brief Workspace for Legendre polynomials \f$ P_l^m \f$. */
-  mfem::Vector p_;
-  /** @brief Workspace for Legendre polynomials \f$ P_{l-1}^m \f$. */
-  mfem::Vector pm1_;
-  /** @brief Workspace for element matrix assembly. */
-  mfem::DenseMatrix elmat;
 #endif
 
   /**
-   * @brief Returns the dimension of the coefficient space.
-   * @return The coefficient dimension.
-   */
-  int CoeffDim() const;
-
-  /**
    * @brief Common setup routine called by both serial and parallel
-   * constructors. Initializes common parameters and helper classes.
+   * constructors: finds the spherical boundary and its centroid.
    */
   void SetUp();
 
   /**
-   * @brief Assembles the 2D element matrix for the left-hand side of the
-   * Multipole operator.
-   * @param fe The finite element.
+   * @brief Element matrix of the left factor: the pairing of a boundary
+   * element's shape functions with the harmonics.
+   *
+   * @param fe The (boundary) finite element of the test space.
    * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
+   * @param elmat The element matrix, dofs by harmonic coefficients.
    */
-  void AssembleLeftElementMatrix2D(const mfem::FiniteElement& fe,
-                                   mfem::ElementTransformation& Trans,
-                                   mfem::DenseMatrix& elmat);
+  void AssembleLeftElementMatrix(const mfem::FiniteElement& fe,
+                                 mfem::ElementTransformation& Trans,
+                                 mfem::DenseMatrix& elmat);
 
   /**
-   * @brief Assembles the 3D element matrix for the left-hand side of the
-   * Multipole operator.
-   * @param fe The finite element.
+   * @brief Element matrix of the right factor: the pairing of a domain
+   * element's shape functions with the interior harmonics.
+   *
+   * @param fe The finite element of the trial space.
    * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
+   * @param elmat The element matrix, dofs by harmonic coefficients.
    */
-  void AssembleLeftElementMatrix3D(const mfem::FiniteElement& fe,
-                                   mfem::ElementTransformation& Trans,
-                                   mfem::DenseMatrix& elmat);
-
-  /**
-   * @brief Assembles the 2D element matrix for the right-hand side of the
-   * Multipole operator.
-   * @param fe The finite element.
-   * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
-   */
-  virtual void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
-                                            mfem::ElementTransformation& Trans,
-                                            mfem::DenseMatrix& elmat);
-
-  /**
-   * @brief Assembles the 3D element matrix for the right-hand side of the
-   * Multipole operator.
-   * @param fe The finite element.
-   * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
-   */
-  virtual void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
-                                            mfem::ElementTransformation& Trans,
-                                            mfem::DenseMatrix& elmat);
+  void AssembleRightElementMatrix(const mfem::FiniteElement& fe,
+                                  mfem::ElementTransformation& Trans,
+                                  mfem::DenseMatrix& elmat);
 
  public:
   /**
@@ -355,20 +294,6 @@ class PoissonMultipoleOperator : public mfem::Operator,
   PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
                            mfem::FiniteElementSpace* te_fes, int degree,
                            const mfem::Array<int>& dom_marker);
-
-  /**
-   * @brief Constructs a serial PoissonMultipoleOperator (move version).
-   * This overload takes the `dom_marker` by rvalue reference.
-   * @param tr_fes Pointer to the trial finite element space.
-   * @param te_fes Pointer to the test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
-   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
-   * (1 for inclusion, 0 for exclusion) to consider for assembly (moved).
-   */
-  PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
-                           mfem::FiniteElementSpace* te_fes, int degree,
-                           mfem::Array<int>&& dom_marker)
-      : PoissonMultipoleOperator(tr_fes, te_fes, degree, dom_marker) {}
 
   /**
    * @brief Constructs a serial PoissonMultipoleOperator for all domains.
@@ -396,21 +321,6 @@ class PoissonMultipoleOperator : public mfem::Operator,
   PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
                            mfem::ParFiniteElementSpace* te_fes, int degree,
                            const mfem::Array<int>& dom_marker);
-
-  /**
-   * @brief Constructs a parallel PoissonMultipoleOperator (move version).
-   * This overload takes the `dom_marker` by rvalue reference.
-   * @param comm The MPI communicator.
-   * @param tr_fes Pointer to the parallel trial finite element space.
-   * @param te_fes Pointer to the parallel test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
-   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
-   * (1 for inclusion, 0 for exclusion) to consider for assembly (moved).
-   */
-  PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
-                           mfem::ParFiniteElementSpace* te_fes, int degree,
-                           mfem::Array<int>&& dom_marker)
-      : PoissonMultipoleOperator(comm, tr_fes, te_fes, degree, dom_marker) {}
 
   /**
    * @brief Constructs a parallel PoissonMultipoleOperator for all domains.
@@ -474,12 +384,11 @@ class PoissonMultipoleOperator : public mfem::Operator,
  *
  *
  * It inherits from `mfem::Operator` for its matrix-vector product capabilities,
- * `LegendreHelper` for spherical harmonic related computations, and
+ * a `SurfaceHarmonics` basis for the harmonic expansions, and
  * `SphericalMeshHelper` for managing spherical mesh properties.
  */
 
 class PoissonLinearisedMultipoleOperator : public mfem::Operator,
-                                           protected LegendreHelper,
                                            protected SphericalMeshHelper {
  private:
   /** @brief Pointer to the trial finite element space. */
@@ -492,7 +401,9 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
   int dim_;
   /** @brief Polynomial degree of the finite element spaces. */
   int degree_;
-  /** @brief Dimension of the coefficient space. */
+  /** @brief The harmonics about the boundary centroid, up to degree_. */
+  SurfaceHarmonics basis_;
+  /** @brief Number of harmonic coefficients, basis_.Size(). */
   int coeff_dim_;
   /** @brief Marker array indicating which domain attributes are included in the
    * operation. */
@@ -518,85 +429,41 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  /** @brief Mutable workspace vector for constant coefficient evaluation. */
-  mutable mfem::Vector c0_;
-  /** @brief Workspace for shape functions. */
-  mfem::Vector shape;
-  /** @brief Workspace for physical coordinates. */
-  mfem::Vector x_;
-  /** @brief Workspace for sine values in spherical coordinates. */
-  mfem::Vector sin_;
-  /** @brief Workspace for cosine values in spherical coordinates. */
-  mfem::Vector cos_;
-  /** @brief Workspace for Legendre polynomials \f$ P_l^m \f$. */
-  mfem::Vector p_;
-  /** @brief Workspace for Legendre polynomials \f$ P_{l-1}^m \f$. */
-  mfem::Vector pm1_;
-  /** @brief Workspace for linearised coefficient `c1`. */
-  mfem::Vector c1_;
-  /** @brief Workspace for linearised coefficient `c2`. */
-  mfem::Vector c2_;
-  /** @brief Workspace for element matrix assembly. */
-  mfem::DenseMatrix elmat;
-  /** @brief Workspace for partial element matrix assembly. */
-  mfem::DenseMatrix part_elmat;
+  /** @brief Workspace for the harmonic coefficients in Mult(). */
+  mutable mfem::Vector c_;
 #endif
 
   /**
-   * @brief Returns the dimension of the coefficient space.
-   * @return The coefficient dimension.
-   */
-  int CoeffDim() const;
-
-  /**
    * @brief Common setup routine called by both serial and parallel
-   * constructors. Initializes common parameters and helper classes.
+   * constructors: finds the spherical boundary and its centroid.
    */
   void SetUp();
 
   /**
-   * @brief Assembles the 2D element matrix for the left-hand side of the
-   * Linearised Multipole operator.
-   * @param fe The finite element.
+   * @brief Element matrix of the left factor: the pairing of a boundary
+   * element's shape functions with the harmonics.
+   *
+   * @param fe The (boundary) finite element of the test space.
    * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
+   * @param elmat The element matrix, dofs by harmonic coefficients.
    */
-  void AssembleLeftElementMatrix2D(const mfem::FiniteElement& fe,
-                                   mfem::ElementTransformation& Trans,
-                                   mfem::DenseMatrix& elmat);
+  void AssembleLeftElementMatrix(const mfem::FiniteElement& fe,
+                                 mfem::ElementTransformation& Trans,
+                                 mfem::DenseMatrix& elmat);
 
   /**
-   * @brief Assembles the 3D element matrix for the left-hand side of the
-   * Linearised Multipole operator.
-   * @param fe The finite element.
+   * @brief Element matrix of the right factor: the pairing of a domain
+   * element's shape functions with the gradients of the interior
+   * harmonics, weighted by the density if one is given.
+   *
+   * @param fe The finite element of the trial space.
    * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
+   * @param elmat The element matrix, vdofs (component-blocked) by harmonic
+   * coefficients.
    */
-  void AssembleLeftElementMatrix3D(const mfem::FiniteElement& fe,
-                                   mfem::ElementTransformation& Trans,
-                                   mfem::DenseMatrix& elmat);
-
-  /**
-   * @brief Assembles the 2D element matrix for the right-hand side of the
-   * Linearised Multipole operator.
-   * @param fe The finite element.
-   * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
-   */
-  virtual void AssembleRightElementMatrix2D(const mfem::FiniteElement& fe,
-                                            mfem::ElementTransformation& Trans,
-                                            mfem::DenseMatrix& elmat);
-
-  /**
-   * @brief Assembles the 3D element matrix for the right-hand side of the
-   * Linearised Multipole operator.
-   * @param fe The finite element.
-   * @param Trans The element transformation.
-   * @param elmat The dense matrix to store the element contribution.
-   */
-  virtual void AssembleRightElementMatrix3D(const mfem::FiniteElement& fe,
-                                            mfem::ElementTransformation& Trans,
-                                            mfem::DenseMatrix& elmat);
+  void AssembleRightElementMatrix(const mfem::FiniteElement& fe,
+                                  mfem::ElementTransformation& Trans,
+                                  mfem::DenseMatrix& elmat);
 
  public:
   /**
@@ -647,42 +514,6 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
             AllDomainsMarker(tr_fes->GetMesh())) {}
 
   /**
-   * @brief Constructs a serial PoissonLinearisedMultipoleOperator (move
-   * version). This overload takes the `dom_marker` by rvalue reference.
-   * @param tr_fes Pointer to the trial finite element space.
-   * @param te_fes Pointer to the test finite element space.
-   * @param density Reference to an mfem::Coefficient for the equilibrium
-   * density.
-   * @param degree The polynomial degree of the FE spaces.
-   * @param dom_marker An `mfem::Array<int>` marking which domain
-   * attributes (1 for inclusion, 0 for exclusion) to consider for
-   * assembly (moved).
-   */
-  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
-                                     mfem::FiniteElementSpace* te_fes,
-                                     mfem::Coefficient& density, int degree,
-                                     mfem::Array<int>&& dom_marker)
-      : PoissonLinearisedMultipoleOperator(tr_fes, te_fes, density, degree,
-                                           dom_marker) {}
-
-  /**
-   * @brief Constructs a serial PoissonLinearisedMultipoleOperator (move
-   * version). This overload takes the `dom_marker` by rvalue reference,
-   * and uses the default constant value for the density.
-   * @param tr_fes Pointer to the trial finite element space.
-   * @param te_fes Pointer to the test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
-   * @param dom_marker An `mfem::Array<int>` marking which domain
-   * attributes (1 for inclusion, 0 for exclusion) to consider for
-   * assembly (moved).
-   */
-  PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
-                                     mfem::FiniteElementSpace* te_fes,
-                                     int degree, mfem::Array<int>&& dom_marker)
-      : PoissonLinearisedMultipoleOperator(tr_fes, te_fes, degree, dom_marker) {
-  }
-
-  /**
    * @brief Constructs a serial PoissonLinearisedMultipoleOperator for all
    * domains. This overload automatically uses `AllDomainsMarker` from
    * `tr_fes->GetMesh()` to include all domain attributes in the assembly,
@@ -731,43 +562,6 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
                                      mfem::ParFiniteElementSpace* te_fes,
                                      int degree,
                                      const mfem::Array<int>& dom_marker);
-
-  /**
-   * @brief Constructs a parallel PoissonLinearisedMultipoleOperator (move
-   * version). This overload takes the `dom_marker` by rvalue reference.
-   * @param comm The MPI communicator.
-   * @param tr_fes Pointer to the parallel trial finite element space.
-   * @param te_fes Pointer to the parallel test finite element space.
-   * @param density Reference to mfem::Coefficient for the density.
-   * @param degree The polynomial degree of the FE spaces.
-   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
-   * (1 for inclusion, 0 for exclusion) to consider for assembly (moved).
-   */
-  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
-                                     mfem::ParFiniteElementSpace* tr_fes,
-                                     mfem::ParFiniteElementSpace* te_fes,
-                                     mfem::Coefficient& density, int degree,
-                                     mfem::Array<int>&& dom_marker)
-      : PoissonLinearisedMultipoleOperator(comm, tr_fes, te_fes, density,
-                                           degree, dom_marker) {}
-
-  /**
-   * @brief Constructs a parallel PoissonLinearisedMultipoleOperator (move
-   * version). This overload takes the `dom_marker` by rvalue reference,
-   * and uses the default density.
-   * @param comm The MPI communicator.
-   * @param tr_fes Pointer to the parallel trial finite element space.
-   * @param te_fes Pointer to the parallel test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
-   * @param dom_marker An `mfem::Array<int>` marking which domain attributes
-   * (1 for inclusion, 0 for exclusion) to consider for assembly (moved).
-   */
-  PoissonLinearisedMultipoleOperator(MPI_Comm comm,
-                                     mfem::ParFiniteElementSpace* tr_fes,
-                                     mfem::ParFiniteElementSpace* te_fes,
-                                     int degree, mfem::Array<int>&& dom_marker)
-      : PoissonLinearisedMultipoleOperator(comm, tr_fes, te_fes, degree,
-                                           dom_marker) {}
 
   /**
    * @brief Constructs a parallel PoissonLinearisedMultipoleOperator. This
@@ -837,174 +631,6 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    */
   mfem::RAPOperator RAP() const;
 #endif
-};
-
-/**
- * @brief BilinearFormIntegrator for the transformed Laplace integrator.
- *
- * The bilinear form acts on a pair of scalar fields through
- * \f[
- *  (v,u) \mapsto \int_{\Omega} \grad v \cdot \bvec{a} \cdot \grad u \dd x,
- * \f]
- * with \f$\Omega\f$ the domain and $where the symmetric matrix field,
- * \f$\bvec{a}\f$, takes the form
- * \f[
- * \bvec{a} = J \bvec{C}^{-1}  = J \bvec{F}^{-1} \bvec{F}^{-T},
- * \f]
- * with \f$\bvec{F} = \deriv \boldsymbol{\xi}\f$ for a diffeomorphism,
- * \f$\boldsymbol{\xi}\f$, on
- * \f$\Omega\f$.
- *
- *
- * The diffeomorphism and/or resulting matrix field can be specified in three
- * ways:
- *
- * -# A `mfem::Coefficient` is provided which specifies the scalar part,
- * \f$f\f$, of a radial mapping \f$\boldsymbol{\xi}(\bvec{x}) = f(\bvec{x})
- * \bvec{x}\f$. The form of \f$\bvec{a}\f$ is then calculated numerically.
- * -# A `mfem::VectorCoefficient` which directly specifies
- * \f$\boldsymbol{\xi}\f$ is provided. The form of \f$\bvec{a}\f$ is then
- * calculated numerically.
- * -# A `mfem::MatrixCoefficient` specifying \f$\bvec{a}\f$ is given directly.
- *
- * There is also a constructor for which no coefficients are provided, this
- * corresponding to the identity transformation.
- */
-class TransformedDiffusionIntegrator : public mfem::BilinearFormIntegrator {
- private:
-  mfem::Coefficient* Q =
-      nullptr; /**< Scalar coefficient for radial transformation. */
-  mfem::VectorCoefficient* QV =
-      nullptr; /**< Vector coefficient for diagonal transformation. */
-  mfem::MatrixCoefficient* QM =
-      nullptr; /**< Matrix coefficient for general transformation. */
-
-#ifndef MFEM_THREAD_SAFE
-  mfem::Vector fs, df, x;
-  mfem::DenseMatrix trial_dshape, test_dshape, xis, F, a,
-      trial_dshape_trans; /**< Internal buffers for shape function derivatives
-and intermediate matrices during integration. */
-#endif
-
- public:
-  /**
-   * @brief Constructor for the idenity mapping.
-   * @param ir An optional pointer to an `mfem::IntegrationRule`.
-   */
-  TransformedDiffusionIntegrator(const mfem::IntegrationRule* ir = nullptr)
-      : mfem::BilinearFormIntegrator(ir) {}
-
-  /**
-   * @brief Constructor for a radial mapping specified by a scalar
-   * function.
-   * @param q A reference to the `mfem::Coefficient` \f$ q \f$.
-   * @param ir An optional pointer to an `mfem::IntegrationRule`.
-   */
-  TransformedDiffusionIntegrator(mfem::Coefficient& q,
-                                 const mfem::IntegrationRule* ir = nullptr)
-      : mfem::BilinearFormIntegrator(ir), Q{&q} {}
-
-  /**
-   * @brief Constructor for a general transformation specified by a
-   * VectorCoefficient.
-   * @param qv A reference to the `mfem::VectorCoefficient` \f$ q \f$.
-   * @param ir An optional pointer to an `mfem::IntegrationRule`.
-   */
-  TransformedDiffusionIntegrator(mfem::VectorCoefficient& qv,
-                                 const mfem::IntegrationRule* ir = nullptr)
-      : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
-
-  /**
-   * @brief Constructor for which the matrix \f$\bvec{a}\f$ is provided
-   * directly.
-   * @param qm A reference to the `mfem::MatrixCoefficient` \f$ q \f$.
-   * @param ir An optional pointer to an `mfem::IntegrationRule`.
-   */
-  TransformedDiffusionIntegrator(mfem::MatrixCoefficient& qm,
-                                 const mfem::IntegrationRule* ir = nullptr)
-      : mfem::BilinearFormIntegrator(ir), QM{&qm} {}
-
-  /**
-   * @brief Sets the default integration rule.
-   *
-   * The orders of the trial space, test space, and element transformation are
-   * taken into account. Variations in the coefficient are not considered.
-   *
-   * @param trial_fe The trial finite element.
-   * @param test_fe The test finite element.
-   * @param Trans The element transformation.
-   * @return A constant reference to the chosen `mfem::IntegrationRule`.
-   */
-  static const mfem::IntegrationRule& GetRule(
-      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
-      const mfem::ElementTransformation& Trans);
-
-  /**
-   * @brief Implementation of the element level assembly for the bilinear form.
-   * @param trial_fe The trial finite element.
-   * @param test_fe The test finite element.
-   * @param Trans The element transformation.
-   * @param elmat The output dense matrix representing the element stiffness
-   * matrix.
-   */
-  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
-                              const mfem::FiniteElement& test_fe,
-                              mfem::ElementTransformation& Trans,
-                              mfem::DenseMatrix& elmat) override;
-
-  /**
-   * @brief Assembly method when the trial and test spaces are equal.
-   * @param fe The finite element for both trial and test spaces.
-   * @param Trans The element transformation.
-   * @param elmat The output dense matrix representing the element stiffness
-   * matrix.
-   */
-  void AssembleElementMatrix(const mfem::FiniteElement& fe,
-                             mfem::ElementTransformation& Trans,
-                             mfem::DenseMatrix& elmat) override {
-    AssembleElementMatrix2(fe, fe, Trans, elmat);
-  }
-
- protected:
-  /**
-   * @brief Protected method to get the default integration rule.
-   * @param trial_fe The trial finite element.
-   * @param test_fe The test finite element.
-   * @param trans The element transformation.
-   * @return A constant pointer to the chosen `mfem::IntegrationRule`.
-   */
-  const mfem::IntegrationRule* GetDefaultIntegrationRule(
-      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
-      const mfem::ElementTransformation& trans) const {
-    return &GetRule(trial_fe, test_fe, trans);
-  }
-};
-
-class RadialDiffeomorphismCoefficient : public mfem::VectorCoefficient {
- private:
-  mfem::VectorCoefficient* QV_ = nullptr;
-  mfem::Coefficient* Q_ = nullptr;
-
- public:
-  RadialDiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
-
-  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
-            const mfem::IntegrationPoint& ip);
-};
-
-class TransformedFunctionCoefficient : public mfem::Coefficient {
- private:
-  mfem::VectorCoefficient* xi_;
-  std::function<mfem::real_t(const mfem::Vector&)> f_;
-
- public:
-  TransformedFunctionCoefficient(
-      mfem::VectorCoefficient& xi,
-      std::function<mfem::real_t(const mfem::Vector&)> f)
-      : xi_{&xi}, f_{std::move(f)} {}
-
-  mfem::real_t Eval(mfem::ElementTransformation& T,
-                    const mfem::IntegrationPoint& ip) override;
 };
 
 }  // namespace mfemElasticity

@@ -16,7 +16,7 @@
 #include "mfemElasticity/coefficient.hpp"
 #include "mfemElasticity/poisson.hpp"
 #include "mfemElasticity/quasi_static_problem.hpp"
-#include "mfemElasticity/solvers.hpp"
+#include "mfemElasticity/null_space.hpp"
 #include "mfemElasticity/submesh.hpp"
 
 namespace mfemElasticity {

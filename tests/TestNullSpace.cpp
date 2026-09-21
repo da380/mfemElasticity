@@ -7,7 +7,7 @@
 #include "QuasiStaticTestCommon.hpp"
 
 /*
-  Tests for the rigid-mode null-space handling in solvers.hpp
+  Tests for the rigid-mode null-space handling in null_space.hpp
   (doc/status_and_roadmap.md, follow-up F1):
 
   - MakeRigidModeProjector() holds d(d+1)/2 orthonormal vectors that are

@@ -1,5 +1,5 @@
 /*
-  Parallel tests for the rigid-mode null-space handling in solvers.hpp
+  Parallel tests for the rigid-mode null-space handling in null_space.hpp
   (doc/status_and_roadmap.md, follow-up F1). Run with 1, 2 and 4 ranks; a
   standalone MPI program returning the number of failed checks.
 
