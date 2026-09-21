@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Scripts that generate the gmsh meshes in ../data with planetmodel"
 requires-python = ">=3.12"
 dependencies = [
-    "planetmodel[meshing,mfem]>=1.1.0",
+    "planetmodel[meshing,mfem]>=1.2.1",
 ]
 
 [tool.poetry]

@@ -3,19 +3,29 @@
 # (planetmodel driving gmsh). Nothing is written to the source tree.
 #
 # A Python able to `import planetmodel.mesh3d` and `import mfem.ser` (the
-# aspherical meshes are written through PyMFEM) is needed. MESHES_PYTHON
+# aspherical meshes are written through PyMFEM) is needed, with planetmodel
+# at least PLANETMODEL_MINIMUM_VERSION (before 1.2.1 the element size rippled
+# along every interface and came out coarser than asked). MESHES_PYTHON
 # names one; otherwise the Python found by CMake is tried, and failing
 # that a virtual environment is created under the build directory and
 # planetmodel[meshing,mfem] is installed into it with pip (once).
 
 set(MESHES_PYTHON "" CACHE FILEPATH
     "Python interpreter with planetmodel[meshing]; found or created if empty")
-set(PLANETMODEL_REQUIREMENT "planetmodel[meshing,mfem]>=1.1.0" CACHE STRING
+set(PLANETMODEL_MINIMUM_VERSION "1.2.1")
+set(PLANETMODEL_REQUIREMENT
+    "planetmodel[meshing,mfem]>=${PLANETMODEL_MINIMUM_VERSION}" CACHE STRING
     "pip requirement installed into the build's venv when no suitable Python is found")
 
 function(meshes_python_works python out_var)
+    string(REPLACE "." ", " _minimum "${PLANETMODEL_MINIMUM_VERSION}")
     execute_process(
-        COMMAND "${python}" -c "import planetmodel.mesh3d, mfem.ser"
+        COMMAND "${python}" -c "
+import re
+from importlib.metadata import version
+import planetmodel.mesh3d, mfem.ser
+found = tuple(int(n) for n in re.findall(r'\\d+', version('planetmodel'))[:3])
+raise SystemExit(0 if found >= (${_minimum}) else 1)"
         RESULT_VARIABLE result OUTPUT_QUIET ERROR_QUIET)
     if(result EQUAL 0)
         set(${out_var} TRUE PARENT_SCOPE)
@@ -60,8 +70,9 @@ endif()
 
 meshes_python_works("${MESHES_PYTHON}" _works)
 if(NOT _works)
-    message(FATAL_ERROR "${MESHES_PYTHON} cannot import planetmodel.mesh3d and mfem.ser; "
-                        "install planetmodel[meshing,mfem] for it or unset MESHES_PYTHON")
+    message(FATAL_ERROR "${MESHES_PYTHON} cannot import planetmodel.mesh3d (version "
+                        "${PLANETMODEL_MINIMUM_VERSION} or later) and mfem.ser; install "
+                        "${PLANETMODEL_REQUIREMENT} for it or unset MESHES_PYTHON")
 endif()
 message(STATUS "Meshes: generated with ${MESHES_PYTHON}")
 
