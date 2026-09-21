@@ -33,7 +33,7 @@ pieces are
   fields and interior harmonic potentials from coefficients, and the
   analysis of a finite-element field (scalar, or the radial component of a
   vector) on any spherical boundary into coefficients, serial and parallel
-  (`spherical_harmonics.hpp`, `legendre.hpp`; `examples/love_numbers.cpp` reads load and
+  (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads load and
   tidal Love numbers off one solve per degree).
 
 Serial and parallel (MPI) paths are provided throughout. Design notes and the

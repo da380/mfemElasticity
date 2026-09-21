@@ -19,10 +19,10 @@
 #pragma once
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "mfem.hpp"
-#include "mfemElasticity/legendre.hpp"
 
 namespace mfemElasticity {
 
@@ -42,7 +42,7 @@ namespace mfemElasticity {
  * so @f$2L + 1@f$ coefficients. Only @f$m = \pm l@f$ (and @f$m = 0@f$ for
  * @f$l = 0@f$) exist.
  */
-class SurfaceHarmonics : protected LegendreHelper {
+class SurfaceHarmonics {
  public:
   SurfaceHarmonics(int dim, int max_degree);
 
@@ -78,8 +78,16 @@ class SurfaceHarmonics : protected LegendreHelper {
   void EvalImpl(const mfem::Vector& x, mfem::Vector& Y,
                 mfem::DenseMatrix* gradY) const;
 
+  /** @brief @f$(\alpha, \beta)@f$ of the three-term recursion in the degree,
+   * @f$X_{lm} = \alpha\,(\cos\theta\,X_{l-1,m} - \beta\,X_{l-2,m})@f$,
+   * for @f$m < l@f$. */
+  std::pair<mfem::real_t, mfem::real_t> RecursionCoefficients(int l,
+                                                              int m) const;
+
   int dim_, lmax_, size_;
   std::vector<int> degree_, order_;
+  /** Square roots of the integers up to 2 L + 1, and their inverses (3-D). */
+  mfem::Vector sqrt_, isqrt_;
 #ifndef MFEM_THREAD_SAFE
   mutable mfem::Vector p_, pm1_, cos_, sin_;
 #endif

@@ -10,6 +10,8 @@
   gmsh spheres/circles) and on the parent mesh's outer boundary.
 
   - Index map: Index(l, m) inverts Degree/Order; 2-D and 3-D sizes.
+  - Degree one against x_hat, to full relative accuracy next to the polar
+    axis (where 1 - cos^2 would lose the sine).
   - Surface gradient: EvalWithGradient against central differences of the
     solid harmonics r^l Y_i, at generic points, on the polar axis and at the
     centre.
@@ -84,6 +86,27 @@ TEST_P(SphericalHarmonicsTest, IndexMap) {
   basis.Eval(x, Y2);
   Y2 -= Y;
   EXPECT_LT(Y2.Normlinf(), 1e-13);
+}
+
+TEST(SphericalHarmonicsAccuracy, DegreeOneNearThePolarAxis) {
+  // Y_{1,0} = c z/r, Y_{1,1} = -c x/r, Y_{1,-1} = -c y/r, c = sqrt(3/(4 pi)).
+  SurfaceHarmonics basis(3, 4);
+  const real_t c = std::sqrt(3.0 / (4.0 * std::numbers::pi));
+  for (real_t pole : {1.0, -1.0}) {
+    for (real_t eps : {1e-3, 1e-6, 1e-9}) {
+      Vector x(3), Y;
+      x[0] = eps;
+      x[1] = -2.0 * eps;
+      x[2] = pole;
+      basis.Eval(x, Y);
+      const real_t r = x.Norml2();
+      EXPECT_NEAR(Y[basis.Index(1, 0)], c * x[2] / r, 1e-14);
+      EXPECT_NEAR(Y[basis.Index(1, 1)] / (-c * x[0] / r), 1.0, 1e-13)
+          << "eps = " << eps;
+      EXPECT_NEAR(Y[basis.Index(1, -1)] / (-c * x[1] / r), 1.0, 1e-13)
+          << "eps = " << eps;
+    }
+  }
 }
 
 TEST_P(SphericalHarmonicsTest, SurfaceGradient) {

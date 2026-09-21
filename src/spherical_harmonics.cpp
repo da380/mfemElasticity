@@ -43,7 +43,14 @@ SurfaceHarmonics::SurfaceHarmonics(int dim, int max_degree)
         order_[l * l + l + m] = m;
       }
     }
-    SetSquareRoots(3, lmax_);
+    sqrt_.SetSize(2 * lmax_ + 2);
+    isqrt_.SetSize(2 * lmax_ + 2);
+    sqrt_[0] = 0.0;
+    isqrt_[0] = 0.0;
+    for (int k = 1; k <= 2 * lmax_ + 1; k++) {
+      sqrt_[k] = std::sqrt(static_cast<real_t>(k));
+      isqrt_[k] = 1 / sqrt_[k];
+    }
 #ifndef MFEM_THREAD_SAFE
     p_.SetSize(lmax_ + 1);
     pm1_.SetSize(lmax_ + 1);
@@ -51,6 +58,16 @@ SurfaceHarmonics::SurfaceHarmonics(int dim, int max_degree)
     sin_.SetSize(lmax_ + 1);
 #endif
   }
+}
+
+std::pair<real_t, real_t> SurfaceHarmonics::RecursionCoefficients(int l,
+                                                                  int m) const {
+  const real_t alpha =
+      sqrt_[2 * l + 1] * sqrt_[2 * l - 1] * isqrt_[l + m] * isqrt_[l - m];
+  const real_t beta = l > 1 ? sqrt_[l - 1 + m] * sqrt_[l - 1 - m] *
+                                  isqrt_[2 * l - 1] * isqrt_[2 * l - 3]
+                            : real_t{0};
+  return {alpha, beta};
 }
 
 int SurfaceHarmonics::Index(int l, int m) const {
@@ -130,7 +147,11 @@ void SurfaceHarmonics::EvalImpl(const Vector& x, Vector& Y,
   sin_[0] = 0.0;
   pm1_ = 0.0;
   p_ = 0.0;
-  p_[0] = Pll(0, cos_theta);
+  // The sectoral functions by X_{ll} = -sqrt((2l + 1) / (2l)) sin(theta)
+  // X_{l-1,l-1} from X_{00} = 1 / sqrt(4 pi); sin(theta) comes from the
+  // coordinates, so nothing is lost near the polar axis.
+  real_t sectoral = kInvSqrtPi / 2;
+  p_[0] = sectoral;
   Y[0] = p_[0];
   if (gradY) {
     set_gradient(0, 0.0, 0.0);
@@ -143,7 +164,8 @@ void SurfaceHarmonics::EvalImpl(const Vector& x, Vector& Y,
       const auto [alpha, beta] = RecursionCoefficients(l, m);
       pm1_[m] = alpha * (cos_theta * p_[m] - beta * pm1_[m]);
     }
-    pm1_[l] = Pll(l, cos_theta);
+    sectoral *= -sqrt_[2 * l + 1] * isqrt_[2 * l] * sin_theta;
+    pm1_[l] = sectoral;
     p_[l] = 0.0;
     std::swap(p_, pm1_);
     const int base = l * l + l;
