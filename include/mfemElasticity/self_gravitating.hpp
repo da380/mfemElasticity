@@ -121,7 +121,7 @@ struct FluidRegion {
  *   Schur complement @f$S = A_{uu} - C A_{\phi\phi}^{-1} C^T@f$, which is
  *   symmetric and, for a gravitationally stable body, positive on the
  *   complement of the rigid modes; each application costs one inner
- *   Poisson solve. Kept as the gauge-clean reference.
+ *   Poisson solve. The reference against which BlockMINRES is checked.
  * Both warm start across solves. The inner potential solves use CG; with
  * fluid regions the potential block is @f$(K + \mathrm{DtN})/4\pi G +
  * M_F@f$ with @f$M_F \le 0@f$ where density increases downward, positive

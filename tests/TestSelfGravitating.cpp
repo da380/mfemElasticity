@@ -15,8 +15,8 @@
     (the coupling, the gravity terms and the background potential all
     vanish). On these curved meshes the rigid rotations are exact null
     vectors only for order >= 2, so the reference uses the same P A P
-    regularisation as the class rather than LinearQuasiStaticTractionProblem's
-  solver.
+    regularisation as the class rather than
+    LinearQuasiStaticTractionProblem's solver.
   - The response is linear in the loads: time scaling of the surface load,
     and superposition of a surface load and an AddForce() increment.
   - Repeated and out-of-order solves (warm starts) reproduce the cold

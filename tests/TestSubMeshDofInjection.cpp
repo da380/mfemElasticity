@@ -1,8 +1,9 @@
 #include "SubMeshTestCommon.hpp"
 
 /*
-  Tests for SubMeshDofInjection (serial): design doc
-  doc/submesh_coupling_design.md, section 6, tests 1-2.
+  Tests for SubMeshDofInjection (serial): the operator against its explicit
+  matrix, the algebraic identities of an injection, agreement with
+  SubMesh::Transfer, and re-indexing against explicit sparse products.
 
   Configurations sweep dimension, element type, order, H1/L2, vdim and
   dof ordering. The parent mesh is a Cartesian mesh split into two

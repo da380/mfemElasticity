@@ -92,7 +92,7 @@ inline double L2Norm(const GridFunction& u) {
 // Non-dimensional densities: inner core 1.3, fluid from 1.2 (ICB) to 1.1
 // (CMB), mantle 1.0; with G = 0.05 the fluid mass term is comfortably
 // inside the positivity margin of the potential block (k R_CMB ~ 0.7
-// against pi/2, doc/fluid_solid_design.md 3.2).
+// against pi/2; see doc/self_gravitation.md).
 
 constexpr double kRIcb = 0.1931;
 constexpr double kRCmb = 0.5467;

@@ -1,7 +1,7 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for the relaxation laws (doc/nonlinear_viscoelastic_design.md):
+  Tests for the relaxation laws of relaxation_law.hpp:
 
   - LocalState::DeviatoricNorm against a direct tensor computation.
   - PowerLawRelaxation: the factor 1 / (1 + gamma (|T| / 2 mu0)^(n-1)),

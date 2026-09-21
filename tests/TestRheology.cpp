@@ -1,17 +1,15 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for IsotropicMaxwellRheology (design doc
-  doc/viscoelastic_design.md, section 5, test 1): the derived coefficients
-  evaluate to the right combinations of the inputs at quadrature points.
+  Tests for IsotropicMaxwellRheology: the derived coefficients evaluate to
+  the right combinations of the inputs at quadrature points.
   For the purely elastic IsotropicElasticRheology and
   AnisotropicElasticRheology: unrelaxed moduli and stiffness against MFEM's
   ElasticityIntegrator, a branchless Maxwell body and each other, with the
   (no-op) relaxation weights; and the elastic limits of the Maxwell bodies.
-  And for AnisotropicMaxwellRheology (doc/fluid_solid_design.md section 7):
-  the unrelaxed tensor, the branch moduli, and the stiffness objects of the
-  two rheologies assembling the same matrix for an isotropic tensor, with
-  and without relaxation weights.
+  And for AnisotropicMaxwellRheology: the unrelaxed tensor, the branch
+  moduli, and the stiffness objects of the two rheologies assembling the
+  same matrix for an isotropic tensor, with and without relaxation weights.
 */
 
 namespace {

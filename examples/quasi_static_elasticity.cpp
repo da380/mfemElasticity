@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
 
   // Optional demonstration of the AddForce() protocol: any dual vector
   // assembled against DisplacementSpace() may be superposed on the external
-  // load. In the viscoelastic layer this slot will carry the effective
+  // load. ViscoelasticOperator uses this slot for the effective
   // internal-variable force B^T(2 mu m).
   unique_ptr<VectorConstantCoefficient> extra_coef;
   unique_ptr<LinearForm> extra;

@@ -535,8 +535,7 @@ struct RheologyRegion {
 };
 
 /**
- * @brief Different rheologies in different regions of one body (design doc
- * doc/composite_rheology_design.md, Phase 1).
+ * @brief Different rheologies in different regions of one body.
  *
  * Regions are sets of element attributes of the displacement mesh; they
  * must be disjoint (checked at construction) and cover every attribute
@@ -558,9 +557,9 @@ struct RheologyRegion {
  * one weight per global branch.
  *
  * The viscoelastic operator stores and evolves each branch's internal
- * variable on its region only (BranchMarker(); Phase 2 of the design doc),
- * so the state and the per-step work are the sum over regions of their own
- * branches. Movable, not copyable.
+ * variable on its region only (BranchMarker()), so the state and the
+ * per-step work are the sum over regions of their own branches. Movable,
+ * not copyable.
  */
 class CompositeRheology : public Rheology {
  public:

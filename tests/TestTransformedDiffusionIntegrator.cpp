@@ -5,8 +5,8 @@
 //     xi = f(x) x with f affine, the scalar path (f given) and the matrix path
 //     (a = J F^{-1} F^{-T} given analytically) must coincide to round-off at
 //     every order; the vector path (xi given) joins them once xi = f x lies in
-//     the trial space (order >= 2). This is the test that catches the wrong
-//     index in the scalar-path Jacobian F(j,k) = x_j d_k f.
+//     the trial space (order >= 2). The comparison is sensitive to the index
+//     order in the scalar-path Jacobian F(j,k) = x_j d_k f.
 //
 //  2. For an affine map the transformed form on the reference mesh equals the
 //     ordinary DiffusionIntegrator assembled on the mapped mesh.

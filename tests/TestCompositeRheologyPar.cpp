@@ -1,7 +1,7 @@
 /*
-  Parallel tests for CompositeRheology (doc/composite_rheology_design.md,
-  Phase 1) on ParFiniteElementSpaces. Run with 1, 2 and 4 ranks; a
-  standalone MPI program returning the number of failed checks.
+  Parallel tests for CompositeRheology on ParFiniteElementSpaces. Run with
+  1, 2 and 4 ranks; a standalone MPI program returning the number of failed
+  checks.
 
   The bar is split into two attribute regions (x < 0.4 and x > 0.4) before
   partitioning, so that a region may be absent from a rank.

@@ -1,10 +1,7 @@
 #include "SubMeshTestCommon.hpp"
 
 /*
-  Tests for SubMeshMixedBilinearForm (serial): design doc
-  doc/submesh_coupling_design.md, section 6, tests 4-5 (test 3, entrywise
-  agreement with the former MixedBilinearFormSubMesh, was run once before
-  that class was deleted and is subsumed by MatchesParentAssembly).
+  Tests for SubMeshMixedBilinearForm (serial).
 
   The parent mesh is a Cartesian mesh split into two attributes (2 for
   x < 0.5, 1 for x > 0.5); the domain submesh is the attribute-2 half, the
@@ -129,9 +126,9 @@ class SubMeshMixedBilinearFormTest : public testing::TestWithParam<FormParam> {
   std::unique_ptr<Coefficient> rho, sigma;
 };
 
-// Test 4: domain integrator on the submesh region plus a
-// boundary integrator on an exterior boundary section, versus MFEM's
-// MixedBilinearForm on the parent mesh with the same markers, re-indexed.
+// Domain integrator on the submesh region plus a boundary integrator on an
+// exterior boundary section, versus MFEM's MixedBilinearForm on the parent
+// mesh with the same markers, re-indexed.
 TEST_P(SubMeshMixedBilinearFormTest, MatchesParentAssembly) {
   auto attrs = Array<int>({2});
   auto submesh = SubMesh::CreateFromDomain(*mesh, attrs);
@@ -238,7 +235,7 @@ TEST_P(SubMeshMixedBilinearFormTest, InternalInterfaceViaTransfer) {
   }
 }
 
-// Test 5: a boundary submesh (From::Boundary). The parent-side shadow is
+// A boundary submesh (From::Boundary). The parent-side shadow is
 // the trace space. Checked against SubMesh::Transfer as above and, for the
 // scalar family, against an analytic surface integral through a
 // BoundaryLFIntegrator on the parent.

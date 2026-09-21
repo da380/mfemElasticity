@@ -4,8 +4,7 @@
 
 /*
   Element- and matrix-level tests for ElasticTensorIntegrator, the general
-  linear elasticity integrator of bilininteg.hpp (design doc
-  doc/anisotropic_elasticity_design.md, section 4, tests 5-9).
+  linear elasticity integrator of bilininteg.hpp.
 
   - Isotropic tensor: element matrices equal mfem::ElasticityIntegrator's on
     a non-affine mesh, every element type and order.

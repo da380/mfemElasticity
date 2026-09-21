@@ -15,7 +15,7 @@
 //
 // Profiles are piecewise linear in radius (dimensional values below), with a
 // degree-2 polar and an azimuthal perturbation of the mantle moduli and of
-// the load, exactly as in the hand-assembled examples they replace.
+// the load.
 // Non-dimensionalisation: L = 6371 km, rho = 5000 kg/m^3, T = 1/sqrt(G rho),
 // so that the non-dimensional gravitational constant is 1.
 // ============================================================================

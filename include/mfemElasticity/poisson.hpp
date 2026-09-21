@@ -60,9 +60,9 @@ namespace mfemElasticity {
  * and similarly for \f$v_{lm}\f$. Here we use real spherical harmonics as
  * defined in Appendix B of Dahlen & Tromp (1998).
  *
- * It inherits from `mfem::Operator` for its matrix-vector product capabilities,
- * a `SurfaceHarmonics` basis for the harmonic expansions, and
- * `SphericalMeshHelper` for managing spherical mesh properties.
+ * It inherits from `mfem::Operator` for its matrix-vector product and from
+ * `SphericalMeshHelper` for the geometry of the spherical boundary, and
+ * holds a `SurfaceHarmonics` basis for the harmonic expansions.
  *
  * The implementation considers both 2D (circular) and 3D (spherical) cases.
  */
@@ -127,7 +127,7 @@ class PoissonDtNOperator : public mfem::Operator,
   /**
    * @brief Constructs a serial PoissonDtNOperator.
    * @param fes Pointer to the finite element space for the solution.
-   * @param degree The polynomial degree of the FE space.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonDtNOperator(mfem::FiniteElementSpace* fes, int degree);
 
@@ -136,7 +136,7 @@ class PoissonDtNOperator : public mfem::Operator,
    * @brief Constructs a parallel PoissonDtNOperator.
    * @param comm The MPI communicator.
    * @param fes Pointer to the parallel finite element space for the solution.
-   * @param degree The polynomial degree of the FE space.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonDtNOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* fes,
                      int degree);
@@ -205,9 +205,9 @@ class PoissonDtNOperator : public mfem::Operator,
  * solution.
  *
  *
- * It inherits from `mfem::Operator` for its matrix-vector product capabilities,
- * a `SurfaceHarmonics` basis for the harmonic expansions, and
- * `SphericalMeshHelper` for managing spherical mesh properties.
+ * It inherits from `mfem::Operator` for its matrix-vector product and from
+ * `SphericalMeshHelper` for the geometry of the spherical boundary, and
+ * holds a `SurfaceHarmonics` basis for the harmonic expansions.
  */
 class PoissonMultipoleOperator : public mfem::Operator,
                                  protected SphericalMeshHelper {
@@ -218,7 +218,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
   mfem::FiniteElementSpace* te_fes_;
   /** @brief Spatial dimension of the problem (2 for 2D, 3 for 3D). */
   int dim_;
-  /** @brief Polynomial degree of the finite element spaces. */
+  /** @brief Maximum harmonic degree of the expansion. */
   int degree_;
   /** @brief The harmonics about the boundary centroid, up to degree_. */
   SurfaceHarmonics basis_;
@@ -287,7 +287,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
    * @brief Constructs a serial PoissonMultipoleOperator.
    * @param tr_fes Pointer to the trial finite element space.
    * @param te_fes Pointer to the test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly.
    */
@@ -301,7 +301,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
    * `tr_fes->GetMesh()` to include all domain attributes in the assembly.
    * @param tr_fes Pointer to the trial finite element space.
    * @param te_fes Pointer to the test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
                            mfem::FiniteElementSpace* te_fes, int degree)
@@ -314,7 +314,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly.
    */
@@ -330,7 +330,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonMultipoleOperator(MPI_Comm comm, mfem::ParFiniteElementSpace* tr_fes,
                            mfem::ParFiniteElementSpace* te_fes, int degree)
@@ -364,7 +364,7 @@ class PoissonMultipoleOperator : public mfem::Operator,
 
 #ifdef MFEM_USE_MPI
   /**
-   * @brief Returns the associated Reduced-Parallel-Assembly (RAP) operator.
+   * @brief Returns the associated Restriction-Action-Prolongation (RAP) operator.
    * @return An `mfem::RAPOperator` object.
    */
   mfem::RAPOperator RAP() const;
@@ -383,9 +383,9 @@ class PoissonMultipoleOperator : public mfem::Operator,
  * exterior solution.
  *
  *
- * It inherits from `mfem::Operator` for its matrix-vector product capabilities,
- * a `SurfaceHarmonics` basis for the harmonic expansions, and
- * `SphericalMeshHelper` for managing spherical mesh properties.
+ * It inherits from `mfem::Operator` for its matrix-vector product and from
+ * `SphericalMeshHelper` for the geometry of the spherical boundary, and
+ * holds a `SurfaceHarmonics` basis for the harmonic expansions.
  */
 
 class PoissonLinearisedMultipoleOperator : public mfem::Operator,
@@ -399,7 +399,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
   mfem::Coefficient* density_ = nullptr;
   /** @brief Spatial dimension of the problem (2 for 2D, 3 for 3D). */
   int dim_;
-  /** @brief Polynomial degree of the finite element spaces. */
+  /** @brief Maximum harmonic degree of the expansion. */
   int degree_;
   /** @brief The harmonics about the boundary centroid, up to degree_. */
   SurfaceHarmonics basis_;
@@ -472,7 +472,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @param te_fes Pointer to the test finite element space.
    * @param density Reference to an mfem::Coefficient for the equilibrium
    * density.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly.
    */
@@ -483,11 +483,11 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
 
   /**
    * @brief Constructs a serial PoissonLinearisedMultipoleOperator. This
-   * overload doesn't take in a density coefficient, with the desnsity
+   * overload doesn't take in a density coefficient, with the density
    * defaulting to the constant field with value equal to one.
    * @param tr_fes Pointer to the trial finite element space.
    * @param te_fes Pointer to the test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly.
    */
@@ -504,7 +504,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @param te_fes Pointer to the test finite element space.
    * @param density Reference to an mfem::Coefficient for the equilibrium
    * density.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
                                      mfem::FiniteElementSpace* te_fes,
@@ -520,7 +520,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * and also uses the default value for density.
    * @param tr_fes Pointer to the trial finite element space.
    * @param te_fes Pointer to the test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonLinearisedMultipoleOperator(mfem::FiniteElementSpace* tr_fes,
                                      mfem::FiniteElementSpace* te_fes,
@@ -536,7 +536,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
    * @param density Reference to mfem::Coefficient for the density.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly.
    */
@@ -553,7 +553,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    * @param dom_marker An `mfem::Array<int>` marking which domain attributes
    * (1 for inclusion, 0 for exclusion) to consider for assembly.
    */
@@ -571,7 +571,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
    * @param density Reference to mfem::Coefficient for the density.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonLinearisedMultipoleOperator(MPI_Comm comm,
                                      mfem::ParFiniteElementSpace* tr_fes,
@@ -589,7 +589,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.
-   * @param degree The polynomial degree of the FE spaces.
+   * @param degree The maximum harmonic degree of the expansion.
    */
   PoissonLinearisedMultipoleOperator(MPI_Comm comm,
                                      mfem::ParFiniteElementSpace* tr_fes,
@@ -626,7 +626,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
 
 #ifdef MFEM_USE_MPI
   /**
-   * @brief Returns the associated Reduced-Parallel-Assembly (RAP) operator.
+   * @brief Returns the associated Restriction-Action-Prolongation (RAP) operator.
    * @return An `mfem::RAPOperator` object.
    */
   mfem::RAPOperator RAP() const;

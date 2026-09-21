@@ -49,7 +49,7 @@ inline std::unique_ptr<mfem::GridFunction> MakeGridFunction(
   return std::make_unique<mfem::GridFunction>(fes);
 }
 
-/// A LinearForm for a space, parallel is the space is.
+/// A LinearForm for a space, parallel if the space is.
 inline std::unique_ptr<mfem::LinearForm> MakeLinearForm(
     mfem::FiniteElementSpace* fes) {
 #ifdef MFEM_USE_MPI

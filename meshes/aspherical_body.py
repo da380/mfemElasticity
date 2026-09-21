@@ -23,7 +23,7 @@ is the body's surface (and 2 the outer sphere). Order-2 elements, coarse
 enough to build in seconds. Files: aspherical_{2d,3d}.mesh and
 aspherical_buffer_{2d,3d}.mesh; `--all` builds the four.
 
-Try them with the existing examples, e.g. from a build's examples/:
+Try them with the examples, e.g. from a build's examples/:
     ./anisotropic_elasticity -m ../data/aspherical_3d.mesh -o 1
     ./poisson_dtn -m ../data/aspherical_buffer_2d.mesh -o 2 -mth 1
     ./self_gravitating_elasticity -m ../data/aspherical_buffer_2d.mesh -o 2 -s 2

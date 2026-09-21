@@ -68,8 +68,9 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  * midpoint (trapezoid) or end (backward Euler) state and the step repeated,
  * SetCorrectorIterations() times or until the times stop changing. Each
  * pass is one elastic solve with a different effective operator (see
- * LinearQuasiStaticProblemBase::SetPreconditionerReuse()). A linear rheology
- * (Rheology::IsLinear()) takes the old paths unchanged.
+ * LinearQuasiStaticProblemBase::SetPreconditionerReuse()). For a linear
+ * rheology (Rheology::IsLinear()) the times are fixed: they are never
+ * re-evaluated and no corrector pass is taken.
  *
  * Time stepping:
  *  - Mult(): the explicit right-hand side, for any explicit MFEM ODESolver

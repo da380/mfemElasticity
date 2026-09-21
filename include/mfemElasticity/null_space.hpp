@@ -129,9 +129,9 @@ class RigidRotation : public mfem::VectorCoefficient {
  * Vectors are added one at a time and orthonormalised by modified
  * Gram-Schmidt; a vector that is (numerically) dependent on the ones already
  * present is dropped. Typical null vectors are the rigid modes of a
- * displacement space (AddRigidModes(), MakeRigidModeProjector()), the coupled
- * displacement/potential null vectors of a self-gravitating body, or the
- * constant potential in two dimensions.
+ * displacement space (AddRigidModes(), MakeRigidModeProjector()), the same
+ * modes as block vectors of the coupled displacement/potential system of a
+ * self-gravitating body, or the constant potential in two dimensions.
  */
 class NullSpaceProjector {
  public:

@@ -2,10 +2,10 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for LinearQuasiStaticSelfGravitatingProblem with fluid regions
-  (doc/fluid_solid_design.md section 5.1) on the canned three-layer meshes
-  (solid inner core, fluid outer core, solid mantle; one disconnected solid
-  SubMesh) and the two-layer disc (fluid core, mantle).
+  Tests for LinearQuasiStaticSelfGravitatingProblem with fluid regions on
+  the canned three-layer meshes (solid inner core, fluid outer core, solid
+  mantle; one disconnected solid SubMesh) and the two-layer disc (fluid
+  core, mantle).
 
   - The Schur-complement CG and the block MINRES solvers agree to the level
     of the rigid-mode residuals, as without fluids.

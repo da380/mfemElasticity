@@ -340,9 +340,10 @@ void LinearQuasiStaticSelfGravitatingProblem::ComputeBackgroundPotential(
     // (K + DtN) Phi0 = -4 pi G (rho, psi)_M, i.e. A_lap Phi0 = -(rho, psi)_M
     // with the solid density integrated on the SubMesh and injected into
     // the ball, and the fluid densities integrated on the parent. Solved
-    // with the plain Laplace-DtN operator (the fluid mass term is a
-    // perturbation quantity and is not yet assembled at construction; a
-    // later call uses a temporary solver on A_lap).
+    // with the plain Laplace-DtN operator A_lap: the fluid mass term is a
+    // perturbation quantity and does not enter the background problem. At
+    // construction A_phiphi is A_lap; once the fluid mass term has been
+    // assembled the potential solver is switched to A_lap for this solve.
     auto rho_form = detail::MakeLinearForm(shadow_phi_.get());
     rho_form->AddDomainIntegrator(new DomainLFIntegrator(*rho_));
     rho_form->Assemble();

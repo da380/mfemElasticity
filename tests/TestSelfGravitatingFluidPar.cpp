@@ -1,16 +1,16 @@
 /*
-  Parallel tests for LinearQuasiStaticSelfGravitatingProblem with fluid regions
-  (doc/fluid_solid_design.md section 5.1), on the three-layer meshes with
-  ONE disconnected ParSubMesh for the inner core and the mantle and the
-  outer core as a FluidRegion. Run with 1, 2 and 4 ranks; a standalone MPI
-  program returning the number of failed checks.
+  Parallel tests for LinearQuasiStaticSelfGravitatingProblem with fluid
+  regions, on the three-layer meshes with ONE disconnected ParSubMesh for
+  the inner core and the mantle and the outer core as a FluidRegion. Run
+  with 1, 2 and 4 ranks; a standalone MPI program returning the number of
+  failed checks.
 
   Every rank also builds the serial problem on the full mesh; the parallel
   and serial solutions are compared through partition-independent
   quantities (global L2 norms of the displacement and of the potential, the
   rigid-mode and region-rotation residuals, the potential-block Ritz
-  values), for both solver types, for the tidal load, and for an effective
-  shear modulus.
+  values), for both solver types, for the tidal load, and with a relaxation
+  weight.
 */
 
 #include <mpi.h>

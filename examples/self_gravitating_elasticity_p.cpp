@@ -17,8 +17,8 @@
 // Sample runs:
 //    mpirun -np 4 ./self_gravitating_elasticity_p -o 2
 //    mpirun -np 4 ./self_gravitating_elasticity_p -m
-//    ../data/coupled_poisson.msh -o 2 -s 2 mpirun -np 2
-//    ./self_gravitating_elasticity_p -o 2 -s 2 -diag
+//    ../data/coupled_poisson.msh -o 2 -s 2
+//    mpirun -np 2 ./self_gravitating_elasticity_p -o 2 -s 2 -diag
 //
 // With -s 2 both solvers are run and compared; since each fixes the rigid
 // gauge differently (the Schur solver makes u orthogonal to the rigid modes,

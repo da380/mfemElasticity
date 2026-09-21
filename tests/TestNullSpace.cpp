@@ -7,8 +7,7 @@
 #include "QuasiStaticTestCommon.hpp"
 
 /*
-  Tests for the rigid-mode null-space handling in null_space.hpp
-  (doc/status_and_roadmap.md, follow-up F1):
+  Tests for the rigid-mode null-space handling in null_space.hpp:
 
   - MakeRigidModeProjector() holds d(d+1)/2 orthonormal vectors that are
     (on a Cartesian mesh, exactly) in the null space of the free stiffness;
@@ -18,6 +17,9 @@
     basis vector, satisfies the projected equations, and equals the solution
     for the projected load.
   - A warm start carrying a rigid component gives the same solution.
+  - ProjectedSolver::SetGauge() with a mass matrix gives zero net momentum
+    and angular momentum, and differs from the Euclidean-gauge solution by a
+    rigid motion only.
 */
 
 namespace {
@@ -27,7 +29,7 @@ using namespace mfemElasticity;
 
 using Param = std::tuple<int, int, int>;  // (dim, elementType, order)
 
-class SolversTest : public testing::TestWithParam<Param> {
+class NullSpaceTest : public testing::TestWithParam<Param> {
  protected:
   void SetUp() override {
     std::tie(dim, elementType, order) = GetParam();
@@ -97,7 +99,7 @@ class SolversTest : public testing::TestWithParam<Param> {
   std::unique_ptr<CGSolver> cg;
 };
 
-TEST_P(SolversTest, RigidModeProjectorBasis) {
+TEST_P(NullSpaceTest, RigidModeProjectorBasis) {
   EXPECT_EQ(P->Size(), dim * (dim + 1) / 2);
   Vector An(A.Height());
   for (int i = 0; i < P->Size(); i++) {
@@ -119,7 +121,7 @@ TEST_P(SolversTest, RigidModeProjectorBasis) {
   EXPECT_EQ(P->Size(), dim * (dim + 1) / 2);
 }
 
-TEST_P(SolversTest, ProjectedSolveOfFreeBody) {
+TEST_P(NullSpaceTest, ProjectedSolveOfFreeBody) {
   auto& S = MakeSolver();
   Vector x(A.Height());
   x = 0.0;
@@ -145,7 +147,7 @@ TEST_P(SolversTest, ProjectedSolveOfFreeBody) {
   EXPECT_LE(y.Norml2(), 1e-9 * xnorm);
 }
 
-TEST_P(SolversTest, WarmStartWithRigidComponent) {
+TEST_P(NullSpaceTest, WarmStartWithRigidComponent) {
   auto& S = MakeSolver();
   Vector x(A.Height());
   x = 0.0;
@@ -170,7 +172,7 @@ TEST_P(SolversTest, WarmStartWithRigidComponent) {
   EXPECT_LE(y.Norml2(), 1e-9 * x.Norml2());
 }
 
-TEST_P(SolversTest, MassWeightedGauge) {
+TEST_P(NullSpaceTest, MassWeightedGauge) {
   auto& S = MakeSolver();
   Vector x(A.Height());
   x = 0.0;
@@ -216,7 +218,7 @@ TEST_P(SolversTest, MassWeightedGauge) {
   EXPECT_LE(y.Norml2(), 1e-12 * x.Norml2());
 }
 
-INSTANTIATE_TEST_SUITE_P(Solvers, SolversTest,
+INSTANTIATE_TEST_SUITE_P(NullSpace, NullSpaceTest,
                          testing::Combine(testing::Values(2, 3),
                                           testing::Values(0, 1),
                                           testing::Values(1, 2)));

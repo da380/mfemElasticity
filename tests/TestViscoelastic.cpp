@@ -2,8 +2,8 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for ViscoelasticOperator (design doc doc/viscoelastic_design.md,
-  section 5, tests 3-7).
+  Tests for ViscoelasticOperator, against analytic creep and relaxation
+  solutions and ODE references (see doc/viscoelasticity.md).
 
   - Strain maps: Galerkin and interpolation maps both reproduce the exact
     deviatoric strain of a polynomial displacement at the internal nodes.
@@ -27,14 +27,14 @@
   - A transversely isotropic Maxwell bar under constant uniaxial stress:
     homogeneous state, so the FE solution follows the 6 x 6 (3 x 3) ODE of
     the branch variable, integrated to high accuracy as the reference.
-  - State-dependent relaxation times (doc/nonlinear_viscoelastic_design.md):
-    a power law with gamma = 0 reproduces the linear body; under constant
-    uniaxial stress the deviatoric stress, hence tau, is constant, so the
-    creep is the linear one with tau(|T|) (exact for the trapezoid; rate
-    ratio 2^n between two stress levels); under a prescribed strain tau
-    grows as the stress relaxes, and the trapezoid with one corrector is
-    second order, ETD1 and backward Euler first order, against a nodal ODE
-    reference; the adaptive solver meets its tolerance with fewer steps.
+  - State-dependent relaxation times: a power law with gamma = 0 reproduces
+    the linear body; under constant uniaxial stress the deviatoric stress,
+    hence tau, is constant, so the creep is the linear one with tau(|T|)
+    (exact for the trapezoid; rate ratio 2^n between two stress levels);
+    under a prescribed strain tau grows as the stress relaxes, and the
+    trapezoid with one corrector is second order, ETD1 and backward Euler
+    first order, against a nodal ODE reference; the adaptive solver meets
+    its tolerance with fewer steps.
 */
 
 namespace {

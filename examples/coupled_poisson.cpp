@@ -14,8 +14,8 @@
 // Notes:
 // - The system is solved in the block manner.
 // - Mesh: ../data/coupled_poisson.msh, made by meshes/ball_with_buffer.py.
-//   The canned mesh is deliberately coarse (relative L2 errors of order 0.2 to
-//   0.5) to keep the repository small; halve the sizes in that script for a
+//   The mesh is deliberately coarse (relative L2 errors of order 0.2 to 0.5)
+//   so that it builds and runs quickly; halve the sizes in that script for a
 //   converged run.
 // - Parallel version: coupled_poisson_p.cpp.
 // -----------------------------------------------------------------------------

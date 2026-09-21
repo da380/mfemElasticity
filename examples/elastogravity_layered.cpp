@@ -3,9 +3,8 @@
 //
 // Self-gravitating elastic deformation of a layered Earth-like model with a
 // fluid outer core, as a driver of LinearQuasiStaticSelfGravitatingProblem
-// (mfemElasticity/self_gravitating.hpp) with FluidRegion. Replaces the
-// hand-assembled elastogravity_two_layer / elastogravity_three_layer
-// examples; the models, meshes and loads are those of layered_model.hpp.
+// (mfemElasticity/self_gravitating.hpp) with FluidRegion. The models and
+// loads are those of layered_model.hpp.
 //
 // The solid regions (mantle, and the inner core when the mesh has one) form
 // ONE displacement SubMesh, disconnected for the three-layer model; the
@@ -36,7 +35,7 @@
 // the hydrostatic Poisson term rho'_F phi (the fluid becomes unstratified in
 // the Eulerian sense); for the PREM-like core it changes the response by a
 // factor of about three, the potential block sitting at about half its
-// positivity margin (doc/fluid_solid_design.md section 3.2).
+// positivity margin (doc/self_gravitation.md).
 // ============================================================================
 
 #include <chrono>

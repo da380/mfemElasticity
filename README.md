@@ -36,8 +36,24 @@ pieces are
   (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads load and
   tidal Love numbers off one solve per degree).
 
-Serial and parallel (MPI) paths are provided throughout. Design notes and the
-roadmap are in `doc/`.
+Serial and parallel (MPI) paths are provided throughout.
+
+## Documentation
+
+The API is documented in the headers (Doxygen; build with `BUILD_DOCS`).
+Method notes, which record the equations, why things are done the way they
+are, and what has been learned, are in `doc/`:
+
+| Note | Subject |
+|---|---|
+| `submesh_coupling.md` | forms between a mesh and its SubMesh: the dof injection, its parallel construction, constraints |
+| `self_gravitation.md` | the self-gravitating problem with fluid regions: weak form, interface convention, solvers, null space, 2-D caveats, verification |
+| `viscoelasticity.md` | the quasi-static problem interface, generalised Maxwell rheologies, time stepping, strain maps, state-dependent relaxation, composite rheologies |
+| `elastic_tensors.md` | the Mandel convention, the elastic tensor coefficients and the anisotropic integrator |
+| `null_space.md` | projected solvers for singular systems, the two gauges, element order on curved meshes |
+| `mfem_notes.md` | MFEM facts and pitfalls met along the way |
+
+`meshes/README.md` covers mesh generation.
 
 ## Installation
 
@@ -84,8 +100,8 @@ All default to `OFF`.
 ## Examples
 
 Examples are run from the build's `examples/` directory; they find their
-meshes in `../data`, which is copied from the source tree at build time. Each
-has `-h` for its options.
+meshes in `../data`, which the build fills from the source tree's `data/`
+and from the scripts in `meshes/`. Each has `-h` for its options.
 
 | Program | What it does |
 |---|---|

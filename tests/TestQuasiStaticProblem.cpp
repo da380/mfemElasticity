@@ -3,21 +3,21 @@
 
 /*
   Tests for LinearQuasiStaticProblemBase, LinearQuasiStaticTractionProblem and
-  LinearQuasiStaticClampedProblem (design doc doc/viscoelastic_design.md,
-  section 5, test 2 and the elastic parts of the interface contract).
+  LinearQuasiStaticClampedProblem, against direct MFEM assemblies and solves
+  and the exact uniaxial-stress solution.
 
   - The bulk/deviatoric split assembled by the base class equals MFEM's
     ElasticityIntegrator(lambda, mu) with lambda = kappa - 2 mu / d.
   - LinearQuasiStaticClampedProblem reproduces a direct MFEM assembly and solve.
   - SetRelaxationWeights (constant and piecewise-constant L2 field) on a
-    Maxwell rheology, and Clear restoring the unrelaxed modulus
-  - The anisotropic rheology with an isotropic tensor reproduces the
-    isotropic problem, relaxed or not
+    Maxwell rheology reproduces a direct assembly with the modulus beta mu;
+    Clear restores mu_U.
   - Preconditioner reuse across reassemblies keeps the solutions exact and
-    reduces the number of setups
-    reproduces a direct assembly with that modulus; Clear restores mu_U.
+    reduces the number of setups.
+  - The anisotropic rheology with an isotropic tensor reproduces the
+    isotropic problem, relaxed or not.
   - LinearQuasiStaticTractionProblem under uniaxial stress gives the exact
-  constant strain.
+    constant strain.
   - Loads scale with time through the registered coefficients, and
     AddForce superposes exactly like an integrator on the load.
 */

@@ -6,8 +6,8 @@
   Every rank also builds the serial problem on the full mesh; the parallel
   and serial solutions are compared through partition-independent
   quantities (global L2 norms of the displacement and of the potential, the
-  rigid-mode residuals), for both solver types and for an effective shear
-  modulus, and the time-scaling of the load is checked in parallel.
+  rigid-mode residuals), for both solver types and with a relaxation
+  weight, and the time-scaling of the load is checked in parallel.
 */
 
 #include <mpi.h>

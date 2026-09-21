@@ -2,8 +2,8 @@
 
 /*
   Pointwise tests for SymmetricTensorBasis and the elastic tensor
-  coefficients (design doc doc/anisotropic_elasticity_design.md, section 4,
-  tests 1-4 and the coefficient part of test 9).
+  coefficients, against closed-form Voigt matrices, explicit index
+  contractions and rotated copies of the same tensor.
 */
 
 namespace {
@@ -368,7 +368,7 @@ INSTANTIATE_TEST_SUITE_P(ElasticTensor, ElasticTensorTest,
                          testing::Values(2, 3));
 
 // The 2-D tensor with an in-plane axis is the plane-strain restriction of
-// the 3-D tensor with the same axis (test 9, coefficient level).
+// the 3-D tensor with the same axis (compared at the coefficient level).
 TEST(ElasticTensorPlaneStrain, MatchesThreeD) {
   const double A = 3.1, C = 2.7, F = 1.1, L = 0.9, N = 1.2;
   ConstantCoefficient cA(A), cC(C), cF(F), cL(L), cN(N);

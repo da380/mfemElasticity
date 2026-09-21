@@ -6,7 +6,7 @@
 
   Every rank also solves the serial problem on the full mesh and compares
   partition-independent quantities: the L2 norm of the clamped
-  displacement (plain and with an effective shear modulus), and the exact
+  displacement (plain and with a relaxation-weight field), and the exact
   uniaxial strain of the traction problem.
 */
 
@@ -79,8 +79,8 @@ void RunCase(int dim, int elementType, int order, const std::string& label) {
   VectorFunctionCoefficient pull(dim, PullTraction);
   VectorFunctionCoefficient uni(dim, UniaxialTraction);
 
-  // Clamped: serial reference norm vs parallel norm, then with an effective
-  // modulus field on an L2 space.
+  // Clamped: serial reference norm vs parallel norm, then with a
+  // relaxation-weight field on an L2 space.
   {
     LinearQuasiStaticClampedProblem serial(&sfes, rheology, ess_bdr, pull,
                                            pull_marker);

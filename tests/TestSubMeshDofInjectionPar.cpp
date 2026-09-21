@@ -1,8 +1,8 @@
 /*
-  Parallel tests for SubMeshDofInjection::NewTrueDofMatrix (design doc
-  doc/submesh_coupling_design.md, section 6, test 7). Run with 1, 2 and 4
-  ranks. Not a gtest: a standalone MPI program returning the number of
-  failed checks.
+  Parallel tests for SubMeshDofInjection::NewTrueDofMatrix: the algebraic
+  identities of an injection on true dofs and agreement with
+  ParSubMesh::Transfer. Run with 1, 2 and 4 ranks. Not a gtest: a
+  standalone MPI program returning the number of failed checks.
 
   The parent meshes are Cartesian, partitioned into slabs along x by
   CartesianPartitioning, and the submesh regions are chosen so that across

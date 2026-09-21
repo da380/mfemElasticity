@@ -1,9 +1,8 @@
 /*
   Parallel tests for the boundary normal integrators on a ParSubMesh, and
-  the BoomerAMG check on a disconnected ParSubMesh (design doc
-  doc/fluid_solid_design.md sections 2.1 and 2.3). Run with 1, 2 and 4
-  ranks. Not a gtest: a standalone MPI program returning the number of
-  failed checks.
+  a check that BoomerAMG copes with a disconnected ParSubMesh. Run with 1,
+  2 and 4 ranks. Not a gtest: a standalone MPI program returning the number
+  of failed checks.
 
   Meshes: the three-layer disc/ball in ../data (attributes 1 inner core,
   2 outer core, 3 mantle, 4 buffer; boundary attributes 1 ICB, 2 CMB,
@@ -21,8 +20,8 @@
   2. CG preconditioned by BoomerAMG converges on the disconnected
      ParSubMesh, for a shifted Laplacian and for a shifted elasticity
      operator with the elasticity AMG options (the setup used by
-     LinearQuasiStaticProblemBase), in an iteration count comparable to that on
-  the connected mantle-only ParSubMesh. The counts are printed.
+     LinearQuasiStaticProblemBase), in an iteration count comparable to that
+     on the connected mantle-only ParSubMesh. The counts are printed.
 */
 
 #include <mpi.h>

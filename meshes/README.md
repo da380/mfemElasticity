@@ -81,6 +81,24 @@ the DtN and multipole conditions, and the surface, where the taper
 starts, is declared a knot of the displacement. These meshes are
 `.mesh` files and need the `mfem` extra (PyMFEM).
 
+## Who owns what
+
+- **planetmodel** owns the model and the mesher: skeletons, geometries and
+  mappings, the sizing rules, shells, the manifest and the MFEM export.
+  Anything geometric that a mesh here needs and planetmodel lacks is a
+  planetmodel change, not a script here. Release 1.2.1 or later is
+  required: earlier releases gave gmsh a sampled distance to each
+  interface, so the element size rippled along every boundary and came out
+  coarser than asked.
+- **`meshes/`** owns the recipes: which skeleton, which sizes, which
+  shells, which file name.
+- **The C++ side** reads the `.msh` files and identifies layers by
+  position (for instance `attributes.Max()` tells the two- and three-layer
+  Earth apart); it does not read the manifest.
+
+A realistic Earth skeleton comes from planetmodel's `PREM()`, coarsened as
+needed, through a script like `layered_earth.py`.
+
 ## What the files carry
 
 Every gmsh mesh is MSH 2.2 with physical groups, which MFEM reads
@@ -94,17 +112,20 @@ load.
 
 Beside each `.msh` file is a JSON **manifest** of the same name listing
 the layers and interfaces with their attributes, names and radii. It is
-what a reader consults instead of guessing what attribute 3 means; the
-C++ side does not read it yet.
+what a reader consults instead of guessing what attribute 3 means.
 
 ## Sizes and quality
 
 Element sizes are in the mesh's own units, the unit radius here. The
-sizes in the scripts were chosen to match the resolution of the meshes
-they replaced. planetmodel checks every mesh before writing it and
-refuses one with an inverted element; a warning is printed when the
-worst element is usable but badly shaped. If a new sizing meets either,
-nudging the size by a few per cent is usually enough.
+sizes in the scripts keep the meshes coarse, so that they build quickly and
+the tests on them are cheap. planetmodel checks every mesh before writing it and refuses one
+with an inverted element; a warning is printed when the worst element is
+usable but badly shaped. If a new sizing meets either, nudging the size by
+a few per cent is usually enough. The three-layer 3D Earth is the
+sensitive one: interface sizes of 0.13, 0.145, 0.15 and 0.16 each leave an
+inverted or sliver tetrahedron (minSICN below 0.02), while 0.135 gives a
+minSICN of 0.14. planetmodel runs gmsh's high-order optimiser but not its
+linear-mesh optimiser, which is where such slivers would be removed.
 
 Everything a script can do is documented in planetmodel; its tutorial
 `04_a_mesh_for_mfem.py` walks through the same steps, including

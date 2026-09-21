@@ -1,7 +1,7 @@
 /*
-  Parallel tests for the rigid-mode null-space handling in null_space.hpp
-  (doc/status_and_roadmap.md, follow-up F1). Run with 1, 2 and 4 ranks; a
-  standalone MPI program returning the number of failed checks.
+  Parallel tests for the rigid-mode null-space handling in null_space.hpp.
+  Run with 1, 2 and 4 ranks; a standalone MPI program returning the number
+  of failed checks.
 
   - MakeRigidModeProjector() on a ParFiniteElementSpace: d(d+1)/2 globally
     orthonormal true-dof vectors, exact null vectors of the free stiffness.
@@ -10,6 +10,9 @@
     orthogonal to the rigid modes, satisfies the projected equations, and its
     L2 norm equals the serial solve on the full mesh (partition-independent).
   - A warm start carrying a rigid component gives the same solution.
+  - ProjectedSolver::SetGauge() with a mass matrix gives zero net momentum
+    and angular momentum, and differs from the Euclidean-gauge solution by a
+    rigid motion only.
 */
 
 #include <mpi.h>

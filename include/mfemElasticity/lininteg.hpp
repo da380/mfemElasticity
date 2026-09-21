@@ -31,7 +31,7 @@ namespace mfemElasticity {
  * It is also assumed that the matrix coefficient \f$\bvec{m}\f$ is square with
  * its dimension equal to the spatial dimension of the finite-element space.
  *
- * @note TODO: Extension to allow for delta-function coefficients.
+ * @note Delta-function coefficients are not supported.
  */
 class DomainLFDeformationGradientIntegrator
     : public mfem::LinearFormIntegrator {

@@ -1,7 +1,6 @@
 /*
-  Parallel tests for ParSubMeshMixedBilinearForm (design doc
-  doc/submesh_coupling_design.md, section 6, tests 7-8). Run with 1, 2 and
-  4 ranks. Not a gtest: a standalone MPI program returning the number of
+  Parallel tests for ParSubMeshMixedBilinearForm. Run with 1, 2 and 4
+  ranks. Not a gtest: a standalone MPI program returning the number of
   failed checks.
 
   Every rank holds the full serial mesh as well, and evaluates the serial

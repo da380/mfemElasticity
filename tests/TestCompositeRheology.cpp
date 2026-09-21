@@ -3,14 +3,14 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for CompositeRheology (doc/composite_rheology_design.md, Phase 1,
-  section 3 tests 1-5). The bar of the quasi-static tests is split into two
-  attribute regions (x < 0.4 and x > 0.4).
+  Tests for CompositeRheology, against single global rheologies with
+  piecewise coefficients. The bar of the quasi-static tests is split into
+  two attribute regions (x < 0.4 and x > 0.4).
 
   1. A Maxwell bar with the same rheology in both regions equals the unsplit
      bar to round-off for the exponential trapezoid and backward Euler:
      displacement, and each region's internal variable; the state is the
-     unsplit body's, each branch living on its region only (Phase 2).
+     unsplit body's, each branch living on its region only.
   2. Masking equivalence: an elastic region beside a Maxwell region equals
      the global Maxwell body whose branch modulus vanishes in the elastic
      region (PWCoefficient); a one-branch region beside a two-branch region
@@ -268,8 +268,8 @@ TEST_P(CompositeRheologyTest, ElasticRegionMasksBranch) {
   ASSERT_EQ(composite.NumBranches(), 1);
   EXPECT_EQ(composite.BranchLabel(0), "maxwell_branch0");
 
-  // The workaround: mu_inf = mu in region 1, the branch modulus mu in
-  // region 2 only.
+  // The equivalent global body: mu_inf = mu in region 1, the branch modulus
+  // mu in region 2 only.
   auto mu_inf = Piecewise(0.8, 0.0);
   auto mu_k = Piecewise(0.0, 0.8);
   std::vector<MaxwellBranch> branches{{mu_k.get(), &tau}};

@@ -1011,7 +1011,7 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
  * \f[
  *  (v,u) \mapsto \int_{\Omega} \grad v \cdot \bvec{a} \cdot \grad u \dd x,
  * \f]
- * with \f$\Omega\f$ the domain and $where the symmetric matrix field,
+ * with \f$\Omega\f$ the domain, and where the symmetric matrix field,
  * \f$\bvec{a}\f$, takes the form
  * \f[
  * \bvec{a} = J \bvec{C}^{-1}  = J \bvec{F}^{-1} \bvec{F}^{-T},
@@ -1038,11 +1038,11 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
 class TransformedDiffusionIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q =
-      nullptr; /**< Scalar coefficient for radial transformation. */
+      nullptr; /**< Scalar part \f$f\f$ of a radial mapping. */
   mfem::VectorCoefficient* QV =
-      nullptr; /**< Vector coefficient for diagonal transformation. */
+      nullptr; /**< The mapping \f$\boldsymbol{\xi}\f$. */
   mfem::MatrixCoefficient* QM =
-      nullptr; /**< Matrix coefficient for general transformation. */
+      nullptr; /**< The matrix field \f$\bvec{a}\f$ given directly. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector fs, df, x;
@@ -1053,7 +1053,7 @@ and intermediate matrices during integration. */
 
  public:
   /**
-   * @brief Constructor for the idenity mapping.
+   * @brief Constructor for the identity mapping.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   TransformedDiffusionIntegrator(const mfem::IntegrationRule* ir = nullptr)
@@ -1062,7 +1062,7 @@ and intermediate matrices during integration. */
   /**
    * @brief Constructor for a radial mapping specified by a scalar
    * function.
-   * @param q A reference to the `mfem::Coefficient` \f$ q \f$.
+   * @param q The scalar part \f$f\f$ of the radial mapping.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   TransformedDiffusionIntegrator(mfem::Coefficient& q,
@@ -1072,7 +1072,7 @@ and intermediate matrices during integration. */
   /**
    * @brief Constructor for a general transformation specified by a
    * VectorCoefficient.
-   * @param qv A reference to the `mfem::VectorCoefficient` \f$ q \f$.
+   * @param qv The mapping \f$\boldsymbol{\xi}\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   TransformedDiffusionIntegrator(mfem::VectorCoefficient& qv,
@@ -1082,7 +1082,7 @@ and intermediate matrices during integration. */
   /**
    * @brief Constructor for which the matrix \f$\bvec{a}\f$ is provided
    * directly.
-   * @param qm A reference to the `mfem::MatrixCoefficient` \f$ q \f$.
+   * @param qm The matrix field \f$\bvec{a}\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   TransformedDiffusionIntegrator(mfem::MatrixCoefficient& qm,

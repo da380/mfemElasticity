@@ -1,8 +1,8 @@
 """A unit ball with a buffer shell around it: data/coupled_poisson.msh.
 
 The body is the unit ball and the buffer extends to radius 2. The mesh is
-deliberately coarse so that the repository stays small; the examples that
-use it say so where it matters.
+deliberately coarse so that it builds quickly and the runs on it are
+cheap; the examples that use it say so where it matters.
 
 Domain attribute 1 is the body and 2 the buffer. Boundary attribute 1 is
 the body's surface and 2 the outer sphere. Order-2 elements.

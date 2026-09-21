@@ -1,6 +1,6 @@
 # Serial examples. Each parallel counterpart (suffix _p) is added below when
-# USE_MPI is on. Meshes referenced by the examples live in ../data and are
-# copied to the build tree by the CopyData target.
+# USE_MPI is on. The examples read their meshes from <build>/data, which the
+# top-level CMakeLists.txt fills (CopyData and the meshes/ scripts).
 
 set(SERIAL_EXAMPLES
     poisson_dtn                 # Poisson on the whole space: Neumann / DtN / multipole
