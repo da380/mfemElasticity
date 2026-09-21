@@ -16,7 +16,8 @@ TEST_P(BilinearFormIntegratorTests, DomainSymmetricMatrixStrainIntegrator) {
   auto H1 = H1_FECollection(order, dim);
 
   auto vector_fes = FiniteElementSpace(&mesh, &H1, dim);
-  auto strain_fes = FiniteElementSpace(&mesh, &L2, dim * (dim + 1) / 2);
+  auto strain_fes =
+      FiniteElementSpace(&mesh, &L2, SymmetricComponentOrder::Count(dim));
 
   auto q = FunctionCoefficient([](const Vector& x) { return x.Norml2(); });
 
@@ -33,7 +34,7 @@ TEST_P(BilinearFormIntegratorTests, DomainSymmetricMatrixStrainIntegrator) {
   auto A = RandomMatrix(dim);
   A.Symmetrize();
 
-  auto a = Vector(dim * (dim + 1) / 2);
+  auto a = Vector(SymmetricComponentOrder::Count(dim));
   auto k = 0;
   for (auto j = 0; j < dim; j++) {
     for (auto i = j; i < dim; i++) {

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <numbers>
 
 namespace mfemElasticity {
 
@@ -38,7 +39,8 @@ void DomainVectorScalarIntegrator::AssembleElementMatrix2(
   } else {
     test_shape.SetSize(test_dof);
   }
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -92,7 +94,7 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
     qv.SetSize(space_dim);
   }
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -158,7 +160,7 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
   trial_shape.SetSize(trial_dof);
   part_elmat.SetSize(test_dof, trial_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -215,7 +217,7 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
     test_dshape.SetSize(test_dof, space_dim);
   }
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -285,7 +287,7 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
   trial_dshape.SetSize(trial_dof, space_dim);
   test_shape.SetSize(test_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -339,7 +341,7 @@ void DomainVectorDivVectorIntegrator::AssembleElementMatrix2(
   trial_dshape.SetSize(trial_dof, space_dim);
   test_shape.SetSize(test_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -385,7 +387,7 @@ void DomainMatrixDeformationGradientIntegrator::AssembleElementMatrix2(
   elmat.SetSize(matrixIndex.Size(), vectorIndex.Size());
   elmat = 0.;
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
 #ifdef MFEM_THREAD_SAFE
   Vector test_shape;
@@ -449,7 +451,7 @@ void DomainSymmetricMatrixStrainIntegrator::AssembleElementMatrix2(
   trial_dshape.SetSize(trial_dof, space_dim);
   part_elmat.SetSize(test_dof, trial_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -508,7 +510,7 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
   trial_dshape.SetSize(trial_dof, space_dim);
   part_elmat.SetSize(test_dof, trial_dof);
 
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
 
   for (auto i = 0; i < ir->GetNPoints(); i++) {
     const auto& ip = ir->IntPoint(i);
@@ -541,6 +543,188 @@ void DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator::
                       vectorIndex.Offset(j));
       elmat.AddMatrix(-w, part_elmat, matrixIndex.Offset(j, j),
                       vectorIndex.Offset(k));
+    }
+  }
+}
+
+void ElasticTensorIntegrator::StrainDisplacementMatrix(
+    int dim, const mfem::DenseMatrix& gshape, mfem::DenseMatrix& B) {
+  using namespace mfem;
+  const auto dof = gshape.Height();
+  const auto uidx = VectorIndex(dim, dof);
+  const auto sidx = SymmetricMatrixIndex(dim, dof);
+  const real_t inv_sqrt2 = 1.0 / std::numbers::sqrt2_v<real_t>;
+  B.SetSize(sidx.ComponentSize(), uidx.Size());
+  B = 0.0;
+  for (auto k = 0; k < dim; k++) {
+    for (auto j = k; j < dim; j++) {
+      const auto s = sidx.ComponentOffset(j, k);
+      if (j == k) {
+        for (auto i = 0; i < dof; i++) {
+          B(s, uidx(i, j)) = gshape(i, j);
+        }
+      } else {
+        for (auto i = 0; i < dof; i++) {
+          B(s, uidx(i, j)) = inv_sqrt2 * gshape(i, k);
+          B(s, uidx(i, k)) = inv_sqrt2 * gshape(i, j);
+        }
+      }
+    }
+  }
+}
+
+void ElasticTensorIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dof = el.GetDof();
+  const auto dim = el.GetDim();
+  const auto n = SymmetricMatrixIndex(dim, dof).ComponentSize();
+  MFEM_VERIFY(dim == Trans.GetSpaceDim(),
+              "ElasticTensorIntegrator: manifold elements are not "
+              "supported.");
+  MFEM_VERIFY(C_->GetHeight() == n && C_->GetWidth() == n,
+              "ElasticTensorIntegrator: the tensor coefficient must be "
+              "n_s x n_s with n_s = d(d+1)/2.");
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape_, gshape_, B_, Cq_, CB_;
+#endif
+  dshape_.SetSize(dof, dim);
+  gshape_.SetSize(dof, dim);
+  CB_.SetSize(n, dim * dof);
+  elmat.SetSize(dof * dim);
+  elmat = 0.0;
+
+  const IntegrationRule* ir = IntRule;
+  if (ir == nullptr) {
+    ir = &IntRules.Get(el.GetGeomType(), 2 * Trans.OrderGrad(&el));
+  }
+
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    el.CalcDShape(ip, dshape_);
+    Mult(dshape_, Trans.InverseJacobian(), gshape_);
+    StrainDisplacementMatrix(dim, gshape_, B_);
+    C_->Eval(Cq_, Trans, ip);
+    const auto w = ip.weight * Trans.Weight();
+    Mult(Cq_, B_, CB_);
+    AddMult_a_AtB(w, B_, CB_, elmat);
+  }
+}
+
+const mfem::IntegrationRule& TransformedDiffusionIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void TransformedDiffusionIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+
+  auto dim = Trans.GetSpaceDim();
+  auto trial_dof = trial_fe.GetDof();
+  auto test_dof = test_fe.GetDof();
+
+  auto same_spaces = &test_fe == &trial_fe;
+
+  elmat.SetSize(test_dof, trial_dof);
+  elmat = 0.;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector fs, df, x;
+  DenseMatrix trial_dshape, test_dshape, xis, F, a, trial_dshape_trans;
+#endif
+  trial_dshape.SetSize(trial_dof, dim);
+
+  if (same_spaces) {
+    test_dshape.Reset(trial_dshape.GetData(), test_dof, dim);
+  } else {
+    test_dshape.SetSize(test_dof, dim);
+  }
+
+  if (Q || QV) {
+    F.SetSize(dim, dim);
+  }
+
+  if (Q || QV || QM) {
+    a.SetSize(dim, dim);
+    trial_dshape_trans.SetSize(trial_dof, dim);
+  }
+
+  if (Q) {
+    // Evaluate radial function at trial nodes.
+    x.SetSize(dim);
+    df.SetSize(dim);
+    fs.SetSize(trial_dof);
+    const auto& ir = trial_fe.GetNodes();
+    for (auto i = 0; i < ir.GetNPoints(); i++) {
+      const auto& ip = ir.IntPoint(i);
+      Trans.SetIntPoint(&ip);
+      fs(i) = Q->Eval(Trans, ip);
+    }
+  }
+
+  if (QV) {
+    // Evaluate mapping at all trial nodes.
+    const auto& ir = trial_fe.GetNodes();
+    QV->Eval(xis, Trans, ir);
+  }
+
+  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
+
+  for (auto i = 0; i < ir->GetNPoints(); i++) {
+    const auto& ip = ir->IntPoint(i);
+    Trans.SetIntPoint(&ip);
+
+    trial_fe.CalcPhysDShape(Trans, trial_dshape);
+    if (!same_spaces) {
+      test_fe.CalcPhysDShape(Trans, test_dshape);
+    }
+
+    auto w = Trans.Weight() * ip.weight;
+
+    if (Q) {
+      // Compute F at the integration point from the radial mapping.
+      Trans.Transform(ip, x);
+      auto f = Q->Eval(Trans, ip);
+      trial_dshape.MultTranspose(fs, df);
+      for (auto k = 0; k < dim; k++) {
+        for (auto j = 0; j < dim; j++) {
+          F(j, k) = x(j) * df(k);
+        }
+        F(k, k) += f;
+      }
+    }
+
+    if (QV) {
+      // Compute F at the integration point from the mapping.
+      Mult(xis, trial_dshape, F);
+    }
+
+    if (Q || QV) {
+      // Form the matrix a = J F^{-1} F^{-T}
+      auto J = F.Det();
+      F.Invert();
+      MultABt(F, F, a);
+      a *= J;
+    }
+
+    if (QM) {
+      // Evaluate a.
+      QM->Eval(a, Trans, ip);
+    }
+
+    // Form the contribution to the local element matrix.
+    if (Q || QV || QM) {
+      Mult(trial_dshape, a, trial_dshape_trans);
+      AddMult_a_ABt(w, test_dshape, trial_dshape_trans, elmat);
+    } else {
+      AddMult_a_ABt(w, test_dshape, trial_dshape, elmat);
     }
   }
 }
@@ -660,6 +844,115 @@ void DeviatoricStrainInterpolator::AssembleElementMatrix2(
         }
       }
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Boundary normal integrators
+
+namespace {
+
+// Unit normal of a boundary element at the current integration point of
+// Trans (CalcOrtho of the Jacobian, normalised); false if degenerate.
+bool BoundaryUnitNormal(mfem::ElementTransformation& Trans,
+                        mfem::Vector& normal) {
+  normal.SetSize(Trans.GetSpaceDim());
+  mfem::CalcOrtho(Trans.Jacobian(), normal);
+  const mfem::real_t nrm = normal.Norml2();
+  if (nrm <= 0.0) {
+    return false;
+  }
+  normal /= nrm;
+  return true;
+}
+
+}  // namespace
+
+const mfem::IntegrationRule& BoundaryNormalNormalIntegrator::GetRule(
+    const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
+  const auto order = 2 * el.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(el.GetGeomType(), order);
+}
+
+void BoundaryNormalNormalIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto dof = el.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector shape, normal, nshape;
+#endif
+  shape.SetSize(dof);
+  nshape.SetSize(dim * dof);
+  elmat.SetSize(dim * dof);
+  elmat = 0.0;
+
+  const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    if (!BoundaryUnitNormal(Trans, normal)) {
+      continue;
+    }
+    el.CalcShape(ip, shape);
+    for (auto d = 0; d < dim; d++) {
+      for (auto i = 0; i < dof; i++) {
+        nshape[i + d * dof] = shape[i] * normal[d];
+      }
+    }
+    auto w = ip.weight * Trans.Weight();
+    if (Q) {
+      w *= Q->Eval(Trans, ip);
+    }
+    AddMult_a_VVt(w, nshape, elmat);
+  }
+}
+
+const mfem::IntegrationRule& BoundaryNormalScalarIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void BoundaryNormalScalarIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto trial_dof = trial_fe.GetDof();
+  const auto test_dof = test_fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector trial_shape, test_shape, normal, nshape;
+#endif
+  trial_shape.SetSize(trial_dof);
+  test_shape.SetSize(test_dof);
+  nshape.SetSize(dim * test_dof);
+  elmat.SetSize(dim * test_dof, trial_dof);
+  elmat = 0.0;
+
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    if (!BoundaryUnitNormal(Trans, normal)) {
+      continue;
+    }
+    trial_fe.CalcShape(ip, trial_shape);
+    test_fe.CalcShape(ip, test_shape);
+    auto w = ip.weight * Trans.Weight();
+    if (Q) {
+      w *= Q->Eval(Trans, ip);
+    }
+    for (auto d = 0; d < dim; d++) {
+      for (auto i = 0; i < test_dof; i++) {
+        nshape[i + d * test_dof] = w * test_shape[i] * normal[d];
+      }
+    }
+    AddMultVWt(nshape, trial_shape, elmat);
   }
 }
 

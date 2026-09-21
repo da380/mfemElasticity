@@ -1,8 +1,9 @@
 /**
- * @file DomainLFDeformationGradientIntegrator.hpp
- * @brief Defines a LinearFormIntegrator for terms involving the deformation
- * gradient.
+ * @file lininteg.hpp
+ * @brief Linear form integrators: the pairing of a matrix coefficient with
+ * the deformation gradient of a vector test field.
  */
+
 #pragma once
 
 #include "mfem.hpp"
@@ -30,14 +31,14 @@ namespace mfemElasticity {
  * It is also assumed that the matrix coefficient \f$\bvec{m}\f$ is square with
  * its dimension equal to the spatial dimension of the finite-element space.
  *
- * @note TODO: Extension to allow for delta-function coefficients.
+ * @note Delta-function coefficients are not supported.
  */
 class DomainLFDeformationGradientIntegrator
     : public mfem::LinearFormIntegrator {
  private:
   /** @brief The matrix coefficient \f$\bvec{m}\f$ (components \f$m_{ij}\f$)
    * used in the integral. */
-  mfem::MatrixCoefficient& _M;
+  mfem::MatrixCoefficient& M_;
 
 #ifndef MFEM_THREAD_SAFE
   /** @brief Workspace vector for element vector computations (non-thread-safe).
@@ -59,7 +60,7 @@ class DomainLFDeformationGradientIntegrator
    */
   DomainLFDeformationGradientIntegrator(
       mfem::MatrixCoefficient& M, const mfem::IntegrationRule* ir = nullptr)
-      : mfem::LinearFormIntegrator(ir), _M{M} {}
+      : mfem::LinearFormIntegrator(ir), M_{M} {}
 
   /**
    * @brief Assembles the element vector for a given finite element.

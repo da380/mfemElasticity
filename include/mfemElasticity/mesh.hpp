@@ -1,4 +1,10 @@
-
+/**
+ * @file mesh.hpp
+ * @brief Mesh queries, serial and parallel: attribute marker arrays, the
+ * centroid of a (sub)domain, detection of a spherical boundary and its
+ * radius (SphericalMeshHelper), and the communicator of the ranks owning a
+ * boundary.
+ */
 
 #pragma once
 
@@ -70,31 +76,10 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
 
 /**
  * @brief Determines if an indicated boundary is spherical and returns its
- * radius (move version).
+ * radius, measured from the coordinate origin.
  *
- * This overload takes the `bdr_marker` by rvalue reference, allowing for
- * efficient passing of temporary marker arrays.
- *
- * @param mesh Pointer to the mfem::Mesh object.
- * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
- * (1 for inclusion, 0 for exclusion) to consider (moved).
- * @param x0 The origin (center) from which the radius is measured.
- * @return A `std::tuple` containing:
- * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
- * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
- * equal.
- * - `mfem::real_t`: The radius found. Meaningful only if the first two
- * return values equal 1.
- */
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker, const mfem::Vector& x0);
-
-/**
- * @brief Determines if an indicated boundary is spherical and returns its
- * radius, using the mesh centroid as the origin.
- *
- * This overload automatically calculates the mesh centroid and uses it as the
- * origin `x0`.
+ * This overload takes `x0 = 0`; pass MeshCentroid() explicitly to measure
+ * from the centroid.
  *
  * @param mesh Pointer to the mfem::Mesh object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
@@ -108,26 +93,6 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
  */
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker);
-
-/**
- * @brief Determines if an indicated boundary is spherical and returns its
- * radius, using the mesh centroid as the origin (move version).
- *
- * This overload takes `bdr_marker` by rvalue reference and uses the mesh
- * centroid as origin.
- *
- * @param mesh Pointer to the mfem::Mesh object.
- * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
- * (1 for inclusion, 0 for exclusion) to consider (moved).
- * @return A `std::tuple` containing:
- * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
- * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
- * equal.
- * - `mfem::real_t`: The radius found. Meaningful only if the first two
- * return values equal 1.
- */
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::Mesh* mesh, mfem::Array<int>&& bdr_marker);
 
 /**
  * @brief Determines if the external boundary is spherical and returns its
@@ -150,10 +115,10 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
 
 /**
  * @brief Determines if the external boundary is spherical and returns its
- * radius, using the mesh centroid as the origin.
+ * radius, measured from the coordinate origin.
  *
- * This overload automatically marks the external boundary and calculates the
- * mesh centroid to be used as the origin.
+ * This overload automatically marks the external boundary and takes
+ * `x0 = 0`.
  *
  * @param mesh Pointer to the mfem::Mesh object.
  * @return A `std::tuple` containing:
@@ -192,30 +157,10 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
 
 /**
  * @brief Determines if an indicated boundary is spherical and returns its
- * radius for a parallel mesh (move version).
+ * radius for a parallel mesh, measured from the coordinate origin.
  *
- * This parallel overload takes the `bdr_marker` by rvalue reference.
- *
- * @param mesh Pointer to the mfem::ParMesh object.
- * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
- * (1 for inclusion, 0 for exclusion) to consider (moved).
- * @param x0 The origin (center) from which the radius is measured.
- * @return A `std::tuple` containing:
- * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
- * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
- * equal.
- * - `mfem::real_t`: The global radius found. Meaningful only if the first two
- * return values equal 1.
- */
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker, const mfem::Vector& x0);
-
-/**
- * @brief Determines if an indicated boundary is spherical and returns its
- * radius for a parallel mesh, using the global mesh centroid as the origin.
- *
- * This parallel overload automatically calculates the global mesh centroid and
- * uses it as the origin.
+ * This parallel overload takes `x0 = 0`; pass MeshCentroid() explicitly to
+ * measure from the centroid.
  *
  * @param mesh Pointer to the mfem::ParMesh object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
@@ -229,26 +174,6 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
  */
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::ParMesh* mesh, const mfem::Array<int>& bdr_marker);
-/**
- * @brief Determines if an indicated boundary is spherical and returns its
- * radius for a parallel mesh, using the global mesh centroid as the origin
- * (move version).
- *
- * This parallel overload takes `bdr_marker` by rvalue reference and uses the
- * global mesh centroid.
- *
- * @param mesh Pointer to the mfem::ParMesh object.
- * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
- * (1 for inclusion, 0 for exclusion) to consider (moved).
- * @return A `std::tuple` containing:
- * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
- * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
- * equal.
- * - `mfem::real_t`: The global radius found. Meaningful only if the first two
- * return values equal 1.
- */
-std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
-    mfem::ParMesh* mesh, mfem::Array<int>&& bdr_marker);
 /**
  * @brief Determines if the external boundary is spherical and returns its
  * radius from a given origin for a parallel mesh.
@@ -270,10 +195,10 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
 
 /**
  * @brief Determines if the external boundary is spherical and returns its
- * radius from the global mesh centroid for a parallel mesh.
+ * radius from the coordinate origin for a parallel mesh.
  *
  * This parallel overload automatically marks the external boundary globally and
- * calculates the global mesh centroid.
+ * takes `x0 = 0`.
  *
  * @param mesh Pointer to the mfem::ParMesh object.
  * @return A `std::tuple` containing:
@@ -302,24 +227,7 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(mfem::ParMesh* mesh);
  * @return An `mfem::Vector` representing the coordinates of the computed
  * centroid.
  */
-mfem::Vector MeshCentroid(mfem::Mesh* mesh, mfem::Array<int>& dom_marker,
-                          int order = 1);
-
-/**
- * @brief Computes the centroid of a mesh (move version), optionally for a
- * subset of domain attributes.
- *
- * This overload takes the `dom_marker` by rvalue reference.
- *
- * @param mesh Pointer to the mfem::Mesh object.
- * @param dom_marker An `mfem::Array<int>` marking which domain attributes
- * (1 for inclusion, 0 for exclusion) to consider (moved).
- * @param order The polynomial order used for the quadrature rule during
- * integration.
- * @return An `mfem::Vector` representing the coordinates of the computed
- * centroid.
- */
-mfem::Vector MeshCentroid(mfem::Mesh* mesh, mfem::Array<int>&& dom_marker,
+mfem::Vector MeshCentroid(mfem::Mesh* mesh, const mfem::Array<int>& dom_marker,
                           int order = 1);
 
 /**
@@ -351,25 +259,8 @@ mfem::Vector MeshCentroid(mfem::Mesh* mesh, int order = 1);
  * @return An `mfem::Vector` representing the global coordinates of the computed
  * centroid.
  */
-mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>& dom_marker,
-                          int order = 1);
-
-/**
- * @brief Computes the global centroid of a parallel mesh (move version),
- * optionally for a subset of domain attributes.
- *
- * This parallel overload takes the `dom_marker` by rvalue reference.
- *
- * @param mesh Pointer to the mfem::ParMesh object.
- * @param dom_marker An `mfem::Array<int>` marking which domain attributes
- * (1 for inclusion, 0 for exclusion) to consider (moved).
- * @param order The polynomial order used for the quadrature rule during
- * integration.
- * @return An `mfem::Vector` representing the global coordinates of the computed
- * centroid.
- */
-mfem::Vector MeshCentroid(mfem::ParMesh* mesh, mfem::Array<int>&& dom_marker,
-                          int order = 1);
+mfem::Vector MeshCentroid(mfem::ParMesh* mesh,
+                          const mfem::Array<int>& dom_marker, int order = 1);
 
 /**
  * @brief Computes the global centroid of the entire parallel mesh.
@@ -395,16 +286,16 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order = 1);
  */
 struct SphericalMeshHelper {
   /** @brief The radius of the spherical external boundary. */
-  mfem::real_t _bdr_radius;
+  mfem::real_t bdr_radius_;
   /** @brief The center coordinates of the spherical boundary. */
-  mfem::Vector _x0;
+  mfem::Vector x0_;
   /** @brief Marker array identifying the external boundary attributes. */
-  mfem::Array<int> _bdr_marker;
+  mfem::Array<int> bdr_marker_;
 
   /**
    * @brief Determines and sets the external boundary marker for a serial mesh.
    *
-   * This method populates `_bdr_marker`, `_bdr_radius`, and `_x0` by
+   * This method populates `bdr_marker_`, `bdr_radius_`, and `x0_` by
    * analyzing the provided serial mesh.
    * @param mesh Pointer to the mfem::Mesh object.
    */
@@ -415,7 +306,7 @@ struct SphericalMeshHelper {
    * @brief Determines and sets the external boundary marker for a parallel
    * mesh.
    *
-   * This method populates `_bdr_marker`, `_bdr_radius`, and `_x0` by
+   * This method populates `bdr_marker_`, `bdr_radius_`, and `x0_` by
    * analyzing the provided parallel mesh, performing necessary MPI
    * communication to ensure global consistency.
    * @param mesh Pointer to the mfem::ParMesh object.

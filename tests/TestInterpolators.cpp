@@ -18,10 +18,10 @@ class InterpolatorTests : public testing::TestWithParam<DimOrderTypeTuple> {
     vector_fes = std::make_unique<FiniteElementSpace>(&mesh, H1.get(), dim);
     matrix_fes =
         std::make_unique<FiniteElementSpace>(&mesh, L2.get(), dim * dim);
-    strain_fes = std::make_unique<FiniteElementSpace>(&mesh, L2.get(),
-                                                      dim * (dim + 1) / 2);
+    strain_fes = std::make_unique<FiniteElementSpace>(
+        &mesh, L2.get(), SymmetricComponentOrder::Count(dim));
     deviatoric_strain_fes = std::make_unique<FiniteElementSpace>(
-        &mesh, L2.get(), dim * (dim + 1) / 2 - 1);
+        &mesh, L2.get(), SymmetricComponentOrder::TraceFreeCount(dim));
 
     A = RandomMatrix(dim);
 
@@ -44,9 +44,10 @@ class InterpolatorTests : public testing::TestWithParam<DimOrderTypeTuple> {
         });
 
     EF = std::make_unique<VectorFunctionCoefficient>(
-        dim * (dim + 1) / 2, [this](const Vector& x, Vector& m) {
+        SymmetricComponentOrder::Count(dim),
+        [this](const Vector& x, Vector& m) {
           auto dim = x.Size();
-          m.SetSize(dim * (dim + 1) / 2);
+          m.SetSize(SymmetricComponentOrder::Count(dim));
           auto k = 0;
           for (auto j = 0; j < dim; j++) {
             for (auto i = j; i < dim; i++) {
@@ -56,9 +57,10 @@ class InterpolatorTests : public testing::TestWithParam<DimOrderTypeTuple> {
         });
 
     DF = std::make_unique<VectorFunctionCoefficient>(
-        dim * (dim + 1) / 2 - 1, [this](const Vector& x, Vector& m) {
+        SymmetricComponentOrder::TraceFreeCount(dim),
+        [this](const Vector& x, Vector& m) {
           auto dim = x.Size();
-          m.SetSize(dim * (dim + 1) / 2 - 1);
+          m.SetSize(SymmetricComponentOrder::TraceFreeCount(dim));
           auto trace = A.Trace();
           auto k = 0;
           for (auto j = 0; j < dim - 1; j++) {

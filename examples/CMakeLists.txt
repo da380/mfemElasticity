@@ -1,81 +1,41 @@
+# Serial examples. Each parallel counterpart (suffix _p) is added below when
+# USE_MPI is on. The examples read their meshes from <build>/data, which the
+# top-level CMakeLists.txt fills (CopyData and the meshes/ scripts).
 
-add_executable(ex1 ex1.cpp)
-target_link_libraries(ex1 mfemElasticity)
+set(SERIAL_EXAMPLES
+    poisson_dtn                 # Poisson on the whole space: Neumann / DtN / multipole
+    transformed_diffusion       # pull-back Laplacian on a mapped domain
+    submesh_injection           # tour of SubMeshDofInjection
+    coupled_poisson             # coupled Poisson pair across mesh / submesh
+    elastogravity_layered       # LinearQuasiStaticSelfGravitatingProblem: fluid core (+ inner core)
+    quasi_static_elasticity     # quasi_static_problem.hpp driver
+    viscoelasticity             # ViscoelasticOperator driver
+    viscoelastic_loading        # GIA-style layered load/rebound driver
+    viscoelastic_schemes        # cost/accuracy table of the time integrators
+    self_gravitating_relaxation # Maxwell mantle + fluid core under a Heaviside load
+    self_gravitating_elasticity # LinearQuasiStaticSelfGravitatingProblem driver
+    love_numbers                # load and tidal Love numbers by degree, one solve each
+    anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
+)
 
-add_executable(ex2 ex2.cpp)
-target_link_libraries(ex2 mfemElasticity)
+set(PARALLEL_EXAMPLES
+    poisson_dtn_p
+    transformed_diffusion_p
+    submesh_injection_p
+    coupled_poisson_p
+    elastogravity_layered_p
+    self_gravitating_elasticity_p
+)
 
-add_executable(ex3 ex3.cpp)
-target_link_libraries(ex3 mfemElasticity)
-
-add_executable(ex4 ex4.cpp)
-target_link_libraries(ex4 mfemElasticity)
-
-add_executable(ex5 ex5.cpp)
-target_link_libraries(ex5 mfemElasticity)
-
-add_executable(ex6 ex6.cpp)
-target_link_libraries(ex6 mfemElasticity)
-
-add_executable(ex7 ex7.cpp)
-target_link_libraries(ex7 mfemElasticity)
-
-add_executable(ex8 ex8.cpp)
-target_link_libraries(ex8 mfemElasticity)
-
-add_executable(elastogravity elastogravity.cpp)
-target_link_libraries(elastogravity mfemElasticity)
-
-add_executable(elastogravity_block elastogravity_block.cpp)
-target_link_libraries(elastogravity_block mfemElasticity)
-
-add_executable(grid_transfer grid_transfer.cpp)
-target_link_libraries(grid_transfer mfemElasticity)
-
-
-add_executable(quasi_static_elasticity quasi_static_elasticity.cpp)
-target_link_libraries(quasi_static_elasticity mfemElasticity)
-
-
-add_executable(wave wave.cpp)
-target_link_libraries(wave mfemElasticity)
-
-add_executable(ode ode.cpp)
-target_link_libraries(ode mfemElasticity)
-
-add_executable(seismic seismic.cpp)
-target_link_libraries(seismic mfemElasticity)
-
-
+foreach(ex IN LISTS SERIAL_EXAMPLES)
+    add_executable(${ex} ${ex}.cpp)
+    target_link_libraries(${ex} mfemElasticity)
+endforeach()
 
 if(USE_MPI)
-        add_executable(ex2p ex2p.cpp)
-        target_link_libraries(ex2p mfemElasticity)
-
-        add_executable(ex3p ex3p.cpp)
-        target_link_libraries(ex3p mfemElasticity)
-
-        add_executable(ex4p ex4p.cpp)
-        target_link_libraries(ex4p mfemElasticity)
-
-        add_executable(ex7p ex7p.cpp)
-        target_link_libraries(ex7p mfemElasticity)
-
-        add_executable(ex8p ex8p.cpp)
-        target_link_libraries(ex8p mfemElasticity)
-
-        add_executable(elastogravity_p elastogravity_p.cpp)
-        target_link_libraries(elastogravity_p mfemElasticity)
-
-        add_executable(elastogravity_block_p elastogravity_block_p.cpp)
-        target_link_libraries(elastogravity_block_p mfemElasticity)
-
-        add_executable(grid_transfer_p grid_transfer_p.cpp)
-        target_link_libraries(grid_transfer_p mfemElasticity)
-
-        
-
-        add_executable(seismic_p seismic_p.cpp)
-        target_link_libraries(seismic_p mfemElasticity)
-
+    foreach(ex IN LISTS PARALLEL_EXAMPLES)
+        add_executable(${ex} ${ex}.cpp)
+        target_link_libraries(${ex} mfemElasticity)
+    endforeach()
 endif()
+

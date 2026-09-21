@@ -1,60 +1,156 @@
 #include "mfemElasticity/poisson.hpp"
 
+#include <cmath>
+
 namespace mfemElasticity {
+
+namespace {
+
+// The element matrices of the three operators share one form: the pairing of
+// the shape functions with the harmonics Y_i of a SurfaceHarmonics basis
+// about x0, each weighted by a function g_l(r) of its degree and of the
+// distance from x0,
+//
+//   elmat(j, i) = int shape_j g_{l_i}(r) Y_i(x_hat) w,
+//
+// with radial(r, g) filling g[0..L] and w an optional coefficient.
+template <class Radial>
+void AssembleHarmonicElementMatrix(const SurfaceHarmonics& basis,
+                                   const mfem::Vector& x0,
+                                   const mfem::FiniteElement& fe,
+                                   mfem::ElementTransformation& Trans,
+                                   Radial radial, mfem::Coefficient* weight,
+                                   mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dof = fe.GetDof();
+  const auto n = basis.Size();
+
+  Vector shape(dof), x(x0.Size()), Y(n), c(n), g(basis.MaxDegree() + 1);
+  elmat.SetSize(dof, n);
+  elmat = 0.0;
+
+  const auto intorder = fe.GetOrder() + Trans.OrderW();
+  const auto& ir = IntRules.Get(fe.GetGeomType(), intorder);
+
+  for (auto j = 0; j < ir.GetNPoints(); j++) {
+    const auto& ip = ir.IntPoint(j);
+    Trans.SetIntPoint(&ip);
+    Trans.Transform(ip, x);
+    x -= x0;
+
+    basis.Eval(x, Y);
+    radial(x.Norml2(), g);
+    for (auto i = 0; i < n; i++) {
+      c(i) = g(basis.Degree(i)) * Y(i);
+    }
+
+    fe.CalcShape(ip, shape);
+    auto w = Trans.Weight() * ip.weight;
+    if (weight) {
+      w *= weight->Eval(Trans, ip);
+    }
+    AddMult_a_VWt(w, shape, c, elmat);
+  }
+}
+
+// The vector counterpart, pairing the components of a vector field with the
+// gradients of the solid harmonics up to a degree-dependent factor,
+//
+//   elmat(a dof + j, i) = int shape_j g_{l_i}(r)
+//                             (l_i Y_i x_hat + grad_1 Y_i)_a w,
+//
+// so that g_l = r^{l-1} gives grad(r^l Y_i).
+template <class Radial>
+void AssembleHarmonicGradientElementMatrix(
+    const SurfaceHarmonics& basis, const mfem::Vector& x0,
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    Radial radial, mfem::Coefficient* weight, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dof = fe.GetDof();
+  const auto dim = x0.Size();
+  const auto n = basis.Size();
+
+  Vector shape(dof), x(dim), Y(n), c(n), g(basis.MaxDegree() + 1);
+  DenseMatrix gradY, part_elmat(dof, n);
+  elmat.SetSize(dim * dof, n);
+  elmat = 0.0;
+
+  const auto intorder = fe.GetOrder() + Trans.OrderW();
+  const auto& ir = IntRules.Get(fe.GetGeomType(), intorder);
+
+  for (auto j = 0; j < ir.GetNPoints(); j++) {
+    const auto& ip = ir.IntPoint(j);
+    Trans.SetIntPoint(&ip);
+    Trans.Transform(ip, x);
+    x -= x0;
+
+    basis.EvalWithGradient(x, Y, gradY);
+    const auto r = x.Norml2();
+    radial(r, g);
+
+    fe.CalcShape(ip, shape);
+    auto w = Trans.Weight() * ip.weight;
+    if (weight) {
+      w *= weight->Eval(Trans, ip);
+    }
+
+    for (auto a = 0; a < dim; a++) {
+      // At x0 the direction is the one SurfaceHarmonics takes there.
+      const real_t x_hat =
+          r > 0 ? x(a) / r : (a == (dim == 2 ? 0 : 2) ? 1.0 : 0.0);
+      for (auto i = 0; i < n; i++) {
+        const auto l = basis.Degree(i);
+        c(i) = g(l) * (l * Y(i) * x_hat + gradY(a, i));
+      }
+      MultVWt(shape, c, part_elmat);
+      elmat.AddMatrix(w, part_elmat, a * dof, 0);
+    }
+  }
+}
+
+}  // namespace
 
 /*****************************************************************
 ******************************************************************
 ******************************************************************
 *****************************************************************/
 
-int PoissonDtNOperator::CoeffDim() const {
-  return _fes->GetMesh()->Dimension() == 2 ? 2 * _degree
-                                           : (_degree + 1) * (_degree + 1);
-}
-
 void PoissonDtNOperator::SetUp() {
-  assert(_dim == 2 || _dim == 3);
+  assert(dim_ == 2 || dim_ == 3);
 
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    auto* pmesh = _pfes->GetParMesh();
+  if (parallel_) {
+    auto* pmesh = pfes_->GetParMesh();
 
     SetBoundaryMarker(pmesh);
 
     auto [comm, has_bdr, root_rank] =
-        SplitBoundaryCommunicator(_pfes->GetParMesh(), _bdr_marker);
-    _bdr_comm = comm;
-    _has_boundary = has_bdr;
-    _bdr_root_rank = root_rank;
+        SplitBoundaryCommunicator(pfes_->GetParMesh(), bdr_marker_);
+    bdr_comm_ = comm;
+    has_boundary_ = has_bdr;
+    bdr_root_rank_ = root_rank;
 
   } else {
-    SetBoundaryMarker(_fes->GetMesh());
+    SetBoundaryMarker(fes_->GetMesh());
   }
 #else
-  SetBoundaryMarker(_fes->GetMesh());
+  SetBoundaryMarker(fes_->GetMesh());
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  _c.SetSize(_coeff_dim);
-  _x.SetSize(_dim);
-  if (_dim == 3) {
-    _sin.SetSize(_degree + 1);
-    _cos.SetSize(_degree + 1);
-    _p.SetSize(_degree + 1);
-    _pm1.SetSize(_degree + 1);
-  }
+  c_.SetSize(coeff_dim_);
 #endif
-  SetSquareRoots(_dim, _degree);
 }
 
 PoissonDtNOperator::PoissonDtNOperator(mfem::FiniteElementSpace* fes,
                                        int degree)
     : mfem::Operator(fes->GetVSize()),
-      _fes{fes},
-      _dim{fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _mat(fes->GetVSize(), _coeff_dim) {
+      fes_{fes},
+      dim_{fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      mat_(fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 
@@ -63,14 +159,15 @@ PoissonDtNOperator::PoissonDtNOperator(MPI_Comm comm,
                                        mfem::ParFiniteElementSpace* fes,
                                        int degree)
     : mfem::Operator(fes->GetVSize()),
-      _parallel{true},
-      _comm{comm},
-      _pfes{fes},
-      _fes{fes},
-      _dim{fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _mat(fes->GetVSize(), _coeff_dim) {
+      parallel_{true},
+      comm_{comm},
+      pfes_{fes},
+      fes_{fes},
+      dim_{fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      mat_(fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 #endif
@@ -79,222 +176,99 @@ void PoissonDtNOperator::Mult(const mfem::Vector& x, mfem::Vector& y) const {
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c(_coeff_dim);
+  Vector c_(coeff_dim_);
 #endif
 
-  _mat.MultTranspose(x, _c);
+  mat_.MultTranspose(x, c_);
 
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    if (_has_boundary) {
-      MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                    MPI_SUM, _bdr_comm);
+  if (parallel_) {
+    if (has_boundary_) {
+      MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+                    MPI_SUM, bdr_comm_);
     }
   }
 #endif
 
   y.SetSize(x.Size());
-  _mat.Mult(_c, y);
+  mat_.Mult(c_, y);
 }
 
 void PoissonDtNOperator::HarmonicCoefficients(const mfem::Vector& x,
                                               mfem::Vector& y) const {
   using namespace mfem;
 
-  y.SetSize(_coeff_dim);
+  y.SetSize(coeff_dim_);
 
-  _mat.MultTranspose(x, y);
+  mat_.MultTranspose(x, y);
 
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, y.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                  MPI_SUM, _comm);
+  if (parallel_) {
+    MPI_Allreduce(MPI_IN_PLACE, y.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+                  MPI_SUM, comm_);
   }
 #endif
 
-  // Scale the result to form the harmonic coefficients.
-  if (_dim == 2) {
-    auto i = 0;
-    for (auto k = 1; k <= _degree; k++) {
-      const auto fac = 1 / (sqrtPi * _sqrt(k));
-      y(i++) *= fac;
-      y(i++) *= fac;
-    }
-  } else {
-    auto rfac = 1 / std::sqrt(_bdr_radius);
-    y(0) *= rfac;
-    auto i = 1;
-    for (auto l = 1; l <= _degree; l++) {
-      auto fac = rfac / _sqrt[l + 1];
-      for (auto m = -l; m <= l; m++) {
-        y(i++) *= fac;
-      }
+  // Remove the weights of the DtN factorisation (see AssembleElementMatrix)
+  // to leave c_i = R^{1-d} int_S x Y_i dS.
+  for (auto i = 0; i < coeff_dim_; i++) {
+    const auto l = basis_.Degree(i);
+    if (dim_ == 2) {
+      y(i) = l > 0 ? y(i) / std::sqrt(static_cast<mfem::real_t>(l)) : 0.0;
+    } else {
+      y(i) /= std::sqrt(bdr_radius_ * (l + 1));
     }
   }
 }
 
 void PoissonDtNOperator::Assemble() {
   using namespace mfem;
-  auto* mesh = _fes->GetMesh();
+  auto* mesh = fes_->GetMesh();
 
   auto elmat = DenseMatrix();
   auto vdofs = Array<int>();
-  auto rows = Array<int>(_coeff_dim);
-  for (auto i = 0; i < _coeff_dim; i++) {
+  auto rows = Array<int>(coeff_dim_);
+  for (auto i = 0; i < coeff_dim_; i++) {
     rows[i] = i;
   }
 
-  for (auto i = 0; i < _fes->GetNBE(); i++) {
+  for (auto i = 0; i < fes_->GetNBE(); i++) {
     const auto elm_attr = mesh->GetBdrAttribute(i);
-    if (_bdr_marker[elm_attr - 1] == 1) {
-      _fes->GetBdrElementVDofs(i, vdofs);
-      const auto* fe = _fes->GetBE(i);
-      auto* Trans = _fes->GetBdrElementTransformation(i);
+    if (bdr_marker_[elm_attr - 1] == 1) {
+      fes_->GetBdrElementVDofs(i, vdofs);
+      const auto* fe = fes_->GetBE(i);
+      auto* Trans = fes_->GetBdrElementTransformation(i);
 
-      if (_dim == 2) {
-        AssembleElementMatrix2D(*fe, *Trans, elmat);
-      } else {
-        AssembleElementMatrix3D(*fe, *Trans, elmat);
-      }
+      AssembleElementMatrix(*fe, *Trans, elmat);
 
-      _mat.AddSubMatrix(vdofs, rows, elmat);
+      mat_.AddSubMatrix(vdofs, rows, elmat);
     }
   }
 
-  _mat.Finalize();
+  mat_.Finalize();
 }
 
 #ifdef MFEM_USE_MPI
 mfem::RAPOperator PoissonDtNOperator::RAP() const {
-  auto* P = _fes->GetProlongationMatrix();
+  auto* P = fes_->GetProlongationMatrix();
   return mfem::RAPOperator(*P, *this, *P);
 }
 #endif
 
-void PoissonDtNOperator::AssembleElementMatrix2D(
+void PoissonDtNOperator::AssembleElementMatrix(
     const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
     mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x;
-  _x.SetSize(2);
-  _c.SetSize(_coeff_dim);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  int intorder = fe.GetOrder() + Trans.OrderW();
-  auto ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    fe.CalcShape(ip, shape);
-
-    const auto ri = 1 / _x.Norml2();
-    const auto sin = _x[1] * ri;
-    const auto cos = _x[0] * ri;
-
-    auto sin_k_m = 0.0;
-    auto cos_k_m = 1.0;
-
-    auto i = 0;
-    for (auto k = 1; k <= _degree; k++) {
-      const auto fac = _sqrt(k);
-      auto sin_k = sin_k_m * cos + cos_k_m * sin;
-      auto cos_k = cos_k_m * cos - sin_k_m * sin;
-      _c(i++) = fac * cos_k;
-      _c(i++) = fac * sin_k;
-      sin_k_m = sin_k;
-      cos_k_m = cos_k;
+  // B = C C^T with C_{ji} = int_S shape_j g_l(r) Y_i dS and, with the radius
+  // taken pointwise, g_k = sqrt(k) / r (2-D), g_l = sqrt(l + 1) r^{-3/2}
+  // (3-D).
+  const auto dim = dim_;
+  auto radial = [dim](mfem::real_t r, mfem::Vector& g) {
+    const auto scale = dim == 2 ? 1 / r : 1 / (r * std::sqrt(r));
+    for (auto l = 0; l < g.Size(); l++) {
+      g(l) = scale * std::sqrt(static_cast<mfem::real_t>(dim == 2 ? l : l + 1));
     }
-
-    auto w = ri * Trans.Weight() * ip.weight / sqrtPi;
-    AddMult_a_VWt(w, shape, _c, elmat);
-  }
-}
-
-void PoissonDtNOperator::AssembleElementMatrix3D(
-    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
-    mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
-  _x.SetSize(3);
-  _c.SetSize(_coeff_dim);
-  _sin.SetSize(_degree + 1);
-  _cos.SetSize(_degree + 1);
-  _p.SetSize(_degree + 1);
-  _pm1.SetSize(_degree + 1);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  int intorder = fe.GetOrder() + Trans.OrderW();
-  auto ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  _sin(0) = 0.0;
-  _cos(0) = 1.0;
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    const auto ri = 1 / _x.Norml2();
-    const auto cos_theta = _x(2) * ri;
-    const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
-    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
-    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
-
-    _pm1(0) = 0.0;
-    _p(0) = Pll(0, cos_theta);
-
-    auto rfac = std::sqrt(ri) * ri;
-    _c(0) = rfac * _p(0);
-
-    auto i = 1;
-    for (auto l = 1; l <= _degree; l++) {
-      auto fac = rfac * _sqrt[l + 1];
-
-      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
-      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
-
-      for (auto m = 0; m < l; m++) {
-        const auto [alpha, beta] = RecursionCoefficients(l, m);
-        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
-      }
-      _pm1(l) = Pll(l, cos_theta);
-      _p(l) = 0.0;
-      std::swap(_p, _pm1);
-
-      _c(i++) = fac * _p(0);
-
-      fac *= _sqrt[2];
-      for (auto m = 1; m <= l; m++) {
-        _c(i++) = fac * _p[m] * _cos(m);
-        _c(i++) = rxy > 0 ? fac * _p[m] * _sin(m) : 0.0;
-      }
-    }
-
-    fe.CalcShape(ip, shape);
-    auto w = Trans.Weight() * ip.weight;
-
-    AddMult_a_VWt(w, shape, _c, elmat);
-  }
+  };
+  AssembleHarmonicElementMatrix(basis_, x0_, fe, Trans, radial, nullptr, elmat);
 }
 
 /*****************************************************************
@@ -302,49 +276,36 @@ void PoissonDtNOperator::AssembleElementMatrix3D(
 ******************************************************************
 *****************************************************************/
 
-int PoissonMultipoleOperator::CoeffDim() const {
-  auto dim = _tr_fes->GetMesh()->Dimension();
-  auto vDim = _tr_fes->GetVDim();
-  return dim == 2 ? 2 * _degree + 1 : (_degree + 1) * (_degree + 1);
-}
-
 void PoissonMultipoleOperator::SetUp() {
-  assert(_tr_fes->GetMesh() == _te_fes->GetMesh());
+  assert(tr_fes_->GetMesh() == te_fes_->GetMesh());
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    SetBoundaryMarker(_tr_pfes->GetParMesh());
+  if (parallel_) {
+    SetBoundaryMarker(tr_pfes_->GetParMesh());
   } else {
-    SetBoundaryMarker(_tr_fes->GetMesh());
+    SetBoundaryMarker(tr_fes_->GetMesh());
   }
 #else
-  SetBoundaryMarker(_tr_fes->GetMesh());
+  SetBoundaryMarker(tr_fes_->GetMesh());
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  _c.SetSize(_coeff_dim);
-  _x.SetSize(_dim);
-  if (_dim == 3) {
-    _sin.SetSize(_degree + 1);
-    _cos.SetSize(_degree + 1);
-    _p.SetSize(_degree + 1);
-    _pm1.SetSize(_degree + 1);
-  }
+  c_.SetSize(coeff_dim_);
 #endif
-  SetSquareRoots(_dim, _degree);
 }
 
 PoissonMultipoleOperator::PoissonMultipoleOperator(
     mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
     int degree, const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      _tr_fes{tr_fes},
-      _te_fes{te_fes},
-      _dim{tr_fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _dom_marker{dom_marker},
-      _lmat(te_fes->GetVSize(), _coeff_dim),
-      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+      tr_fes_{tr_fes},
+      te_fes_{te_fes},
+      dim_{tr_fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      dom_marker_{dom_marker},
+      lmat_(te_fes->GetVSize(), coeff_dim_),
+      rmat_(tr_fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 
@@ -354,18 +315,19 @@ PoissonMultipoleOperator::PoissonMultipoleOperator(
     mfem::ParFiniteElementSpace* te_fes, int degree,
     const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      _parallel{true},
-      _comm{comm},
-      _tr_fes{tr_fes},
-      _te_fes{te_fes},
-      _tr_pfes{tr_fes},
-      _te_pfes{te_fes},
-      _dim{tr_fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _dom_marker{dom_marker},
-      _lmat(te_fes->GetVSize(), _coeff_dim),
-      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+      parallel_{true},
+      comm_{comm},
+      tr_fes_{tr_fes},
+      te_fes_{te_fes},
+      tr_pfes_{tr_fes},
+      te_pfes_{te_fes},
+      dim_{tr_fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      dom_marker_{dom_marker},
+      lmat_(te_fes->GetVSize(), coeff_dim_),
+      rmat_(tr_fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 #endif
@@ -375,20 +337,20 @@ void PoissonMultipoleOperator::Mult(const mfem::Vector& x,
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c(_coeff_dim);
+  Vector c_(coeff_dim_);
 #endif
 
-  _rmat.MultTranspose(x, _c);
+  rmat_.MultTranspose(x, c_);
 
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                  MPI_SUM, _comm);
+  if (parallel_) {
+    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+                  MPI_SUM, comm_);
   }
 #endif
 
-  y.SetSize(_lmat.Height());
-  _lmat.Mult(_c, y);
+  y.SetSize(lmat_.Height());
+  lmat_.Mult(c_, y);
 }
 
 void PoissonMultipoleOperator::MultTranspose(const mfem::Vector& x,
@@ -396,341 +358,100 @@ void PoissonMultipoleOperator::MultTranspose(const mfem::Vector& x,
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c(_coeff_dim);
+  Vector c_(coeff_dim_);
 #endif
 
-  _lmat.MultTranspose(x, _c);
+  lmat_.MultTranspose(x, c_);
 
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                  MPI_SUM, _comm);
+  if (parallel_) {
+    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+                  MPI_SUM, comm_);
   }
 #endif
 
-  y.SetSize(_rmat.Width());
-  _rmat.Mult(_c, y);
+  y.SetSize(rmat_.Height());
+  rmat_.Mult(c_, y);
 }
 
 void PoissonMultipoleOperator::Assemble() {
-  auto* mesh = _tr_fes->GetMesh();
+  auto* mesh = tr_fes_->GetMesh();
 
   auto elmat = mfem::DenseMatrix();
   auto vdofs = mfem::Array<int>();
-  auto cdofs = mfem::Array<int>(_coeff_dim);
-  for (auto i = 0; i < _coeff_dim; i++) {
+  auto cdofs = mfem::Array<int>(coeff_dim_);
+  for (auto i = 0; i < coeff_dim_; i++) {
     cdofs[i] = i;
   }
 
-  for (auto i = 0; i < _te_fes->GetNBE(); i++) {
+  for (auto i = 0; i < te_fes_->GetNBE(); i++) {
     const auto elm_attr = mesh->GetBdrAttribute(i);
-    if (_bdr_marker[elm_attr - 1] == 1) {
-      _te_fes->GetBdrElementVDofs(i, vdofs);
-      const auto* fe = _te_fes->GetBE(i);
-      auto* Trans = _te_fes->GetBdrElementTransformation(i);
+    if (bdr_marker_[elm_attr - 1] == 1) {
+      te_fes_->GetBdrElementVDofs(i, vdofs);
+      const auto* fe = te_fes_->GetBE(i);
+      auto* Trans = te_fes_->GetBdrElementTransformation(i);
 
-      if (_dim == 2) {
-        AssembleLeftElementMatrix2D(*fe, *Trans, elmat);
-      } else {
-        AssembleLeftElementMatrix3D(*fe, *Trans, elmat);
-      }
+      AssembleLeftElementMatrix(*fe, *Trans, elmat);
 
-      _lmat.AddSubMatrix(vdofs, cdofs, elmat);
+      lmat_.AddSubMatrix(vdofs, cdofs, elmat);
     }
   }
 
-  _lmat.Finalize();
+  lmat_.Finalize();
 
-  for (auto i = 0; i < _tr_fes->GetNE(); i++) {
+  for (auto i = 0; i < tr_fes_->GetNE(); i++) {
     const auto elm_attr = mesh->GetAttribute(i);
-    if (_dom_marker[elm_attr - 1] == 1) {
-      _tr_fes->GetElementVDofs(i, vdofs);
-      const auto* fe = _tr_fes->GetFE(i);
-      auto* Trans = _tr_fes->GetElementTransformation(i);
+    if (dom_marker_[elm_attr - 1] == 1) {
+      tr_fes_->GetElementVDofs(i, vdofs);
+      const auto* fe = tr_fes_->GetFE(i);
+      auto* Trans = tr_fes_->GetElementTransformation(i);
 
-      if (_dim == 2) {
-        AssembleRightElementMatrix2D(*fe, *Trans, elmat);
-      } else {
-        AssembleRightElementMatrix3D(*fe, *Trans, elmat);
-      }
+      AssembleRightElementMatrix(*fe, *Trans, elmat);
 
-      _rmat.AddSubMatrix(vdofs, cdofs, elmat);
+      rmat_.AddSubMatrix(vdofs, cdofs, elmat);
     }
   }
 
-  _rmat.Finalize();
+  rmat_.Finalize();
 }
 
 #ifdef MFEM_USE_MPI
 mfem::RAPOperator PoissonMultipoleOperator::RAP() const {
-  auto* P_te = _te_fes->GetProlongationMatrix();
-  auto* P_tr = _tr_fes->GetProlongationMatrix();
+  auto* P_te = te_fes_->GetProlongationMatrix();
+  auto* P_tr = tr_fes_->GetProlongationMatrix();
   return mfem::RAPOperator(*P_te, *this, *P_tr);
 }
 #endif
 
-void PoissonMultipoleOperator::AssembleRightElementMatrix2D(
+void PoissonMultipoleOperator::AssembleLeftElementMatrix(
     const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
     mfem::DenseMatrix& elmat) {
-  using namespace mfem;
+  // int_S shape_j Y_i dS.
+  auto radial = [](mfem::real_t, mfem::Vector& g) { g = 1.0; };
+  AssembleHarmonicElementMatrix(basis_, x0_, fe, Trans, radial, nullptr, elmat);
+}
 
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x;
-  _c.SetSize(_coeff_dim);
-  _x.SetSize(2);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  const auto fac = 1 / (2 * pi * _bdr_radius);
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    fe.CalcShape(ip, shape);
-
-    auto radius = _x.Norml2();
-    auto inverse_radius = radius > 0 ? 1 / radius : real_t{0};
-
-    auto sin = _x[1] * inverse_radius;
-    auto cos = _x[0] * inverse_radius;
-
-    auto sin_k_m = 0.0;
-    auto cos_k_m = 1.0;
-
-    _c(0) = 1.0;
-
-    auto ratio = radius / _bdr_radius;
-    auto rfac = real_t{1.0};
-
-    auto i = 1;
-    for (auto k = 1; k <= _degree; k++) {
-      auto sin_k = sin_k_m * cos + cos_k_m * sin;
-      auto cos_k = cos_k_m * cos - sin_k_m * sin;
+void PoissonMultipoleOperator::AssembleRightElementMatrix(
+    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  // Interior harmonics of the source scaled to the boundary radius b:
+  // g_0 = 1 / b and g_k = (r/b)^k / (2 b) in 2-D,
+  // g_l = (l + 1) / (2 l + 1) (r/b)^l / b^2 in 3-D.
+  const auto dim = dim_;
+  const auto b = bdr_radius_;
+  auto radial = [dim, b](mfem::real_t r, mfem::Vector& g) {
+    const auto ratio = r / b;
+    auto rfac = dim == 2 ? 1 / b : 1 / (b * b);
+    for (auto l = 0; l < g.Size(); l++) {
+      if (dim == 2) {
+        g(l) = l == 0 ? rfac : rfac / 2;
+      } else {
+        g(l) = rfac * (l + 1) / (2 * l + 1);
+      }
       rfac *= ratio;
-      _c(i++) = rfac * cos_k;
-      _c(i++) = rfac * sin_k;
-
-      sin_k_m = sin_k;
-      cos_k_m = cos_k;
     }
-
-    auto w = fac * Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c, elmat);
-  }
-}
-
-void PoissonMultipoleOperator::AssembleLeftElementMatrix2D(
-    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
-    mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x;
-  _c.SetSize(_coeff_dim);
-  _x.SetSize(2);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    fe.CalcShape(ip, shape);
-
-    auto inverse_radius = 1 / _bdr_radius;
-
-    auto sin = _x[1] * inverse_radius;
-    auto cos = _x[0] * inverse_radius;
-
-    auto sin_k_m = 0.0;
-    auto cos_k_m = 1.0;
-
-    _c(0) = 1.;
-
-    auto i = 1;
-    for (auto k = 1; k <= _degree; k++) {
-      auto sin_k = sin_k_m * cos + cos_k_m * sin;
-      auto cos_k = cos_k_m * cos - sin_k_m * sin;
-      _c(i++) = cos_k;
-      _c(i++) = sin_k;
-      sin_k_m = sin_k;
-      cos_k_m = cos_k;
-    }
-
-    auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c, elmat);
-  }
-}
-
-void PoissonMultipoleOperator::AssembleRightElementMatrix3D(
-    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
-    mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
-  _x.SetSize(3);
-  _c.SetSize(_coeff_dim);
-  _sin.SetSize(_degree + 1);
-  _cos.SetSize(_degree + 1);
-  _p.SetSize(_degree + 1);
-  _pm1.SetSize(_degree + 1);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  _sin(0) = 0.0;
-  _cos(0) = 1.0;
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    const auto r = _x.Norml2();
-    const auto ri = 1 / r;
-    const auto cos_theta = _x(2) * ri;
-    const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
-    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
-    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
-
-    _pm1(0) = 0.0;
-    _p(0) = Pll(0, cos_theta);
-
-    const auto ratio = r / _bdr_radius;
-    auto rfac = 1 / (_bdr_radius * _bdr_radius);
-    _c(0) = rfac * _p(0);
-
-    auto i = 1;
-    for (auto l = 1; l <= _degree; l++) {
-      rfac *= ratio;
-      auto fac = rfac * (l + 1) / (2 * l + 1);
-
-      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
-      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
-
-      for (auto m = 0; m < l; m++) {
-        const auto [alpha, beta] = RecursionCoefficients(l, m);
-        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
-      }
-      _pm1(l) = Pll(l, cos_theta);
-      _p(l) = 0.0;
-      std::swap(_p, _pm1);
-
-      _c(i++) = fac * _p(0);
-
-      fac *= _sqrt[2];
-      for (auto m = 1; m <= l; m++) {
-        _c(i++) = fac * _p[m] * _cos(m);
-        _c(i++) = rxy > 0 ? fac * _p[m] * _sin(m) : 0.0;
-      }
-    }
-
-    fe.CalcShape(ip, shape);
-    auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c, elmat);
-  }
-}
-
-void PoissonMultipoleOperator::AssembleLeftElementMatrix3D(
-    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
-    mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c, shape, _x, _sin, _cos, _p, _pm1;
-  _x.SetSize(3);
-  _c.SetSize(_coeff_dim);
-  _sin.SetSize(_degree + 1);
-  _cos.SetSize(_degree + 1);
-  _p.SetSize(_degree + 1);
-  _pm1.SetSize(_degree + 1);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  _sin(0) = 0.0;
-  _cos(0) = 1.0;
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    const auto r = _x.Norml2();
-    const auto ri = 1 / r;
-    const auto cos_theta = _x(2) * ri;
-    const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
-    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
-    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
-
-    _pm1(0) = 0.0;
-    _p(0) = Pll(0, cos_theta);
-
-    _c(0) = _p(0);
-
-    auto i = 1;
-    for (auto l = 1; l <= _degree; l++) {
-      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
-      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
-
-      for (auto m = 0; m < l; m++) {
-        const auto [alpha, beta] = RecursionCoefficients(l, m);
-        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
-      }
-      _pm1(l) = Pll(l, cos_theta);
-      _p(l) = 0.0;
-      std::swap(_p, _pm1);
-
-      _c(i++) = _p(0);
-
-      for (auto m = 1; m <= l; m++) {
-        _c(i++) = _sqrt[2] * _p[m] * _cos(m);
-        _c(i++) = rxy > 0 ? _sqrt[2] * _p[m] * _sin(m) : 0.0;
-      }
-    }
-
-    fe.CalcShape(ip, shape);
-    auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c, elmat);
-  }
+  };
+  AssembleHarmonicElementMatrix(basis_, x0_, fe, Trans, radial, nullptr, elmat);
 }
 
 /*****************************************************************
@@ -738,53 +459,38 @@ void PoissonMultipoleOperator::AssembleLeftElementMatrix3D(
 ******************************************************************
 *****************************************************************/
 
-int PoissonLinearisedMultipoleOperator::CoeffDim() const {
-  auto dim = _tr_fes->GetMesh()->Dimension();
-  auto vDim = _tr_fes->GetVDim();
-  return dim == 2 ? 2 * _degree : (_degree + 1) * (_degree + 1) - 1;
-}
-
 void PoissonLinearisedMultipoleOperator::SetUp() {
-  assert(_tr_fes->GetMesh() == _te_fes->GetMesh());
-  assert(_tr_fes->GetMesh()->Dimension() == _tr_fes->GetVDim());
+  assert(tr_fes_->GetMesh() == te_fes_->GetMesh());
+  assert(tr_fes_->GetMesh()->Dimension() == tr_fes_->GetVDim());
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    SetBoundaryMarker(_tr_pfes->GetParMesh());
+  if (parallel_) {
+    SetBoundaryMarker(tr_pfes_->GetParMesh());
   } else {
-    SetBoundaryMarker(_tr_fes->GetMesh());
+    SetBoundaryMarker(tr_fes_->GetMesh());
   }
 #else
-  SetBoundaryMarker(_tr_fes->GetMesh());
+  SetBoundaryMarker(tr_fes_->GetMesh());
 #endif
 
 #ifndef MFEM_THREAD_SAFE
-  _c0.SetSize(_coeff_dim);
-  _c1.SetSize(_coeff_dim);
-  _x.SetSize(_dim);
-  if (_dim == 3) {
-    _sin.SetSize(_degree + 1);
-    _cos.SetSize(_degree + 1);
-    _p.SetSize(_degree + 1);
-    _pm1.SetSize(_degree + 1);
-    _c2.SetSize(_coeff_dim);
-  }
+  c_.SetSize(coeff_dim_);
 #endif
-  SetSquareRoots(_dim, _degree);
 }
 
 PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
     mfem::Coefficient& density, int degree, const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      _tr_fes{tr_fes},
-      _te_fes{te_fes},
-      _density{&density},
-      _dim{tr_fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _dom_marker{dom_marker},
-      _lmat(te_fes->GetVSize(), _coeff_dim),
-      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+      tr_fes_{tr_fes},
+      te_fes_{te_fes},
+      density_{&density},
+      dim_{tr_fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      dom_marker_{dom_marker},
+      lmat_(te_fes->GetVSize(), coeff_dim_),
+      rmat_(tr_fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 
@@ -792,14 +498,15 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     mfem::FiniteElementSpace* tr_fes, mfem::FiniteElementSpace* te_fes,
     int degree, const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      _tr_fes{tr_fes},
-      _te_fes{te_fes},
-      _dim{tr_fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _dom_marker{dom_marker},
-      _lmat(te_fes->GetVSize(), _coeff_dim),
-      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+      tr_fes_{tr_fes},
+      te_fes_{te_fes},
+      dim_{tr_fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      dom_marker_{dom_marker},
+      lmat_(te_fes->GetVSize(), coeff_dim_),
+      rmat_(tr_fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 
@@ -810,19 +517,20 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     mfem::ParFiniteElementSpace* te_fes, mfem::Coefficient& density, int degree,
     const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      _parallel{true},
-      _comm{comm},
-      _tr_fes{tr_fes},
-      _te_fes{te_fes},
-      _tr_pfes{tr_fes},
-      _te_pfes{te_fes},
-      _density{&density},
-      _dim{tr_fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _dom_marker{dom_marker},
-      _lmat(te_fes->GetVSize(), _coeff_dim),
-      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+      parallel_{true},
+      comm_{comm},
+      tr_fes_{tr_fes},
+      te_fes_{te_fes},
+      tr_pfes_{tr_fes},
+      te_pfes_{te_fes},
+      density_{&density},
+      dim_{tr_fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      dom_marker_{dom_marker},
+      lmat_(te_fes->GetVSize(), coeff_dim_),
+      rmat_(tr_fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 
@@ -831,18 +539,19 @@ PoissonLinearisedMultipoleOperator::PoissonLinearisedMultipoleOperator(
     mfem::ParFiniteElementSpace* te_fes, int degree,
     const mfem::Array<int>& dom_marker)
     : mfem::Operator(te_fes->GetVSize(), tr_fes->GetVSize()),
-      _parallel{true},
-      _comm{comm},
-      _tr_fes{tr_fes},
-      _te_fes{te_fes},
-      _tr_pfes{tr_fes},
-      _te_pfes{te_fes},
-      _dim{tr_fes->GetMesh()->Dimension()},
-      _degree{degree},
-      _coeff_dim{CoeffDim()},
-      _dom_marker{dom_marker},
-      _lmat(te_fes->GetVSize(), _coeff_dim),
-      _rmat(tr_fes->GetVSize(), _coeff_dim) {
+      parallel_{true},
+      comm_{comm},
+      tr_fes_{tr_fes},
+      te_fes_{te_fes},
+      tr_pfes_{tr_fes},
+      te_pfes_{te_fes},
+      dim_{tr_fes->GetMesh()->Dimension()},
+      degree_{degree},
+      basis_{dim_, degree},
+      coeff_dim_{basis_.Size()},
+      dom_marker_{dom_marker},
+      lmat_(te_fes->GetVSize(), coeff_dim_),
+      rmat_(tr_fes->GetVSize(), coeff_dim_) {
   SetUp();
 }
 #endif
@@ -852,20 +561,20 @@ void PoissonLinearisedMultipoleOperator::Mult(const mfem::Vector& x,
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c0(_coeff_dim);
+  Vector c_(coeff_dim_);
 #endif
 
-  _rmat.MultTranspose(x, _c0);
+  rmat_.MultTranspose(x, c_);
 
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c0.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                  MPI_SUM, _comm);
+  if (parallel_) {
+    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+                  MPI_SUM, comm_);
   }
 #endif
 
-  y.SetSize(_lmat.Height());
-  _lmat.Mult(_c0, y);
+  y.SetSize(lmat_.Height());
+  lmat_.Mult(c_, y);
 }
 
 void PoissonLinearisedMultipoleOperator::MultTranspose(const mfem::Vector& x,
@@ -873,537 +582,99 @@ void PoissonLinearisedMultipoleOperator::MultTranspose(const mfem::Vector& x,
   using namespace mfem;
 
 #ifdef MFEM_THREAD_SAFE
-  Vector _c0(_coeff_dim);
+  Vector c_(coeff_dim_);
 #endif
 
-  _lmat.MultTranspose(x, _c0);
+  lmat_.MultTranspose(x, c_);
 
 #ifdef MFEM_USE_MPI
-  if (_parallel) {
-    MPI_Allreduce(MPI_IN_PLACE, _c0.GetData(), _coeff_dim, MFEM_MPI_REAL_T,
-                  MPI_SUM, _comm);
+  if (parallel_) {
+    MPI_Allreduce(MPI_IN_PLACE, c_.GetData(), coeff_dim_, MFEM_MPI_REAL_T,
+                  MPI_SUM, comm_);
   }
 #endif
 
-  y.SetSize(_rmat.Width());
-  _rmat.Mult(_c0, y);
+  y.SetSize(rmat_.Height());
+  rmat_.Mult(c_, y);
 }
 
 void PoissonLinearisedMultipoleOperator::Assemble() {
-  auto* mesh = _tr_fes->GetMesh();
+  auto* mesh = tr_fes_->GetMesh();
 
   auto elmat = mfem::DenseMatrix();
   auto vdofs = mfem::Array<int>();
-  auto cdofs = mfem::Array<int>(_coeff_dim);
-  for (auto i = 0; i < _coeff_dim; i++) {
+  auto cdofs = mfem::Array<int>(coeff_dim_);
+  for (auto i = 0; i < coeff_dim_; i++) {
     cdofs[i] = i;
   }
 
-  for (auto i = 0; i < _te_fes->GetNBE(); i++) {
+  for (auto i = 0; i < te_fes_->GetNBE(); i++) {
     const auto elm_attr = mesh->GetBdrAttribute(i);
-    if (_bdr_marker[elm_attr - 1] == 1) {
-      _te_fes->GetBdrElementVDofs(i, vdofs);
-      const auto* fe = _te_fes->GetBE(i);
-      auto* Trans = _te_fes->GetBdrElementTransformation(i);
+    if (bdr_marker_[elm_attr - 1] == 1) {
+      te_fes_->GetBdrElementVDofs(i, vdofs);
+      const auto* fe = te_fes_->GetBE(i);
+      auto* Trans = te_fes_->GetBdrElementTransformation(i);
 
-      if (_dim == 2) {
-        AssembleLeftElementMatrix2D(*fe, *Trans, elmat);
-      } else {
-        AssembleLeftElementMatrix3D(*fe, *Trans, elmat);
-      }
+      AssembleLeftElementMatrix(*fe, *Trans, elmat);
 
-      _lmat.AddSubMatrix(vdofs, cdofs, elmat);
+      lmat_.AddSubMatrix(vdofs, cdofs, elmat);
     }
   }
 
-  _lmat.Finalize();
+  lmat_.Finalize();
 
-  for (auto i = 0; i < _tr_fes->GetNE(); i++) {
+  for (auto i = 0; i < tr_fes_->GetNE(); i++) {
     const auto elm_attr = mesh->GetAttribute(i);
-    if (_dom_marker[elm_attr - 1] == 1) {
-      _tr_fes->GetElementVDofs(i, vdofs);
-      const auto* fe = _tr_fes->GetFE(i);
-      auto* Trans = _tr_fes->GetElementTransformation(i);
+    if (dom_marker_[elm_attr - 1] == 1) {
+      tr_fes_->GetElementVDofs(i, vdofs);
+      const auto* fe = tr_fes_->GetFE(i);
+      auto* Trans = tr_fes_->GetElementTransformation(i);
 
-      if (_dim == 2) {
-        AssembleRightElementMatrix2D(*fe, *Trans, elmat);
-      } else {
-        AssembleRightElementMatrix3D(*fe, *Trans, elmat);
-      }
+      AssembleRightElementMatrix(*fe, *Trans, elmat);
 
-      _rmat.AddSubMatrix(vdofs, cdofs, elmat);
+      rmat_.AddSubMatrix(vdofs, cdofs, elmat);
     }
   }
 
-  _rmat.Finalize();
+  rmat_.Finalize();
 }
 
 #ifdef MFEM_USE_MPI
 mfem::RAPOperator PoissonLinearisedMultipoleOperator::RAP() const {
-  auto* P_te = _te_fes->GetProlongationMatrix();
-  auto* P_tr = _tr_fes->GetProlongationMatrix();
+  auto* P_te = te_fes_->GetProlongationMatrix();
+  auto* P_tr = tr_fes_->GetProlongationMatrix();
   return mfem::RAPOperator(*P_te, *this, *P_tr);
 }
 #endif
 
-void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix2D(
+void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix(
     const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
     mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-  auto dim = Trans.GetSpaceDim();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c0(_coeff_dim), _c1(_coeff_dim), shape(_coeff_dim), _x(2);
-  DenseMatrix part_elmat;
-#endif
-
-  shape.SetSize(dof);
-  part_elmat.SetSize(dof, _coeff_dim);
-
-  elmat.SetSize(dim * dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  const auto fac = 1 / (2 * pi * _bdr_radius * _bdr_radius);
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    fe.CalcShape(ip, shape);
-
-    auto r = _x.Norml2();
-    auto ir = r > 0 ? 1 / r : real_t{0};
-
-    auto sin = _x[1] * ir;
-    auto cos = _x[0] * ir;
-
-    auto sin_k_m = 0.0;
-    auto cos_k_m = 1.0;
-
-    auto ratio = r / _bdr_radius;
-    auto rfac = real_t{1.0};
-
-    auto i = 0;
-    for (auto k = 1; k <= _degree; k++) {
-      auto sin_k = sin_k_m * cos + cos_k_m * sin;
-      auto cos_k = cos_k_m * cos - sin_k_m * sin;
-
-      _c0(i) = k * rfac * cos_k;
-      _c1(i++) = -k * rfac * sin_k;
-
-      _c0(i) = k * rfac * sin_k;
-      _c1(i++) = k * rfac * cos_k;
-
-      rfac *= ratio;
-      sin_k_m = sin_k;
-      cos_k_m = cos_k;
-    }
-
-    auto w = fac * Trans.Weight() * ip.weight;
-
-    if (_density) {
-      w *= _density->Eval(Trans, ip);
-    }
-
-    MultVWt(shape, _c0, part_elmat);
-    elmat.AddMatrix(w * cos, part_elmat, 0, 0);
-    elmat.AddMatrix(w * sin, part_elmat, dof, 0);
-
-    MultVWt(shape, _c1, part_elmat);
-    elmat.AddMatrix(-w * sin, part_elmat, 0, 0);
-    elmat.AddMatrix(w * cos, part_elmat, dof, 0);
-  }
+  // int_S shape_j Y_i dS.
+  auto radial = [](mfem::real_t, mfem::Vector& g) { g = 1.0; };
+  AssembleHarmonicElementMatrix(basis_, x0_, fe, Trans, radial, nullptr, elmat);
 }
 
-void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix2D(
+void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix(
     const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
     mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c0(_coeff_dim), shape(dof), _x(2);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    fe.CalcShape(ip, shape);
-
-    auto inverse_radius = 1 / _bdr_radius;
-
-    auto sin = _x[1] * inverse_radius;
-    auto cos = _x[0] * inverse_radius;
-
-    auto sin_k_m = 0.0;
-    auto cos_k_m = 1.0;
-
-    auto i = 0;
-    for (auto k = 1; k <= _degree; k++) {
-      auto sin_k = sin_k_m * cos + cos_k_m * sin;
-      auto cos_k = cos_k_m * cos - sin_k_m * sin;
-      _c0(i++) = cos_k;
-      _c0(i++) = sin_k;
-      sin_k_m = sin_k;
-      cos_k_m = cos_k;
-    }
-
-    auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c0, elmat);
-  }
-}
-
-void PoissonLinearisedMultipoleOperator::AssembleRightElementMatrix3D(
-    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
-    mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-  auto dim = Trans.GetSpaceDim();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c0, _c1, _c2, shape, _x, _sin, _cos, _p, _pm1;
-  _x.SetSize(3);
-  _c0.SetSize(_coeff_dim);
-  _c1.SetSize(_coeff_dim);
-  _c2.SetSize(_coeff_dim);
-  _sin.SetSize(_degree + 1);
-  _cos.SetSize(_degree + 1);
-  _p.SetSize(_degree + 1);
-  _pm1.SetSize(_degree + 1);
-  DenseMatrix part_elmat;
-#endif
-
-  shape.SetSize(dof);
-  part_elmat.SetSize(dof, _coeff_dim);
-
-  elmat.SetSize(dim * dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  _sin(0) = 0.0;
-  _cos(0) = 1.0;
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    const auto r = _x.Norml2();
-    const auto ri = 1 / r;
-    const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
-    const auto cos_theta = _x(2) * ri;
-    const auto sin_theta = rxy * ri;
-    const auto cosec_theta = rxy > 0 ? 1 / sin_theta : 0;
-    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
-    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
-
-    _pm1(0) = 0.0;
-    _p(0) = Pll(0, cos_theta);
-
-    const auto ratio = r / _bdr_radius;
-    auto rfac = std::pow(_bdr_radius, -3);
-
-    auto i = 0;
-    for (auto l = 1; l <= _degree; l++) {
-      auto fac = rfac * (l + 1) / (2 * l + 1);
-
-      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
-      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
-
-      for (auto m = 0; m < l; m++) {
-        const auto [alpha, beta] = RecursionCoefficients(l, m);
-        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
-      }
-      _pm1(l) = Pll(l, cos_theta);
-      _p(l) = 0.0;
-      std::swap(_p, _pm1);
-
-      auto _p_th = _sqrt[l] * _sqrt[l + 1] * _p(1);
-      _c0(i) = fac * l * _p(0);
-      _c1(i) = fac * _p_th;
-      _c2(i++) = 0.0;
-
-      fac *= _sqrt[2];
-      for (auto m = 1; m < l; m++) {
-        _p_th = 0.5 * _sqrt[l - m] * _sqrt[l + m + 1] * _p[m + 1] -
-                0.5 * _sqrt[l + m] * _sqrt[l - m + 1] * _p[m - 1];
-
-        _c0(i) = fac * l * _p(m) * _cos(m);
-        _c1(i) = fac * _p_th * _cos(m);
-        _c2(i++) = -fac * m * cosec_theta * _p(m) * _sin(m);
-
-        _c0(i) = fac * l * _p(m) * _sin(m);
-        _c1(i) = fac * _p_th * _sin(m);
-        _c2(i++) = fac * m * cosec_theta * _p(m) * _cos(m);
-      }
-
-      _p_th = -0.5 * _sqrt[2 * l] * _p(l - 1);
-      _c0(i) = fac * l * _p(l) * _cos(l);
-      _c1(i) = fac * _p_th * _cos(l);
-      _c2(i++) = -fac * l * cosec_theta * _p(l) * _sin(l);
-
-      _c0(i) = fac * l * _p(l) * _sin(l);
-      _c1(i) = fac * _p_th * _sin(l);
-      _c2(i++) = fac * l * cosec_theta * _p(l) * _cos(l);
-
+  // The gradients of the interior harmonics of the static operator,
+  // grad(r^l Y_i) = r^{l-1} (l Y_i x_hat + grad_1 Y_i), so with
+  // g_k = (r/b)^{k-1} / (2 b^2) in 2-D and
+  // g_l = (l + 1) / (2 l + 1) (r/b)^{l-1} / b^3 in 3-D; degree zero drops out.
+  const auto dim = dim_;
+  const auto b = bdr_radius_;
+  auto radial = [dim, b](mfem::real_t r, mfem::Vector& g) {
+    const auto ratio = r / b;
+    auto rfac = dim == 2 ? 1 / (2 * b * b) : 1 / (b * b * b);
+    g(0) = 0.0;
+    for (auto l = 1; l < g.Size(); l++) {
+      g(l) = dim == 2 ? rfac : rfac * (l + 1) / (2 * l + 1);
       rfac *= ratio;
     }
-
-    fe.CalcShape(ip, shape);
-    auto w = Trans.Weight() * ip.weight;
-
-    if (_density) {
-      w *= _density->Eval(Trans, ip);
-    }
-
-    MultVWt(shape, _c0, part_elmat);
-    elmat.AddMatrix(w * sin_theta * cos, part_elmat, 0, 0);
-    elmat.AddMatrix(w * sin_theta * sin, part_elmat, dof, 0);
-    elmat.AddMatrix(w * cos_theta, part_elmat, 2 * dof, 0);
-
-    MultVWt(shape, _c1, part_elmat);
-    elmat.AddMatrix(w * cos_theta * cos, part_elmat, 0, 0);
-    elmat.AddMatrix(w * cos_theta * sin, part_elmat, dof, 0);
-    elmat.AddMatrix(-w * sin_theta, part_elmat, 2 * dof, 0);
-
-    MultVWt(shape, _c2, part_elmat);
-    elmat.AddMatrix(-w * sin, part_elmat, 0, 0);
-    elmat.AddMatrix(w * cos, part_elmat, dof, 0);
-  }
-}
-
-void PoissonLinearisedMultipoleOperator::AssembleLeftElementMatrix3D(
-    const mfem::FiniteElement& fe, mfem::ElementTransformation& Trans,
-    mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dof = fe.GetDof();
-
-#ifdef MFEM_THREAD_SAFE
-  Vector _c0, shape, _x, _sin, _cos, _p, _pm1;
-  _x.SetSize(3);
-  _c0.SetSize(_coeff_dim);
-  _sin.SetSize(_degree + 1);
-  _cos.SetSize(_degree + 1);
-  _p.SetSize(_degree + 1);
-  _pm1.SetSize(_degree + 1);
-#endif
-
-  shape.SetSize(dof);
-  elmat.SetSize(dof, _coeff_dim);
-  elmat = 0.0;
-
-  auto intorder = fe.GetOrder() + Trans.OrderW();
-  auto* ir = &IntRules.Get(fe.GetGeomType(), intorder);
-
-  _sin(0) = 0.0;
-  _cos(0) = 1.0;
-
-  for (auto j = 0; j < ir->GetNPoints(); j++) {
-    const auto& ip = ir->IntPoint(j);
-    Trans.SetIntPoint(&ip);
-    Trans.Transform(ip, _x);
-    _x -= _x0;
-
-    const auto r = _x.Norml2();
-    const auto ri = 1 / r;
-    const auto cos_theta = _x(2) * ri;
-    const auto rxy = std::sqrt(_x(0) * _x(0) + _x(1) * _x(1));
-    const auto cos = rxy > 0 ? _x(0) / rxy : real_t{1};
-    const auto sin = rxy > 0 ? _x(1) / rxy : real_t{0};
-
-    _pm1(0) = 0.0;
-    _p(0) = Pll(0, cos_theta);
-
-    auto i = 0;
-    for (auto l = 1; l <= _degree; l++) {
-      _sin(l) = rxy > 0 ? _sin(l - 1) * cos + _cos(l - 1) * sin : 0.0;
-      _cos(l) = _cos(l - 1) * cos - _sin(l - 1) * sin;
-
-      for (auto m = 0; m < l; m++) {
-        const auto [alpha, beta] = RecursionCoefficients(l, m);
-        _pm1(m) = alpha * (cos_theta * _p(m) - beta * _pm1(m));
-      }
-      _pm1(l) = Pll(l, cos_theta);
-      _p(l) = 0.0;
-      std::swap(_p, _pm1);
-
-      _c0(i++) = _p(0);
-
-      for (auto m = 1; m <= l; m++) {
-        _c0(i++) = _sqrt[2] * _p[m] * _cos(m);
-        _c0(i++) = rxy > 0 ? _sqrt[2] * _p[m] * _sin(m) : 0.0;
-      }
-    }
-
-    fe.CalcShape(ip, shape);
-    auto w = Trans.Weight() * ip.weight;
-    AddMult_a_VWt(w, shape, _c0, elmat);
-  }
-}
-
-/*****************************************************************
-******************************************************************
-******************************************************************
-*****************************************************************/
-
-const mfem::IntegrationRule& TransformedDiffusionIntegrator::GetRule(
-    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
-    const mfem::ElementTransformation& Trans) {
-  const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
-  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
-}
-
-void TransformedDiffusionIntegrator::AssembleElementMatrix2(
-    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
-    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
-  using namespace mfem;
-
-  auto dim = Trans.GetSpaceDim();
-  auto trial_dof = trial_fe.GetDof();
-  auto test_dof = test_fe.GetDof();
-
-  auto same_spaces = &test_fe == &trial_fe;
-
-  elmat.SetSize(test_dof, trial_dof);
-  elmat = 0.;
-
-#ifdef MFEM_THREAD_SAFE
-  Vector fs, df, x;
-  DenseMatrix trial_dshape, test_dshape, xis, F, a, trial_dshape_trans;
-#endif
-  trial_dshape.SetSize(trial_dof, dim);
-
-  if (same_spaces) {
-    test_dshape.Reset(trial_dshape.GetData(), test_dof, dim);
-  } else {
-    test_dshape.SetSize(test_dof, dim);
-  }
-
-  if (Q || QV) {
-    F.SetSize(dim, dim);
-  }
-
-  if (Q || QV || QM) {
-    a.SetSize(dim, dim);
-    trial_dshape_trans.SetSize(trial_dof, dim);
-  }
-
-  if (Q) {
-    // Evaluate radial function at trial nodes.
-    x.SetSize(dim);
-    df.SetSize(dim);
-    fs.SetSize(trial_dof);
-    const auto& ir = trial_fe.GetNodes();
-    for (auto i = 0; i < ir.GetNPoints(); i++) {
-      const auto& ip = ir.IntPoint(i);
-      Trans.SetIntPoint(&ip);
-      fs(i) = Q->Eval(Trans, ip);
-    }
-  }
-
-  if (QV) {
-    // Evaluate mapping at all trial nodes.
-    const auto& ir = trial_fe.GetNodes();
-    QV->Eval(xis, Trans, ir);
-  }
-
-  const auto* ir = GetIntegrationRule(trial_fe, test_fe, Trans);
-
-  for (auto i = 0; i < ir->GetNPoints(); i++) {
-    const auto& ip = ir->IntPoint(i);
-    Trans.SetIntPoint(&ip);
-
-    trial_fe.CalcPhysDShape(Trans, trial_dshape);
-    if (!same_spaces) {
-      test_fe.CalcPhysDShape(Trans, test_dshape);
-    }
-
-    auto w = Trans.Weight() * ip.weight;
-
-    if (Q) {
-      // Compute F at the integration point from the radial mapping.
-      Trans.Transform(ip, x);
-      auto f = Q->Eval(Trans, ip);
-      trial_dshape.MultTranspose(fs, df);
-      for (auto k = 0; k < dim; k++) {
-        for (auto j = 0; j < dim; j++) {
-          F(j, k) = x(j) * df(j);
-        }
-        F(k, k) += f;
-      }
-    }
-
-    if (QV) {
-      // Compute F at the integration point from the mapping.
-      Mult(xis, trial_dshape, F);
-    }
-
-    if (Q || QV) {
-      // Form the matrix a = J F^{-1} F^{-T}
-      auto J = F.Det();
-      F.Invert();
-      MultABt(F, F, a);
-      a *= J;
-    }
-
-    if (QM) {
-      // Evaluate a.
-      QM->Eval(a, Trans, ip);
-    }
-
-    // Form the contribution to the local element matrix.
-    if (Q || QV || QM) {
-      Mult(trial_dshape, a, trial_dshape_trans);
-      AddMult_a_ABt(w, test_dshape, trial_dshape_trans, elmat);
-    } else {
-      AddMult_a_ABt(w, test_dshape, trial_dshape, elmat);
-    }
-  }
-}
-
-RadialDiffeomorphismCoefficient::RadialDiffeomorphismCoefficient(
-    int dim, mfem::Coefficient& Q)
-    : mfem::VectorCoefficient(dim), _Q{&Q} {}
-
-void RadialDiffeomorphismCoefficient::Eval(mfem::Vector& V,
-                                           mfem::ElementTransformation& T,
-                                           const mfem::IntegrationPoint& ip) {
-  V.SetSize(vdim);
-  T.Transform(ip, V);
-  V *= _Q->Eval(T, ip);
-}
-
-mfem::real_t TransformedFunctionCoefficient::Eval(
-    mfem::ElementTransformation& T, const mfem::IntegrationPoint& ip) {
-  using namespace mfem;
-
-  real_t data[3];
-  Vector y(data, 3);
-  xi_->Eval(y, T, ip);
-  return f_(y);
+  };
+  AssembleHarmonicGradientElementMatrix(basis_, x0_, fe, Trans, radial,
+                                        density_, elmat);
 }
 
 }  // namespace mfemElasticity

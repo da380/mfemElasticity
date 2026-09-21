@@ -1,89 +1,120 @@
 /**
- * @mainpage mfemElasticity Project Documentation
+ * @mainpage mfemElasticity
  *
  * @section intro Introduction
- * This library contains extensions to the <a href="https://mfem.org">mfem</a> library
- * associated with the solution of elastic and viscoelastic problems.
- * 
+ * Extensions to the <a href="https://mfem.org">MFEM</a> library for
+ * quasi-static elastic and viscoelastic problems in geophysics, including
+ * self-gravitation. Serial and parallel (MPI) paths are provided throughout.
  *
- * @section contents Library Contents
- * The `mfemElasticity` library extends MFEM with specialized components for
- * elasticity and viscoelasticity problems. Key components include:
+ * @section contents Library contents
  *
- * @subsection solvers Solvers
- * The RigidBodySolver class wraps another mfem::Solver and
- * orthogonally projects out rigid body motions. This is primarily used in the
- * solution of static or quasi-static problems with traction boundary conditions.
- * See `ex1.cpp` and `ex1p.cpp` for examples of its usage.
+ * @subsection sec_index Component ordering
+ * `index.hpp` fixes the component ordering and the node/component indexing
+ * of vector, matrix, symmetric and trace-free symmetric tensor fields
+ * (SymmetricComponentOrder, VectorIndex, MatrixIndex, SymmetricMatrixIndex,
+ * TraceFreeSymmetricMatrixIndex). Every integrator, interpolator and
+ * coefficient below follows it.
  *
- * @subsection integrators LinearFormIntegrator and BilinearFormIntegrator Extensions
- * A number of classes derived from `mfem::LinearFormIntegrator` and
- * `mfem::BilinearFormIntegrator` are defined. These classes handle the integration
- * of various forms involving vector and matrix fields defined on finite-element
- * spaces.
+ * @subsection sec_integrators Integrators, interpolators and coefficients
+ * `bilininteg.hpp` and `lininteg.hpp` hold mixed integrators between vector,
+ * scalar and tensor nodal spaces (the non-standard terms of the
+ * self-gravitating weak form and the internal-variable couplings of
+ * viscoelasticity), the strain interpolators, the boundary integrators of
+ * the fluid–solid interface terms, ElasticTensorIntegrator for general
+ * anisotropic elasticity, and TransformedDiffusionIntegrator for problems
+ * posed on a reference domain. `coefficient.hpp` holds general-purpose
+ * coefficients, and `elastic_tensor.hpp` the elastic tensor coefficients
+ * (isotropic, transversely isotropic, Voigt, rotated, deviatoric projection)
+ * in the Mandel convention of SymmetricTensorBasis. The mathematical
+ * formulation of each is in its class documentation.
  *
- * **For detailed descriptions and mathematical formulations of these integrators,
- * please refer to their individual class documentation.**
+ * @subsection sec_poisson Exterior Poisson problems
+ * `poisson.hpp` provides the matrix-free Dirichlet-to-Neumann operator on a
+ * spherical outer boundary (PoissonDtNOperator) and the multipole
+ * right-hand-side operators, all built on the real orthonormal harmonics of
+ * `spherical_harmonics.hpp` (SurfaceHarmonics), which also synthesises
+ * fields from coefficients and analyses finite-element fields on spherical
+ * boundaries (BoundaryHarmonicCoefficients). `mesh.hpp` has the geometric
+ * helpers.
  *
- * @subsection interpolators DiscreteInterpolator Extensions
- * A number of classes derived from `mfem::DiscreteInterpolator` are defined that
- * are useful in  elastic and viscoelastic problems. 
+ * @subsection sec_submesh Coupling a mesh and its SubMesh
+ * `submesh.hpp`: SubMeshDofInjection, the signed dof injection of a space on
+ * a SubMesh into the corresponding space on the parent mesh, and
+ * SubMeshMixedBilinearForm / ParSubMeshMixedBilinearForm, mixed forms whose
+ * two spaces live on a mesh and one of its SubMeshes.
  *
- * **For detailed descriptions and mathematical formulations of these interpolators,
- * please refer to their individual class documentation.**
+ * @subsection sec_problems Quasi-static problems and rheologies
+ * LinearQuasiStaticProblem is the interface of a linear quasi-static
+ * equilibrium problem; LinearQuasiStaticProblemBase implements it on a
+ * serial or parallel displacement space, with
+ * LinearQuasiStaticTractionProblem and LinearQuasiStaticClampedProblem as
+ * reference problems. The material is a Rheology: elastic or generalised
+ * Maxwell, isotropic or anisotropic, optionally with state-dependent
+ * relaxation times (RelaxationLaw), and different in different regions of
+ * the body (CompositeRheology).
+ *
+ * @subsection sec_selfgrav Self-gravitation
+ * LinearQuasiStaticSelfGravitatingProblem couples the displacement on a
+ * SubMesh of the solid body to the potential perturbation on the enclosing
+ * ball, with the DtN outer condition and optional fluid regions
+ * (FluidRegion). It implements the same interface, so the viscoelastic layer
+ * runs on it unchanged.
+ *
+ * @subsection sec_visco Viscoelasticity
+ * ViscoelasticOperator evolves the internal variables of a generalised
+ * Maxwell body around any LinearQuasiStaticProblem, with explicit, implicit
+ * and exponential time stepping (ExponentialEulerSolver,
+ * ExponentialTrapezoidSolver, AdaptiveExponentialTrapezoidSolver).
+ *
+ * @subsection sec_null_space Null-space projection
+ * NullSpaceProjector holds an orthonormal basis of a (near-)null space, and
+ * ProjectedSolver / ProjectedOperator run a Krylov method on the projected
+ * system @f$P A P@f$ with the projected preconditioner @f$P M P@f$.
+ * MakeRigidModeProjector() builds the projector for the rigid modes of a
+ * displacement space; this is how problems with traction boundary conditions
+ * are solved (see `examples/quasi_static_elasticity.cpp`).
+ *
+ * @section notes Method notes
+ * The Markdown notes in the source tree's `doc/` directory record the
+ * equations, the reasons for the main design choices and what has been
+ * learned: `submesh_coupling.md`, `self_gravitation.md`,
+ * `viscoelasticity.md`, `elastic_tensors.md`, `null_space.md` and
+ * `mfem_notes.md`.
  *
  * @section install Installation
- * The <a href="https://mfem.org">MFEM</a> library must first be installed. This can be either a
- * serial or parallel version.
+ * MFEM must be built first, serial or parallel. Configuration is with CMake;
+ * in-source builds are refused. The options are:
+ * - **`MFEM_DIR`**: the MFEM build or installation. Set it explicitly when
+ *   several versions of MFEM are installed (serial and parallel, say).
+ * - **`USE_MPI`** (default `OFF`): build against a parallel MFEM and enable
+ *   the parallel classes, examples and tests.
+ * - **`MPI_C_COMPILER`**, **`MPI_CXX_COMPILER`**: the MPI compiler wrappers
+ *   MFEM was built with; needed when several MPI installations are present.
+ * - **`BUILD_EXAMPLES`** (default `OFF`): build the programs in `examples/`.
+ * - **`BUILD_TESTS`** (default `OFF`): build the test suite in `tests/`.
+ * - **`BUILD_DOCS`** (default `OFF`): generate this documentation.
+ * - **`GENERATE_MESHES`** (default: on with examples or tests): generate the
+ *   gmsh meshes the examples and tests read, with the Python scripts in
+ *   `meshes/`; `MESHES_PYTHON` names the interpreter to use.
  *
- * Configuration of a build is done with CMake. The following options can be set:
- * - **`MFEM_DIR`**: The location of the MFEM installation. If not set, standard locations will be
- * searched. If multiple versions of `mfem` have been installed (e.g., serial and parallel
- * versions), it is best to set this explicitly.
- * - **`USE_MPI`**: Default is `OFF`. If set to `ON` the library will link to the `MPI` library.
- * This is necessary to use a parallel version of `mfem` and the associated functionality.
- * - **`MPI_C_COMPILER`**: Path to the MPI C compiler used to build the MFEM Library. Useful to
- * set if different MPI compilers exist on your system.
- * - **`MPI_CXX_COMPILER`**: Path to the MPI C++ compiler used to build the MFEM Library. Useful
- * to set if different MPI compilers exist on your system.
- * - **`BUILD_EXAMPLES`**: Default is `OFF`. If set to `ON` the example codes will be
- * configured for compilation.
- * - **`BUILD_TESTS`**: Default is `OFF`. If set to `ON` the test codes will be configured
- * for compilation.
- *
- * Other standard CMake options can additionally be set (e.g., specifying debug or release builds).
- *
- * If either `BUILD_EXAMPLES` or `BUILD_TESTS` is selected, data files will be copied into the
- * build directory.
- *
- * Note that "in source builds" are disabled.
- *
- * An example configuration for a parallel build is:
+ * An example configuration of a parallel build:
  * ```bash
  * cmake -S mfemElasticity -B mfemElasticityBuild \
- * -DUSE_MPI=ON \
- * -DMFEM_DIR=[path to mfem build] \
- * -DMPI_C_COMPILER=[path to mpi c compiler] \
- * -DMPI_CXX_COMPILER=[path to mpi c++ compiler] \
- * -DBUILD_EXAMPLES=ON \
- * -DBUILD_TESTS=ON
+ *   -DUSE_MPI=ON \
+ *   -DMFEM_DIR=[path to mfem build] \
+ *   -DMPI_C_COMPILER=[path to mpi c compiler] \
+ *   -DMPI_CXX_COMPILER=[path to mpi c++ compiler] \
+ *   -DBUILD_EXAMPLES=ON \
+ *   -DBUILD_TESTS=ON
  * ```
+ * `INSTALL.md` has the details.
  *
- * @section proj_structure Project Structure
- * A high-level overview of the project's directory structure:
- * - `src/`: Contains the main source code files (`.cpp`, `.cxx`).
- * - `include/`: Public header files for the library (`.h`, `.hpp`).
- * - `examples/`: Example usage programs (if `BUILD_EXAMPLES` is ON).
- * - `tests/`: Unit tests and integration tests (if `BUILD_TESTS` is ON).
- * - `data/`: Data files copied to the build directory for examples/tests.
- * - `doc/`: Doxygen configuration and other project documentation files.
- * - `cmake/`: Custom CMake modules and scripts.
- *
- * @section notes Additional Notes
- * - **Project Version**: `0.0.1` 
- * - **Target Language**: C++ 
- * - **MPI Support**: Configurable via `USE_MPI` CMake option.
- *
- * @todo Add sections for Usage Examples, Contributing, License, and Contact if applicable
- *
+ * @section proj_structure Project structure
+ * - `include/`, `src/`: the library.
+ * - `examples/`: example programs (`BUILD_EXAMPLES`).
+ * - `tests/`: googletest suite and MPI test programs (`BUILD_TESTS`).
+ * - `meshes/`: Python scripts generating the gmsh meshes into the build
+ *   tree's `data/`.
+ * - `data/`: MFEM-format meshes copied to the build tree.
+ * - `doc/`: Doxygen configuration and the method notes.
  */

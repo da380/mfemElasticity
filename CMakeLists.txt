@@ -30,10 +30,20 @@ message(STATUS "Found mfem config in: ${mfem_DIR} (version ${MFEM_VERSION})")
 
 
 
-# Add MPI is needed. 
+# Add MPI if needed.
 option(USE_MPI "Use MPI library" OFF)
 if(USE_MPI)
     enable_language(C)
+    # Prefer the mpiexec that sits next to the MPI compiler wrapper (e.g. a
+    # PETSc-installed MPICH), so that ctest launches with the same MPI the
+    # code links against rather than whatever mpiexec is first on PATH.
+    if(NOT MPIEXEC_EXECUTABLE)
+        get_filename_component(_mpi_bin_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        if(EXISTS "${_mpi_bin_dir}/mpiexec")
+            set(MPIEXEC_EXECUTABLE "${_mpi_bin_dir}/mpiexec" CACHE FILEPATH
+                "MPI launcher (taken from the compiler wrapper's directory)")
+        endif()
+    endif()
     find_package(MPI REQUIRED)        
     if (NOT CMAKE_CXX_COMPILER AND MFEM_CXX_COMPILER)  
         set(CMAKE_CXX_COMPILER "${MFEM_CXX_COMPILER}")      
@@ -61,12 +71,6 @@ if(BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-# Optionally build gmsh programs. 
-option(BUILD_GMSH "Build the gmsh programs" OFF)
-if(BUILD_GMSH)
-    add_subdirectory(meshing)
-endif()
-
 # Optionally build tests
 option(BUILD_TESTS "Build the test programs" OFF)
 if(BUILD_TESTS)
@@ -76,13 +80,31 @@ endif()
 
 
 
+# The examples and tests read their meshes from <build>/data: the small
+# MFEM-native meshes are copied there from data/, and the gmsh meshes are
+# generated there by the Python scripts in meshes/ (see meshes/CMakeLists.txt).
 if(BUILD_EXAMPLES OR BUILD_TESTS)
-    add_custom_target(CopyData        
+    set(_generate_meshes_default ON)
+else()
+    set(_generate_meshes_default OFF)
+endif()
+option(GENERATE_MESHES
+       "Generate the gmsh meshes in <build>/data with planetmodel (needs Python)"
+       ${_generate_meshes_default})
+
+if(BUILD_EXAMPLES OR BUILD_TESTS)
+    add_custom_target(CopyData
             COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/data
-            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/data        
+            COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data ${CMAKE_BINARY_DIR}/data
             WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
             )
-    add_dependencies(mfemElasticity CopyData)        
+    add_dependencies(mfemElasticity CopyData)
+endif()
+if(GENERATE_MESHES)
+    add_subdirectory(meshes)
+    if(TARGET CopyData)
+        add_dependencies(CopyData meshes)
+    endif()
 endif()
 
 # Add standard install locations. 
@@ -93,7 +115,7 @@ target_include_directories(
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
-# Install your library (headers and library file)
+# Install the library (headers and library file)
 install(TARGETS mfemElasticity 
         EXPORT mfemElasticityTargets
         DESTINATION lib)
@@ -140,22 +162,16 @@ option(BUILD_DOCS "Build documentation" OFF)
 
 if(BUILD_DOCS)
 
-# Find Doxygen
 find_package(Doxygen)
 
-# If Doxygen is found, add a custom target for documentation
 if (DOXYGEN_FOUND)
-    # Define the output directory for Doxygen documentation
+    # The documentation is written to <build>/doc.
     set(DOXYGEN_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/doc")
 
-
-    # Source path for mathjax_config.js (assuming it's in ${CMAKE_SOURCE_DIR}/doc/)
+    # The MathJax configuration is copied next to the HTML output.
     set(MATHJAX_CONFIG_JS_SRC "${CMAKE_SOURCE_DIR}/doc/mathjax_config.js")
-
-    # Destination path for mathjax_config.js (inside Doxygen's HTML output)
     set(MATHJAX_CONFIG_JS_DST "${DOXYGEN_OUTPUT_DIRECTORY}/mathjax_config.js")
 
-    # Ensure the destination directory exists and copy the file
     add_custom_command(
         OUTPUT "${MATHJAX_CONFIG_JS_DST}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${DOXYGEN_OUTPUT_DIRECTORY}"
@@ -164,50 +180,36 @@ if (DOXYGEN_FOUND)
         VERBATIM
     )    
 
-     # Define Doxygen PREDEFINED macros based on CMake variables
-    set(DOXYGEN_PREDEFINED_MACROS "DOXYGEN_SHOULD_PARSE_THIS") 
+    # Doxygen PREDEFINED macros; the parallel classes are documented only
+    # in an MPI build.
+    set(DOXYGEN_PREDEFINED_MACROS "DOXYGEN_SHOULD_PARSE_THIS")
     set(DOXYGEN_PREDEFINED_MACROS "${DOXYGEN_PREDEFINED_MACROS} DOXYGEN_ONLY")
     
     if(USE_MPI)
         set(DOXYGEN_PREDEFINED_MACROS "${DOXYGEN_PREDEFINED_MACROS} MFEM_USE_MPI=1")
     endif()
-    
-    
 
-    # Configure Doxyfile using the template
     configure_file(
         "${CMAKE_SOURCE_DIR}/doc/Doxyfile.in"
         "${CMAKE_BINARY_DIR}/Doxyfile"
         @ONLY
     )
 
-    # Add a custom target to run Doxygen
+    # Target `doc`, part of the default build when BUILD_DOCS is on.
     add_custom_target(
         doc
-        ALL                                     # Make it part of the default build
+        ALL
         COMMAND ${CMAKE_COMMAND} -E make_directory "${DOXYGEN_OUTPUT_DIRECTORY}"
-        COMMAND ${DOXYGEN_EXECUTABLE} Doxyfile  # Command to run Doxygen
-        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}   # Run from the build directory
+        COMMAND ${DOXYGEN_EXECUTABLE} Doxyfile
+        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
         COMMENT "Generating Doxygen documentation..."
-        # Optional: Add dependencies if you want Doxygen to run after building
-        # your libraries/executables. This can be useful if you use certain
-        # Doxygen features that rely on compiled binaries (less common for pure API docs).
-        # DEPENDS my_library_target
-        # Add dependency on the MathJax config file being copied
         DEPENDS "${MATHJAX_CONFIG_JS_DST}"
     )
 
-    # Optional: If you want to install the documentation
     install(DIRECTORY "${DOXYGEN_OUTPUT_DIRECTORY}"
             DESTINATION "${CMAKE_INSTALL_DATADIR}/${PROJECT_NAME}/html"
             COMPONENT Development
     )
-
-    # Optional: Add an option to disable documentation generation
-    option(BUILD_DOCS "Build Doxygen documentation" ON)
-    if (NOT BUILD_DOCS)
-        set_target_properties(doc PROPERTIES EXCLUDE_FROM_ALL TRUE)
-    endif()
 
 else()
     message(STATUS "Doxygen not found. Documentation will not be generated.")

@@ -1,5 +1,14 @@
 **/*build*
 **/install
 **/*~
+CMakeFiles/
+Testing/
+*.log
+*.pdf
+*.gf
+*.mesh.*
+refined.mesh
 
-
+# gmsh meshes are generated into the build tree by meshes/
+data/*.msh
+data/*.json
