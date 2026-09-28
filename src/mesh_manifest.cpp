@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <utility>
 
@@ -17,7 +18,11 @@ using namespace mfem;
 
 namespace {
 
-const char* const kSchema = "planetmodel.mesh.manifest/4";
+// The schema written since planetmodel 1.2.3, and the one before it, which
+// differs only in lacking the model-derived records (layers[].fluid,
+// interfaces[].kind and .values, fields[].radial_degree).
+const char* const kSchema = "planetmodel.mesh.manifest/5";
+const char* const kOldSchema = "planetmodel.mesh.manifest/4";
 
 // ---------------------------------------------------------------------------
 // A JSON value and its reader: the whole of the language, without the
@@ -315,9 +320,10 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
   const Record root(root_json, "manifest", path);
 
   const std::string& schema = root.String("schema");
-  MFEM_VERIFY(schema == kSchema, "MeshManifest: " << path << " has schema "
-                                                  << schema << ", expected "
-                                                  << kSchema << ".");
+  MFEM_VERIFY(schema == kSchema || schema == kOldSchema,
+              "MeshManifest: " << path << " has schema " << schema
+                               << ", expected " << kSchema << " (or "
+                               << kOldSchema << ").");
 
   {
     const Record m(root.Member("mesh", Json::Type::Object), "mesh", path);
@@ -347,6 +353,9 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
     l.r_inner = r.Number("r_inner");
     l.r_outer = r.Number("r_outer");
     l.in_geometry = r.Bool("in_geometry");
+    if (r.Optional("fluid")) {
+      l.fluid = r.Bool("fluid");
+    }
     MFEM_VERIFY(l.attribute == static_cast<int>(i) + 1,
                 "MeshManifest: " << path << ": layers are not numbered from "
                                  << "the centre.");
@@ -369,6 +378,30 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
     // 0-based with -1 for the outside in the file; attributes with 0 here.
     f.below = between[0] + 1;
     f.above = between[1] + 1;
+    if (r.Optional("kind")) {
+      f.kind = r.String("kind");
+    }
+    if (const Json* values = r.Optional("values")) {
+      MFEM_VERIFY(values->type == Json::Type::Object,
+                  "MeshManifest: " << path << ": " << Indexed("interfaces", i)
+                                   << ".values is not an object.");
+      for (const auto& [key, pair] : values->object) {
+        MFEM_VERIFY(
+            pair.type == Json::Type::Array && pair.array.size() == 2,
+            "MeshManifest: " << path << ": " << Indexed("interfaces", i)
+                             << ".values." << key << " is not a pair.");
+        auto side = [&](const Json& e) {
+          MFEM_VERIFY(e.type == Json::Type::Number || e.IsNull(),
+                      "MeshManifest: " << path << ": "
+                                       << Indexed("interfaces", i)
+                                       << ".values." << key
+                                       << " holds a non-number.");
+          return e.IsNull() ? std::numeric_limits<real_t>::quiet_NaN()
+                            : static_cast<real_t>(e.number);
+        };
+        f.values[key] = {side(pair.array[0]), side(pair.array[1])};
+      }
+    }
     interfaces_.push_back(f);
   }
 
@@ -385,6 +418,9 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
     f.weight = r.Integer("weight");
     f.voigt = r.Bool("voigt");
     f.layers = r.Integers("layers");
+    if (r.Optional("radial_degree")) {
+      f.radial_degree = r.Integer("radial_degree");
+    }
     fields_.push_back(f);
   }
 
@@ -430,6 +466,25 @@ MeshManifest::MeshManifest(const std::string& path) : path_(path) {
       layers_[a - 1].fluid = true;
     }
   }
+}
+
+real_t MeshManifest::Interface::ValueBeside(const std::string& field,
+                                            int attribute) const {
+  MFEM_VERIFY(attribute == below || attribute == above,
+              "MeshManifest: layer " << attribute << " is not a side of the "
+                                     << "interface " << name << ".");
+  const auto it = values.find(field);
+  const real_t value =
+      it == values.end()
+          ? std::numeric_limits<real_t>::quiet_NaN()
+          : (attribute == below ? it->second.first : it->second.second);
+  MFEM_VERIFY(std::isfinite(value),
+              "MeshManifest: the interface "
+                  << name << " holds no value of " << field
+                  << " on the side of layer " << attribute
+                  << "; the manifest was written without the model "
+                  << "(planetmodel 1.2.3 or later writes it).");
+  return value;
 }
 
 const MeshManifest::Layer& MeshManifest::LayerNamed(
@@ -668,8 +723,11 @@ void MeshManifest::Print(std::ostream& os) const {
   }
   os << "  interfaces\n";
   for (const Interface& f : interfaces_) {
-    os << "    " << f.attribute << "  " << f.name << "  radius " << f.radius
-       << "\n";
+    os << "    " << f.attribute << "  " << f.name << "  radius " << f.radius;
+    if (!f.kind.empty()) {
+      os << "  " << f.kind;
+    }
+    os << "\n";
   }
   if (!fields_.empty()) {
     os << "  fields\n";

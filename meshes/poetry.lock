@@ -192,14 +192,14 @@ files = [
 
 [[package]]
 name = "planetmodel"
-version = "1.2.1"
+version = "1.2.3"
 description = "Spherically layered planetary models: reference bodies, fields, mappings and meshes"
 optional = false
 python-versions = ">=3.12"
 groups = ["main"]
 files = [
-    {file = "planetmodel-1.2.1-py3-none-any.whl", hash = "sha256:ea1c915d65c750e9ade3b0d3d5aaca4e86e58765b9ceb5a9d046d5830130e6c2"},
-    {file = "planetmodel-1.2.1.tar.gz", hash = "sha256:171fce0c42b71e5dd591c9cc6d2eba8a76c12f1d39c4caa4f14d345b9e9f98be"},
+    {file = "planetmodel-1.2.3-py3-none-any.whl", hash = "sha256:167bbd2ae2c1d19d3d1dcd1182f50784276e39f8f50f2428779f3f4b7a9a8d83"},
+    {file = "planetmodel-1.2.3.tar.gz", hash = "sha256:60152b863dfaec9a9aa15496595db12536b48a9a5ffa40034b0efdc1f4c73290"},
 ]
 
 [package.dependencies]
@@ -298,4 +298,4 @@ test = ["Cython", "array-api-strict (>=2.3.1)", "asv", "gmpy2", "hypothesis (>=6
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "e876208633561d73078d174f292041385da410ab16bac853924838034e95217f"
+content-hash = "8bab16a2d9edd85cd151387df7ac6b8af40912013aaec1e631487d669d249e74"

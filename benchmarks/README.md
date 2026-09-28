@@ -88,8 +88,9 @@ object. planetmodel meshes its skeleton, with a buffer shell outside the
 surface, and writes the density and the bulk and shear moduli as L2
 GridFunctions on the mesh, so that a discontinuity at an interface stays
 one; the manifest beside the mesh names the layers and interfaces, records
-the units and G, and lists under `meta.fluid_layers` the attributes of the
-fluid layers. The driver reads all of it through `MeshManifest`
+the units and G, says which layers are fluid, and holds the model's exact
+one-sided field values on each interface. The driver reads all of it
+through `MeshManifest`
 (`mesh_manifest.hpp`) and sets nothing about the model itself. pyslfp
 solves the same model on its own radial mesh.
 
@@ -110,14 +111,15 @@ solves the same model on its own radial mesh.
 The radius is the Earth's and the values are of the Earth's order, which
 makes the ratio of gravitational to elastic forces, rho g a / mu, of order
 one. A new model is a function in `models.py` and an entry in `MODELS`;
-uniform layers are planetmodel's `LayeredIsotropicElastic`, and
-`LayeredIsotropicPolynomial` in `models.py` takes polynomials in the radius.
-A fluid whose density varies with radius is the test of the term
-rho'_F phi of the weak form, which vanishes in a uniform one.
+every one is planetmodel's `LayeredIsotropicElastic`, whose layers take a
+constant or polynomial coefficients in the radius. A fluid whose density
+varies with radius is the test of the term rho'_F phi of the weak form,
+which vanishes in a uniform one.
 
-The PREM models keep the boundaries named and merge what lies between
-them, each parameter within a merged layer being the cubic closest to
-PREM's, so that the model is smooth within the layers of the mesh. Their
+The PREM models keep the named boundaries and merge what lies between
+them (`Model.coarsened`), each parameter within a merged layer being the
+cubic closest to PREM's, so that the model is smooth within the layers of
+the mesh. Their
 load Love numbers are within a fifth of a per cent of PREM's. The crust of
 `prem_6` is 21 km thick and its mesh has millions of elements: a model for
 the larger machine.
@@ -204,3 +206,14 @@ it converges markedly faster than one of order two: at h = 0.2 every model
 here agrees with the reference to a few parts in ten thousand at degrees one
 to five with order three, and to about a per cent with order two. A model
 with an inner core takes two to three times the iterations of one without.
+
+### h-refinement
+
+Each `--h` of a sweep is a case of its own, meshed afresh at that size:
+refinement is by re-meshing, not by MFEM's uniform refinement, so a ladder
+can take steps finer than a factor of two (say `--h 0.3 0.24 0.19 0.15
+0.12`). `plot.py` draws the relative error of each Love number against the
+element size at fixed order in `convergence.png`, and of the cap-load
+fields in `field_convergence.png`, with the observed rate p of error ~ h^p
+fitted over the ladder and a table of the rates by quantity and degree
+printed alongside.

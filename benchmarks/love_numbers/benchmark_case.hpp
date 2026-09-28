@@ -79,62 +79,22 @@ inline std::string List(const Vector& v) {
   return List(std::vector<real_t>(v.begin(), v.end()));
 }
 
-// The mean over each interface of the density on its fluid side: entry
-// b - 1 for the boundary attribute b, zero for a boundary that is not a
-// fluid-solid interface. The density is sampled at the vertices of the fluid
-// elements that lie on the interface, so for a radial model the mean is the
-// value there. The interface terms of the weak form want the fluid's density
-// on boundary elements of the solid, which hold no fluid element to ask.
-inline Vector FluidSideDensity(const MeshManifest& manifest, ParMesh& mesh,
-                               const ParGridFunction& rho, int size) {
-  Vector sum(size), count(size);
-  sum = 0.0;
-  count = 0.0;
-  const real_t tol = 1e-6 * manifest.OuterRadius();
-  Array<int> faces, orientations, face_vertices, element_vertices;
+// The density on the fluid side of each interface, from the manifest's
+// one-sided values: entry b - 1 for the boundary attribute b, zero for a
+// boundary that is not a fluid-solid interface. The interface terms of the
+// weak form want the fluid's density on boundary elements of the solid,
+// which hold no fluid element to ask; the manifest holds the model's exact
+// value there.
+inline Vector FluidSideDensity(const MeshManifest& manifest, int size) {
+  Vector rho(size);
+  rho = 0.0;
+  const int first = manifest.Interfaces().front().attribute;
   for (const int fluid : manifest.FluidAttributes()) {
     for (const int b : manifest.FluidSolidInterfaces(fluid)) {
-      const real_t radius =
-          manifest.Interfaces()[b - manifest.Interfaces().front().attribute]
-              .radius;
-      for (int e = 0; e < mesh.GetNE(); e++) {
-        if (mesh.GetAttribute(e) != fluid) {
-          continue;
-        }
-        mesh.GetElementVertices(e, element_vertices);
-        const IntegrationRule& corners =
-            *Geometries.GetVertices(mesh.GetElementBaseGeometry(e));
-        mesh.GetElementFaces(e, faces, orientations);
-        for (const int face : faces) {
-          mesh.GetFaceVertices(face, face_vertices);
-          bool on_interface = true;
-          for (const int v : face_vertices) {
-            const real_t* x = mesh.GetVertex(v);
-            const real_t r = std::sqrt(x[0] * x[0] + x[1] * x[1] + x[2] * x[2]);
-            on_interface = on_interface && std::abs(r - radius) < tol;
-          }
-          if (!on_interface) {
-            continue;
-          }
-          for (const int v : face_vertices) {
-            const int local = element_vertices.Find(v);
-            sum[b - 1] += rho.GetValue(e, corners.IntPoint(local));
-            count[b - 1] += 1.0;
-          }
-        }
-      }
+      rho[b - 1] = manifest.Interfaces()[b - first].ValueBeside("rho", fluid);
     }
   }
-  Vector global_sum(size), global_count(size);
-  MPI_Allreduce(sum.GetData(), global_sum.GetData(), size,
-                MPITypeMap<real_t>::mpi_type, MPI_SUM, mesh.GetComm());
-  MPI_Allreduce(count.GetData(), global_count.GetData(), size,
-                MPITypeMap<real_t>::mpi_type, MPI_SUM, mesh.GetComm());
-  for (int i = 0; i < size; i++) {
-    global_sum[i] =
-        global_count[i] > 0.0 ? global_sum[i] / global_count[i] : 0.0;
-  }
-  return global_sum;
+  return rho;
 }
 
 // The radial functions of one harmonic in one layer: for a field f and the
@@ -368,7 +328,7 @@ class Case {
     // The fluid layers: the density on the parent's fluid elements, and on
     // the solid's boundary elements the density of the fluid beyond them.
     const int n_bdr = solid->bdr_attributes.Max();
-    fluid_side_ = FluidSideDensity(manifest, *parent, *rho, n_bdr);
+    fluid_side_ = FluidSideDensity(manifest, n_bdr);
     rho_interface_c_ = std::make_unique<PWConstCoefficient>(fluid_side_);
     std::vector<FluidRegion> fluids;
     for (const int attribute : fluid_attributes) {

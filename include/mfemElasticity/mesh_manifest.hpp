@@ -5,19 +5,23 @@
  * and the units and constants they are in.
  *
  * A mesh file carries numbered attributes and nothing else. The manifest is
- * a JSON file of the same basename (schema `planetmodel.mesh.manifest/4`)
- * listing the layers (element attributes 1..N from the centre, the shells
- * outside the body last) and the interfaces (boundary attributes 1..M in the
- * same order) with their names and radii, the fields written as
- * GridFunctions beside the mesh, the scales of the model's units in SI and
- * the model's constants in its units. MeshManifest reads it, answers
- * questions of the kind "which attributes are solid" or "which boundary is
- * the surface" as the attribute lists and markers the problem classes take,
- * and opens the mesh and the fields the way the manifest says.
+ * a JSON file of the same basename (schema `planetmodel.mesh.manifest/5`,
+ * with /4 still read) listing the layers (element attributes 1..N from the
+ * centre, the shells outside the body last) and the interfaces (boundary
+ * attributes 1..M in the same order) with their names and radii, the fields
+ * written as GridFunctions beside the mesh, the scales of the model's units
+ * in SI and the model's constants in its units. MeshManifest reads it,
+ * answers questions of the kind "which attributes are solid" or "which
+ * boundary is the surface" as the attribute lists and markers the problem
+ * classes take, and opens the mesh and the fields the way the manifest says.
  *
- * Which layers are fluid is not part of the schema; it is read from the
- * list of attributes `meta.fluid_layers`, and a manifest without one has no
- * fluid layers.
+ * Schema 5 carries what only the exported model can say, null where no
+ * model has said: `layers[].fluid`, `interfaces[].kind`, the one-sided
+ * `interfaces[].values` of the exported scalar radial fields, and
+ * `fields[].radial_degree`. Which layers are fluid is read from
+ * `layers[].fluid`; where that is null (or the schema is /4) the list of
+ * attributes `meta.fluid_layers` is the fallback, and a manifest with
+ * neither has no fluid layers.
  */
 
 #pragma once
@@ -25,6 +29,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "mfem.hpp"
@@ -49,22 +54,35 @@ class MeshManifest {
 
   /** @brief A boundary of the mesh: boundary attribute, name, radius and
    * the attributes of the layers below and above it (0 for the outside of
-   * the mesh). */
+   * the mesh). `kind` classifies it from the model's fluidity
+   * ("solid-solid", "fluid-solid", "fluid-fluid", "free", "outer"), empty
+   * where no model has said; `values` holds, per exported scalar radial
+   * field, its one-sided {below, above} values at the interface, NaN on a
+   * side without one, and is empty where no model has said. */
   struct Interface {
     int attribute = 0;
     std::string name;
     mfem::real_t radius = 0.0;
     int below = 0, above = 0;
+    std::string kind;
+    std::map<std::string, std::pair<mfem::real_t, mfem::real_t>> values;
+
+    /** @brief The one-sided value of the named field on the side of the
+     * layer of @p attribute (aborts when the manifest holds none). */
+    mfem::real_t ValueBeside(const std::string& field, int attribute) const;
   };
 
   /** @brief A field written beside the mesh: the file, the space to read
    * it into, and the attributes of the layers on which its values mean
-   * anything (elsewhere the file holds zeros). */
+   * anything (elsewhere the file holds zeros). `radial_degree` is the
+   * degree in r that reproduces a scalar field within each layer holding
+   * it, -1 where no model (or no single degree) has said. */
   struct Field {
     std::string name, file, fe_space, ordering, unit;
     int vdim = 1, rank = 0, weight = 0;
     bool voigt = false;
     std::vector<int> layers;
+    int radial_degree = -1;
   };
 
   /** @brief Read the manifest at @p path; aborts with a message naming the

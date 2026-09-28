@@ -4,8 +4,8 @@ and the reference solution.
 A case is a directory holding
 
   case.mesh          the MFEM mesh of the body and its buffer shell
-  case.json          the manifest: layers, interfaces, fields, scales, G,
-                     and under `meta` the attributes of the fluid layers
+  case.json          the manifest: layers (with their fluidity), interfaces
+                     (with the one-sided field values), fields, scales and G
   case.<name>.gf     rho, kappa and mu as L2 GridFunctions on the mesh
   reference.json     the Love numbers and radial solutions of pyslfp
   reference_fields.txt  the radial solutions of the load problem on
@@ -24,15 +24,12 @@ a layer it bounds where those are smaller, growing to
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-from collections.abc import Iterator
 from pathlib import Path
 
-import gmsh
 import numpy as np
 from planetmodel import Model, gravity, is_fluid
-from planetmodel.mesh3d import (InterfaceSizing, MeshSpec, Shell,
+from planetmodel.mesh3d import (CappedInterfaces, MeshSpec, Shell,
                                 build_layered_mesh, export_mfem)
 from pyslfp.love_numbers import LoveNumbers, love_numbers, solve_degree
 
@@ -51,49 +48,6 @@ FIELDS_FILE = "reference_fields.txt"
 PROFILE_FORCINGS = ("load", "tide")
 
 
-def sizing(h: float, h_max: float, decay: float, angular: float,
-           thin: float):
-    """The sizing rule of a case: the size `h` on every interface, but no
-    more than `angular` times the interface's radius, so that a small
-    sphere is still resolved in angle, and no more than `thin` times the
-    thickness of the thinner of the layers it bounds, so that a thin layer
-    is meshed with elements of its own scale; `h_max` far from the
-    interfaces."""
-    def rule(interfaces, outer_radius):
-        radii = sorted({0.0} | {face.radius for face in interfaces})
-        out = {}
-        for face in interfaces:
-            k = radii.index(face.radius)
-            spans = [radii[k] - radii[k - 1]]
-            if k + 1 < len(radii):
-                spans.append(radii[k + 1] - radii[k])
-            size = min(h, angular * face.radius, thin * min(spans))
-            out[face.index] = InterfaceSizing(size, max(h_max, size), decay)
-        return out
-    return rule
-
-
-@contextlib.contextmanager
-def optimised_tetrahedra() -> Iterator[None]:
-    """Within this context gmsh's Netgen optimiser follows every
-    generation of a volume mesh, before the mesh is curved: it removes the
-    slivers the Delaunay mesher leaves between interfaces, and leaves the
-    nodes on the interfaces where they are."""
-    mesh = gmsh.model.mesh
-    generate = mesh.generate
-
-    def generate_and_optimise(dim: int = 3) -> None:
-        generate(dim)
-        if dim == 3:
-            mesh.optimize("Netgen")
-
-    mesh.generate = staticmethod(generate_and_optimise)
-    try:
-        yield
-    finally:
-        mesh.generate = staticmethod(generate)
-
-
 def fluid_attributes(model: Model) -> list[int]:
     """The element attributes of the model's fluid layers."""
     return [i + 1 for i, layer in enumerate(model.layers) if is_fluid(layer)]
@@ -103,20 +57,22 @@ def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
                angular: float, thin: float, buffer: float, order: int,
                optimise: bool = True, verbose: bool = False) -> dict:
     """The mesh, the fields and the manifest; returns a summary."""
-    spec = MeshSpec(model.geometry, sizing(h, h_max, decay, angular, thin),
+    spec = MeshSpec(model.geometry,
+                    CappedInterfaces(h, h_max, decay, angular=angular,
+                                     thin=thin),
                     dimension=3, order=order,
                     shells=[Shell(ratio=buffer, name="buffer")],
-                    meta={"model": model.name,
-                          "fluid_layers": fluid_attributes(model)})
+                    optimise="Netgen" if optimise else None,
+                    meta={"model": model.name})
     scratch = out / "gmsh"
     scratch.mkdir(parents=True, exist_ok=True)
-    with optimised_tetrahedra() if optimise else contextlib.nullcontext():
-        built = build_layered_mesh(spec, scratch / BASENAME, verbose=verbose)
+    built = build_layered_mesh(spec, scratch / BASENAME, verbose=verbose)
     export = export_mfem(built, out / BASENAME, model=model, fields=FIELDS)
     return {"h": h, "h_max": h_max, "decay": decay, "angular": angular,
             "thin": thin,
             "buffer": buffer, "optimised": optimise,
             "order": order, "counts": dict(export.counts),
+            "summary": built.summary(),
             "validation": str(built.validation)}
 
 
@@ -270,7 +226,7 @@ def main() -> None:
                          optimise=not args.no_optimise, order=args.order,
                          verbose=args.verbose)
     (args.out / "mesh_summary.json").write_text(json.dumps(summary, indent=1))
-    print(f"{BASENAME}.mesh: {summary['counts']}; {summary['validation']}")
+    print(f"{BASENAME}.mesh: {summary['summary']}")
 
 
 if __name__ == "__main__":

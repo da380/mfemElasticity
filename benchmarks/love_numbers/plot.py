@@ -8,8 +8,11 @@ cases:
   love_numbers.png   h', l', k' (load) and h, l, k (tide) by degree: the reference
                      and the finest run of each order
   errors.png         the relative error of each by degree, for every run
-  convergence.png    the relative error against the number of unknowns,
-                     one line per degree, for each order
+  convergence.png    the h-refinement study: the relative error against the
+                     element size at fixed order, every size its own mesh,
+                     with the observed rate fitted over the ladder
+  field_convergence.png  the L2 errors of the cap-load fields against the
+                     element size, likewise
   profiles.png       U, V and phi of the load problem by radius: the
                      reference, and the finest run of each order on the
                      interfaces of the solid and, dashed, within the layers
@@ -202,35 +205,121 @@ def plot_errors(runs: list[Run], ref: dict, title: str, out: Path) -> None:
     plt.close(fig)
 
 
+def fitted_rate(h: list[float], e: list[float]) -> float | None:
+    """The observed rate p of e ~ h^p: the least-squares slope of log e
+    against log h, or None with fewer than two usable sizes."""
+    pts = [(np.log(a), np.log(b)) for a, b in zip(h, e) if b > 0.0]
+    if len(pts) < 2:
+        return None
+    x, y = zip(*pts)
+    return float(np.polyfit(x, y, 1)[0])
+
+
+def ladder(runs: list[Run], order: int) -> list[Run]:
+    """The runs of one order, coarsest first: the h-refinement ladder,
+    every size a mesh of its own (run.py re-meshes for each h)."""
+    return sorted((r for r in runs if r.order == order), key=lambda r: -r.h)
+
+
 def plot_convergence(runs: list[Run], ref: dict, title: str, out: Path) -> None:
+    """The h-refinement study: the relative error against the element
+    size, the orders together in each panel, at two representative
+    degrees, the observed rate of each line fitted over the ladder."""
     orders = sorted({run.order for run in runs})
-    fig, axes = plt.subplots(len(orders), 6, figsize=(21, 3.6 * len(orders)),
-                             sharey=True, squeeze=False)
-    for row, order in zip(axes, orders):
-        mine = sorted((r for r in runs if r.order == order),
-                      key=lambda r: r.unknowns)
-        for ax, (key, label, *_) in zip(row, QUANTITIES):
+    degrees = sorted({l for run in runs for key, *_ in QUANTITIES
+                      for l in run.values[key]})
+    shown = list(dict.fromkeys(
+        l for l in (2, max(degrees, default=2)) if l in degrees))
+    fig, axes = plt.subplots(2, 3, figsize=(12.5, 7.5), sharex=True,
+                             squeeze=False)
+    for ax, (key, label, *_) in zip(axes.flat, QUANTITIES):
+        for i, order in enumerate(orders):
+            mine = ladder(runs, order)
             errors = [relative_error(run, ref, key) for run in mine]
-            # the colour and marker are the degree's, the same in every panel
-            degrees = [l for l in sorted(set().union(*errors))
-                       if l < len(COLOURS)]
-            for l in degrees:
-                i = l
-                pts = [(run.unknowns, e[l]) for run, e in zip(mine, errors)
-                       if l in e]
+            for l, linestyle in zip(shown, ("-", "--")):
+                pts = [(run.h, e[l]) for run, e in zip(mine, errors)
+                       if l in e and e[l] > 0.0]
+                if len(pts) < 2:
+                    continue
+                rate = fitted_rate(*zip(*pts))
                 ax.loglog(*zip(*pts), marker=MARKERS[i], color=COLOURS[i],
+                          linestyle=linestyle,
                           markeredgecolor=SURFACE, markeredgewidth=1.0,
-                          label=f"degree {l}")
-            ax.set_title(f"{label}, order {order}", loc="left")
-            ax.set_xlabel("unknowns")
-            ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+                          label=f"order {order}, degree {l} "
+                                f"($p$ = {rate:.1f})")
+        ax.set_title(label, loc="left")
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.legend(loc="best", fontsize=7)
+    for ax in axes[-1]:
+        ax.set_xlabel("element size $h$")
+    for row in axes:
         row[0].set_ylabel("relative error")
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    axes[0, 0].legend(handles, labels, loc="best", fontsize=8, ncol=2)
-    fig.suptitle(f"{title}: convergence", x=0.01, ha="left")
+    fig.suptitle(f"{title}: error against element size, each size its own "
+                 "mesh; $p$ the observed rate", x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
+
+
+def plot_field_convergence(runs_by: dict[str, Run],
+                           fields: list[tuple[str, dict]], title: str,
+                           out: Path) -> bool:
+    """The relative L2 errors of the cap-load fields against the element
+    size at fixed order; True when there was a ladder to draw."""
+    by_order: dict[int, list[tuple[float, dict]]] = {}
+    for key, field in fields:
+        run = runs_by.get(key)
+        h = run.h if run is not None else float(key.split("_o")[0][1:])
+        by_order.setdefault(field["order"], []).append((h, field))
+    if not any(len(v) > 1 for v in by_order.values()):
+        return False
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharex=True)
+    for ax, (key, label) in zip(axes, (("u_error", "$u$ over the solid"),
+                                       ("phi_error",
+                                        "$\\phi$ over body and buffer"))):
+        for i, order in enumerate(sorted(by_order)):
+            pts = sorted((h, f[key]) for h, f in by_order[order])
+            if len(pts) < 2:
+                continue
+            rate = fitted_rate(*zip(*pts))
+            ax.loglog(*zip(*pts), marker=MARKERS[i], color=COLOURS[i],
+                      markeredgecolor=SURFACE, markeredgewidth=1.0,
+                      label=f"order {order} ($p$ = {rate:.1f})")
+        ax.set_title(f"relative L2 error of {label}", loc="left")
+        ax.set_xlabel("element size $h$")
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.legend(loc="best", fontsize=8)
+    axes[0].set_ylabel("relative error")
+    fig.suptitle(f"{title}: cap-load fields against element size",
+                 x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    return True
+
+
+def print_rates(runs: list[Run], ref: dict) -> None:
+    """The observed rates over the h ladder of each order, by quantity and
+    degree: the slope of log error against log h."""
+    for order in sorted({run.order for run in runs}):
+        mine = ladder(runs, order)
+        sizes = sorted({run.h for run in mine}, reverse=True)
+        if len(sizes) < 2:
+            continue
+        degrees = sorted({l for run in mine for key, *_ in QUANTITIES
+                          for l in run.values[key]})
+        print(f"\norder {order}, observed rate p of error ~ h^p over h = "
+              + ", ".join(f"{h:g}" for h in sizes) + ":")
+        print("            " + "".join(f"  l={l:<4d}" for l in degrees))
+        for key, label, *_ in QUANTITIES:
+            errors = [relative_error(run, ref, key) for run in mine]
+            row = ""
+            for l in degrees:
+                pts = [(run.h, e[l]) for run, e in zip(mine, errors)
+                       if l in e and e[l] > 0.0]
+                rate = fitted_rate(*zip(*pts)) if len(pts) > 1 else None
+                row += f"  {rate:6.2f}" if rate is not None else "       -"
+            print(f"  {label.replace('$', ''):>10}" + row)
 
 
 def plot_profiles(runs: list[Run], reference: dict, results: dict[str, dict],
@@ -419,7 +508,9 @@ def plot_model(directory: Path) -> list[str]:
         if not (case / "reference.json").exists():
             continue
         manifest = json.loads((case / "case.json").read_text())
-        fluid = bool(manifest["meta"].get("fluid_layers"))
+        # layers[].fluid since manifest schema 5; meta.fluid_layers before.
+        fluid = (any(layer.get("fluid") for layer in manifest["layers"])
+                 or bool(manifest.get("meta", {}).get("fluid_layers")))
         reference = json.loads((case / "reference.json").read_text())
         ref = reference_values(reference)
         title = reference["model"]
@@ -437,6 +528,7 @@ def plot_model(directory: Path) -> list[str]:
     print(f"\n=== {title} ===")
     if runs:
         print_table(runs, ref)
+        print_rates(runs, ref)
         plot_love_numbers(runs, ref, title, directory / "love_numbers.png")
         plot_errors(runs, ref, title, directory / "errors.png")
         plot_convergence(runs, ref, title, directory / "convergence.png")
@@ -453,6 +545,8 @@ def plot_model(directory: Path) -> list[str]:
                   f" unknowns, {field['seconds']:.1f} s)")
             plot_field_maps(field, title, directory / f"field_{run}.png")
         plot_field_spectrum(fields, title, directory / "field_spectrum.png")
+        plot_field_convergence(by_run, fields, title,
+                               directory / "field_convergence.png")
     by_field = dict(fields)
     for key in sorted(set(by_run) | set(by_field)):
         run, field = by_run.get(key), by_field.get(key)

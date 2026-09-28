@@ -31,8 +31,7 @@ CMB = 3483.0 / EARTH_RADIUS_KM
 SURFACE = 1.0
 
 # Element size on every interface, far from them, and the distance over
-# which it grows, by dimension. A folded curved element makes planetmodel
-# refuse the mesh; if a new size does that, nudge it a little.
+# which it grows, by dimension.
 SIZING = {
     2: UniformInterfaces(0.085, 0.17, 0.85),
     3: UniformInterfaces(0.135, 0.27, 1.35),

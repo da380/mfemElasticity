@@ -1,3 +1,4 @@
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 
@@ -6,11 +7,14 @@
 /*
   Tests for mesh_manifest.hpp.
 
-  - A manifest written here beside a small mesh and a field: the layers,
-    interfaces and fields come back as written; the fluid layers of
-    meta.fluid_layers give the solid, fluid, body and shell attributes and
-    the fluid-solid interfaces; scales, constants and meta are read; the
-    mesh and the field are opened and the field has the values saved.
+  - A schema-5 manifest written here beside a small mesh and a field: the
+    layers, interfaces and fields come back as written; layers[].fluid
+    gives the solid, fluid, body and shell attributes and the fluid-solid
+    interfaces; the interfaces' kinds and one-sided values are read;
+    scales, constants and meta are read; the mesh and the field are opened
+    and the field has the values saved.
+  - A schema-4 manifest without the model-derived records: still read, the
+    fluid layers from the meta.fluid_layers fallback.
   - Marker() sets the attributes within the size and ignores those above.
   - A manifest generated with the meshes of the build (three-layer Earth):
     names, radii, the surface and the outer boundary, no fluid declared.
@@ -26,32 +30,61 @@ const char* const kManifest = R"({
            "displacement": null},
   "layers": [
     {"attribute": 1, "name": "inner_core", "r_inner": 0.0, "r_outer": 0.2,
-     "in_geometry": true},
+     "in_geometry": true, "fluid": false},
     {"attribute": 2, "name": "outer_core", "r_inner": 0.2, "r_outer": 0.5,
-     "in_geometry": true},
+     "in_geometry": true, "fluid": true},
     {"attribute": 3, "name": "mantle", "r_inner": 0.5, "r_outer": 1.0,
-     "in_geometry": true},
+     "in_geometry": true, "fluid": false},
     {"attribute": 4, "name": "buffer", "r_inner": 1.0, "r_outer": 1.2e0,
-     "in_geometry": false}],
+     "in_geometry": false, "fluid": null}],
   "interfaces": [
-    {"attribute": 1, "name": "icb", "radius": 0.2, "between_layers": [0, 1]},
-    {"attribute": 2, "name": "cmb", "radius": 0.5, "between_layers": [1, 2]},
+    {"attribute": 1, "name": "icb", "radius": 0.2, "between_layers": [0, 1],
+     "kind": "fluid-solid", "values": {"rho": [12.9, 12.2]}},
+    {"attribute": 2, "name": "cmb", "radius": 0.5, "between_layers": [1, 2],
+     "kind": "fluid-solid", "values": {"rho": [11.0, 5.5]}},
     {"attribute": 3, "name": "surface", "radius": 1.0,
-     "between_layers": [2, 3]},
+     "between_layers": [2, 3], "kind": "free",
+     "values": {"rho": [3.4, null]}},
     {"attribute": 4, "name": "interface_4", "radius": 1.2,
-     "between_layers": [3, -1]}],
+     "between_layers": [3, -1], "kind": "outer", "values": null}],
   "fields": [
     {"name": "rho", "file": "manifest_test.rho.gf", "fe_space": "L2_3D_P1",
      "vdim": 1, "ordering": "byNODES", "rank": 0, "weight": 1,
-     "voigt": false, "unit": "1", "layers": [1, 2, 3]}],
+     "voigt": false, "unit": "1", "layers": [1, 2, 3],
+     "radial_degree": 1}],
   "scales": {"length": 6371000.0, "mass": 1.5e24, "time": 1700.0},
   "constants": {"G": 1.25},
-  "meta": {"model": "a \"test\"", "fluid_layers": [2], "factor": -2.5e-1},
+  "meta": {"model": "a \"test\"", "factor": -2.5e-1},
+  "schema": "planetmodel.mesh.manifest/5"
+})";
+
+// The same mesh under the previous schema, which lacks the model-derived
+// records: the fluid layers then come from meta.fluid_layers.
+const char* const kOldManifest = R"({
+  "mesh": {"file": "manifest_test.mesh", "format": "mfem",
+           "nodes": "reference",
+           "read_options": {"generate_edges": 1, "refine": 0,
+                            "fix_orientation": false},
+           "displacement": null},
+  "layers": [
+    {"attribute": 1, "name": "core", "r_inner": 0.0, "r_outer": 0.5,
+     "in_geometry": true},
+    {"attribute": 2, "name": "mantle", "r_inner": 0.5, "r_outer": 1.0,
+     "in_geometry": true}],
+  "interfaces": [
+    {"attribute": 1, "name": "cmb", "radius": 0.5, "between_layers": [0, 1]},
+    {"attribute": 2, "name": "surface", "radius": 1.0,
+     "between_layers": [1, -1]}],
+  "fields": [],
+  "scales": null,
+  "constants": {},
+  "meta": {"fluid_layers": [1]},
   "schema": "planetmodel.mesh.manifest/4"
 })";
 
 struct Files {
   std::string manifest = "manifest_test.json";
+  std::string old_manifest = "manifest_test_v4.json";
   Files() {
     Mesh mesh = Mesh::MakeCartesian3D(2, 2, 2, Element::TETRAHEDRON);
     L2_FECollection fec(1, 3);
@@ -67,11 +100,13 @@ struct Files {
     rho_out.precision(16);
     rho.Save(rho_out);
     std::ofstream(manifest) << kManifest;
+    std::ofstream(old_manifest) << kOldManifest;
   }
   ~Files() {
     std::remove("manifest_test.mesh");
     std::remove("manifest_test.rho.gf");
     std::remove(manifest.c_str());
+    std::remove(old_manifest.c_str());
   }
 };
 
@@ -104,6 +139,14 @@ TEST(MeshManifest, ReadsWhatWasWritten) {
   EXPECT_EQ(m.Interfaces()[3].above, 0);
   EXPECT_EQ(m.LayerNamed("mantle").attribute, 3);
 
+  EXPECT_EQ(m.InterfaceNamed("cmb").kind, "fluid-solid");
+  EXPECT_EQ(m.InterfaceNamed("interface_4").kind, "outer");
+  // The fluid side of the cmb is the outer core, attribute 2, below it.
+  EXPECT_DOUBLE_EQ(m.InterfaceNamed("cmb").ValueBeside("rho", 2), 11.0);
+  EXPECT_DOUBLE_EQ(m.InterfaceNamed("cmb").ValueBeside("rho", 3), 5.5);
+  EXPECT_TRUE(std::isnan(m.InterfaceNamed("surface").values.at("rho").second));
+  EXPECT_TRUE(m.InterfaceNamed("interface_4").values.empty());
+
   ExpectArray(m.SolidAttributes(), {1, 3});
   ExpectArray(m.FluidAttributes(), {2});
   ExpectArray(m.BodyAttributes(), {1, 2, 3});
@@ -126,14 +169,25 @@ TEST(MeshManifest, ReadsWhatWasWritten) {
 
   EXPECT_EQ(m.MetaString("model"), "a \"test\"");
   EXPECT_DOUBLE_EQ(m.MetaNumber("factor"), -0.25);
-  EXPECT_EQ(m.MetaIntegers("fluid_layers").size(), 1u);
   EXPECT_FALSE(m.HasMeta("absent"));
 
   EXPECT_TRUE(m.HasField("rho"));
   EXPECT_FALSE(m.HasField("mu"));
   EXPECT_EQ(m.FieldNamed("rho").fe_space, "L2_3D_P1");
   EXPECT_EQ(m.FieldNamed("rho").layers.size(), 3u);
+  EXPECT_EQ(m.FieldNamed("rho").radial_degree, 1);
   EXPECT_FALSE(m.PhysicalNodes());
+}
+
+TEST(MeshManifest, OldSchemaWithMetaFallback) {
+  const Files files;
+  const MeshManifest m(files.old_manifest);
+  ExpectArray(m.FluidAttributes(), {1});
+  ExpectArray(m.SolidAttributes(), {2});
+  ExpectArray(m.FluidSolidInterfaces(), {1});
+  EXPECT_TRUE(m.InterfaceNamed("cmb").kind.empty());
+  EXPECT_TRUE(m.InterfaceNamed("cmb").values.empty());
+  EXPECT_FALSE(m.HasScales());
 }
 
 TEST(MeshManifest, OpensTheMeshAndTheFields) {
