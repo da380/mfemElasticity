@@ -31,10 +31,13 @@ pieces are
   (`null_space.hpp`);
 - real orthonormal harmonics on a circle or sphere, synthesis of surface
   fields and interior harmonic potentials from coefficients, and the
-  analysis of a finite-element field (scalar, or the radial component of a
-  vector) on any spherical boundary into coefficients, serial and parallel
-  (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads load and
-  tidal Love numbers off one solve per degree).
+  analysis of a finite-element field (scalar, or the radial or tangential
+  part of a vector) on any spherical boundary into coefficients, serial and
+  parallel (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads
+  load and tidal Love numbers off one solve per degree);
+- the manifest that planetmodel writes beside a mesh, read into the
+  attribute lists and markers the problems take, with the mesh and the
+  fields of the model opened as it says (`mesh_manifest.hpp`).
 
 Serial and parallel (MPI) paths are provided throughout.
 
@@ -53,7 +56,10 @@ are, and what has been learned, are in `doc/`:
 | `null_space.md` | projected solvers for singular systems, the two gauges, element order on curved meshes |
 | `mfem_notes.md` | MFEM facts and pitfalls met along the way |
 
-`meshes/README.md` covers mesh generation.
+`meshes/README.md` covers mesh generation, and `benchmarks/README.md` the
+comparison of the self-gravitating solver with radial reference solutions:
+Love numbers, radial functions and fields, for a ladder of spherically
+layered models.
 
 ## Installation
 
@@ -92,6 +98,8 @@ All default to `OFF`.
 - `BUILD_EXAMPLES`: build the programs in `examples/`.
 - `BUILD_TESTS`: build the googletest suite in `tests/` (googletest is fetched
   at configure time); run with `ctest` in the build directory.
+- `BUILD_BENCHMARKS`: build the benchmark drivers and the launchers of
+  their scripts (with `USE_MPI`; see `benchmarks/README.md`).
 - `BUILD_DOCS`: generate the Doxygen API documentation.
 - `GENERATE_MESHES`: generate the gmsh meshes in the build's `data/` with
   the scripts in `meshes/` (default: on when examples or tests are on; see

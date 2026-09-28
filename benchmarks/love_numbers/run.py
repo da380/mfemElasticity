@@ -1,21 +1,37 @@
 """Run the Love-number benchmark over element sizes and orders.
 
-For one model, each element size `--h` is a case (made with make_case.py
+For each model named (`all` for every one), each element size `--h` is a case (made with make_case.py
 if its directory does not hold one) and each order `--order` a run of
-love_benchmark on it under MPI:
+love_benchmark on it under MPI, and with `--field` a run of field_benchmark
+as well, which compares the response to a cap load as fields:
 
   <out>/<model>/h<h>/                 the case: mesh, fields, reference
   <out>/<model>/h<h>/results_o<p>.json
   <out>/<model>/h<h>/log_o<p>.txt
+  <out>/<model>/h<h>/field_o<p>.json      with --field
+  <out>/<model>/h<h>/paraview_o<p>/       with --field --paraview
+  <out>/<model>/h<h>/parts_<np>/          with --partition
 
-A run whose results file exists is skipped unless `--force` is given, so a
-sweep can be extended or resumed. plot.py reads the tree.
+A run whose results file exists is skipped unless `--force` is given, and a
+case that exists is kept unless `--remake` is, so a sweep can be extended or
+resumed. plot.py reads the tree.
 
     python run.py homogeneous --h 0.3 0.2 0.15 --order 2 --np 8
     python run.py inner_core --h 0.1 0.07 --order 2 3 --np 128 --lmax 8
+    python run.py earth_like --h 0.2 --order 3 --field --paraview
+    python run.py all --h 0.2 --order 2 3 --field
 
-The launcher is `--mpiexec`, else the environment's MPIEXEC, else
-`mpiexec`; it must belong to the MPI the program was built with.
+The build makes a launcher of this script, <build>/benchmarks/love_numbers/
+run, which passes the drivers and the MPI launcher of the build and is
+meant to be started there, so that `runs` is in the build tree:
+
+    cd <build>/benchmarks/love_numbers
+    ./run all --h 0.2 --order 2 3 --field
+    ./plot runs
+
+Started directly, the script looks for the drivers in a build tree of the
+repository; the launcher is then `--mpiexec`, else the environment's
+MPIEXEC, else `mpiexec`, and must belong to the MPI of the drivers.
 `--launcher-args` are passed to it before the program (binding, host
 files). `--dry-run` prints the commands without running anything.
 """
@@ -35,18 +51,18 @@ HERE = Path(__file__).resolve().parent
 REPOSITORY = HERE.parent.parent
 
 
-def find_program(given: Path | None) -> Path:
-    """love_benchmark: the one given, or the one of a build tree of the
-    repository."""
+def find_programs(given: Path | None) -> Path:
+    """The directory holding the drivers: the one given, or that of a
+    build tree of the repository."""
     if given is not None:
         return given.resolve()
     for build in sorted(REPOSITORY.glob("build*")):
-        candidate = build / "benchmarks" / "love_benchmark"
-        if candidate.exists():
+        candidate = build / "benchmarks" / "love_numbers"
+        if (candidate / "love_benchmark").exists():
             return candidate
     raise SystemExit("love_benchmark not found in a build tree of the "
                      "repository (configure with -DUSE_MPI=ON "
-                     "-DBUILD_BENCHMARKS=ON), and no --program given")
+                     "-DBUILD_BENCHMARKS=ON), and no --programs given")
 
 
 def run(command: list[str], *, log: Path | None, dry_run: bool) -> bool:
@@ -74,7 +90,9 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("model", choices=sorted(models.MODELS))
+    p.add_argument("model", nargs="+",
+                   choices=sorted(models.MODELS) + ["all"],
+                   help="the models, or `all`")
     p.add_argument("--h", type=float, nargs="+", default=[0.2],
                    help="element sizes on the interfaces, one case each")
     p.add_argument("--order", type=int, nargs="+", default=[2],
@@ -89,56 +107,100 @@ def main() -> None:
                    help="0: Schur-complement CG, 1: block MINRES")
     p.add_argument("--buffer", type=float, default=0.2,
                    help="thickness of the buffer shell over the radius")
-    p.add_argument("--angular", type=float, default=0.4,
+    p.add_argument("--angular", type=float, default=0.3,
                    help="largest element size on an interface over its radius")
+    p.add_argument("--thin", type=float, default=4.0,
+                   help="largest element size on an interface over the "
+                        "thickness of the layers it bounds")
     p.add_argument("--out", type=Path, default=Path("runs"), metavar="DIR",
                    help="root of the results tree")
-    p.add_argument("--program", type=Path, default=None,
-                   help="love_benchmark (default: found in a build tree)")
+    p.add_argument("--programs", type=Path, default=None, metavar="DIR",
+                   help="directory of the drivers (default: found in a "
+                        "build tree)")
+    p.add_argument("--field", action="store_true",
+                   help="run field_benchmark as well")
+    p.add_argument("--field-only", action="store_true",
+                   help="run field_benchmark alone")
+    p.add_argument("--field-lmax", type=int, default=8,
+                   help="highest degree of the cap load")
+    p.add_argument("--partition", action="store_true",
+                   help="partition each case for the ranks beforehand, so "
+                        "that no rank reads the whole mesh")
+    p.add_argument("--paraview", action="store_true",
+                   help="with --field, write the fields for ParaView")
     p.add_argument("--mpiexec", default=os.environ.get("MPIEXEC", "mpiexec"),
                    help="the MPI launcher")
     p.add_argument("--launcher-args", default="",
                    help="further arguments of the launcher, as one string")
     p.add_argument("--program-args", default="",
-                   help="further arguments of love_benchmark, as one string")
+                   help="further arguments of the drivers, as one string")
     p.add_argument("--force", action="store_true",
-                   help="run again where results exist, and rebuild cases")
+                   help="run again where results exist")
+    p.add_argument("--remake", action="store_true",
+                   help="make the cases again where they exist")
     p.add_argument("--dry-run", action="store_true",
                    help="print the commands without running them")
     args = p.parse_args()
 
-    program = Path("love_benchmark") if args.dry_run and args.program is None \
-        else find_program(args.program)
+    programs = Path(".") if args.dry_run and args.programs is None \
+        else find_programs(args.programs)
+    launch = [args.mpiexec, "-np", str(args.np),
+              *shlex.split(args.launcher_args)]
     failures = []
-    for h in args.h:
-        case = args.out / args.model / f"h{h:g}"
-        print(f"{args.model}, h = {h:g}: {case}", flush=True)
-        if args.force or not (case / "case.json").exists():
-            ok = run([sys.executable, str(HERE / "make_case.py"), args.model,
+    names = list(models.MODELS) if "all" in args.model else args.model
+    for name, h in ((name, h) for name in names for h in args.h):
+        case = args.out / name / f"h{h:g}"
+        print(f"{name}, h = {h:g}: {case}", flush=True)
+        if args.remake or not (case / "case.json").exists():
+            ok = run([sys.executable, str(HERE / "make_case.py"), name,
                       "--h", f"{h:g}", "--buffer", f"{args.buffer:g}",
                       "--angular", f"{args.angular:g}",
-                      "--lmax", str(max(args.lmax, 10)), "--out", str(case)],
+                      "--thin", f"{args.thin:g}",
+                      "--lmax", str(max(args.lmax, args.field_lmax, 10)),
+                      "--out", str(case)],
                      log=None, dry_run=args.dry_run)
             if not ok:
                 failures.append(f"{case}: make_case.py")
                 continue
-        for order in args.order:
-            results = case / f"results_o{order}.json"
-            if results.exists() and not args.force:
-                print(f"  order {order}: {results} exists, skipped")
-                continue
-            command = [args.mpiexec, "-np", str(args.np),
-                       *shlex.split(args.launcher_args), str(program),
-                       "-c", str(case / "case.json"), "-o", str(order),
-                       "-lmin", str(args.lmin), "-lmax", str(args.lmax),
-                       "-deg", str(max(args.dtn_degree, args.lmax)),
-                       "-rt", f"{args.rel_tol:g}", "-s", str(args.solver),
-                       "-out", str(results), *shlex.split(args.program_args)]
-            ok = run(command, log=case / f"log_o{order}.txt",
-                     dry_run=args.dry_run)
+        parts = case / f"parts_{args.np}"
+        if args.partition and (args.remake or not parts.exists()):
+            ok = run([str(programs / "partition_case"),
+                      "-c", str(case / "case.json"), "-np", str(args.np)],
+                     log=None, dry_run=args.dry_run)
             if not ok:
-                results.unlink(missing_ok=True)
-                failures.append(f"{case}: order {order}")
+                failures.append(f"{case}: partition_case")
+                continue
+        for order in args.order:
+            common = ["-c", str(case / "case.json"), "-o", str(order),
+                      "-rt", f"{args.rel_tol:g}", "-s", str(args.solver),
+                      *shlex.split(args.program_args)]
+            jobs = []
+            if not args.field_only:
+                jobs.append((
+                    case / f"results_o{order}.json",
+                    case / f"log_o{order}.txt",
+                    [str(programs / "love_benchmark"), *common,
+                     "-lmin", str(args.lmin), "-lmax", str(args.lmax),
+                     "-deg", str(max(args.dtn_degree, args.lmax))]))
+            if args.field or args.field_only:
+                extra = (["-pv", str(case / f"paraview_o{order}")]
+                         if args.paraview else [])
+                jobs.append((
+                    case / f"field_o{order}.json",
+                    case / f"field_log_o{order}.txt",
+                    [str(programs / "field_benchmark"), *common,
+                     "-lmax", str(args.field_lmax),
+                     "-deg", str(max(args.dtn_degree, args.field_lmax)),
+                     *extra]))
+            for results, log, command in jobs:
+                if results.exists() and not args.force:
+                    print(f"  order {order}: {results} exists, skipped")
+                    continue
+                ok = run([*launch, *command, "-out", str(results)], log=log,
+                         dry_run=args.dry_run)
+                if not ok:
+                    results.unlink(missing_ok=True)
+                    failures.append(f"{results}")
     if failures:
         raise SystemExit("failed: " + "; ".join(failures))
 

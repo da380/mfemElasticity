@@ -13,6 +13,17 @@ a planetmodel `Model` in SI:
                    mantle, every parameter linear in radius
   earth_like       inner core, fluid outer core and mantle, every parameter
                    linear in radius within each
+  prem_4           PREM without its ocean, isotropic, on four layers: inner
+                   core, outer core, lower mantle, and the upper mantle
+                   with the crust
+  prem_6           the same on six: the transition zone and the crust are
+                   layers of their own
+
+The PREM models keep the boundaries named and merge what lies between
+them: within a merged layer each parameter is the cubic closest to PREM's,
+so that the model is smooth within its layers, as the mesh takes it to be.
+Their radii are PREM's stretched by 6371 / 6368, which puts the surface at
+the radius of the other models.
 
 A model of uniform layers is planetmodel's `LayeredIsotropicElastic`; one
 whose parameters vary within a layer is `LayeredIsotropicPolynomial` here,
@@ -30,7 +41,8 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 
-from planetmodel import (DENSITY, SCALAR, Elastic, Geometry,
+import numpy as np
+from planetmodel import (DENSITY, PREM, SCALAR, Elastic, Geometry,
                          LayeredIsotropicElastic, Model, RadialField,
                          SelfGravitating, Skeleton, kappa_mu, polynomial_layer)
 from planetmodel.units import G_SI, Scales
@@ -132,6 +144,60 @@ def earth_like() -> Model:
         interface_names=["icb", "cmb", "surface"], name="earth_like")
 
 
+def prem_like(boundaries_km: Sequence[float], names: Sequence[str],
+              interfaces: Sequence[str], *, name: str,
+              degree: int = 3) -> Model:
+    """PREM without its ocean, isotropic, merged onto the layers between
+    `boundaries_km` (radii of PREM, of which the last is its solid surface),
+    each parameter the polynomial of `degree` closest to PREM's within a
+    layer; a layer of PREM's outer core is fluid."""
+    prem = PREM(ocean=False).isotropic()
+    fine = np.asarray(prem.skeleton.boundaries, dtype=float)
+    stretch = RADIUS / fine[-1]
+
+    def value(key: str, r: np.ndarray) -> np.ndarray:
+        index = np.clip(np.searchsorted(fine, r, side="right") - 1, 0,
+                        prem.nlayers - 1)
+        out = np.empty(r.shape)
+        for i in np.unique(index):
+            m = index == i
+            zero = np.zeros(int(m.sum()))
+            out[m] = prem.layer(int(i))[key].evaluate(r[m], zero, zero)
+        return out
+
+    coefficients = {"rho": [], "vp": [], "vs": []}
+    for lo, hi in zip(boundaries_km[:-1], boundaries_km[1:]):
+        lo, hi = 1e3 * lo, 1e3 * hi
+        t = np.cos(np.pi * (np.arange(64) + 0.5) / 64)
+        r = 0.5 * (lo + hi) + 0.5 * (hi - lo) * t * (1.0 - 1e-9)
+        x = r * stretch / RADIUS
+        for key, c in coefficients.items():
+            y = value(key, r)
+            if key == "vs" and np.all(y == 0.0):
+                c.append((0.0,))
+            else:
+                c.append(tuple(np.polynomial.Polynomial.fit(
+                    x, y, degree).convert().coef))
+    return LayeredIsotropicPolynomial(
+        [1e3 * b * stretch for b in boundaries_km], **coefficients,
+        layer_names=list(names), interface_names=list(interfaces), name=name)
+
+
+def prem_4() -> Model:
+    return prem_like(
+        [0.0, 1221.5, 3480.0, 5701.0, 6368.0],
+        ["inner_core", "outer_core", "lower_mantle", "upper_mantle"],
+        ["icb", "cmb", "d660", "surface"], name="prem_4")
+
+
+def prem_6() -> Model:
+    return prem_like(
+        [0.0, 1221.5, 3480.0, 5701.0, 5971.0, 6346.6, 6368.0],
+        ["inner_core", "outer_core", "lower_mantle", "transition_zone",
+         "upper_mantle", "crust"],
+        ["icb", "cmb", "d660", "d400", "moho", "surface"], name="prem_6")
+
+
 MODELS: dict[str, Callable[[], Model]] = {
     "homogeneous": homogeneous,
     "two_solid": two_solid,
@@ -140,6 +206,8 @@ MODELS: dict[str, Callable[[], Model]] = {
     "linear_solid": linear_solid,
     "stratified_core": stratified_core,
     "earth_like": earth_like,
+    "prem_4": prem_4,
+    "prem_6": prem_6,
 }
 
 

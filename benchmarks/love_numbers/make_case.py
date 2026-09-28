@@ -8,11 +8,15 @@ A case is a directory holding
                      and under `meta` the attributes of the fluid layers
   case.<name>.gf     rho, kappa and mu as L2 GridFunctions on the mesh
   reference.json     the Love numbers and radial solutions of pyslfp
+  reference_fields.txt  the radial solutions of the load problem on
+                     Chebyshev nodes of each layer, for the driver that
+                     compares fields
 
 all from one planetmodel model in the benchmark's units (see models.py),
 so that the finite-element solver and the radial solver are given the
 same body. The mesh has the element size `--h` on every interface, or
-`--angular` times the interface's radius where that is smaller, growing to
+`--angular` times the interface's radius or `--thin` times the thickness of
+a layer it bounds where those are smaller, growing to
 `--h-max` over the distance `--decay`, in units of the outer radius.
 
     python make_case.py homogeneous --h 0.15 --out cases/homogeneous_h0.15
@@ -20,11 +24,14 @@ same body. The mesh has the element size `--h` on every interface, or
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+from collections.abc import Iterator
 from pathlib import Path
 
+import gmsh
 import numpy as np
-from planetmodel import Model, is_fluid
+from planetmodel import Model, gravity, is_fluid
 from planetmodel.mesh3d import (InterfaceSizing, MeshSpec, Shell,
                                 build_layered_mesh, export_mfem)
 from pyslfp.love_numbers import LoveNumbers, love_numbers, solve_degree
@@ -37,19 +44,54 @@ FIELDS = ("rho", "kappa", "mu")
 #: The basename of the files of a case.
 BASENAME = "case"
 
+#: The file of radial solutions the field driver reads.
+FIELDS_FILE = "reference_fields.txt"
+
 #: The forcings whose radial solutions are kept, for plotting.
 PROFILE_FORCINGS = ("load", "tide")
 
 
-def sizing(h: float, h_max: float, decay: float, angular: float):
+def sizing(h: float, h_max: float, decay: float, angular: float,
+           thin: float):
     """The sizing rule of a case: the size `h` on every interface, but no
     more than `angular` times the interface's radius, so that a small
-    sphere is still resolved in angle; `h_max` far from the interfaces."""
+    sphere is still resolved in angle, and no more than `thin` times the
+    thickness of the thinner of the layers it bounds, so that a thin layer
+    is meshed with elements of its own scale; `h_max` far from the
+    interfaces."""
     def rule(interfaces, outer_radius):
-        return {face.index: InterfaceSizing(min(h, angular * face.radius),
-                                            h_max, decay)
-                for face in interfaces}
+        radii = sorted({0.0} | {face.radius for face in interfaces})
+        out = {}
+        for face in interfaces:
+            k = radii.index(face.radius)
+            spans = [radii[k] - radii[k - 1]]
+            if k + 1 < len(radii):
+                spans.append(radii[k + 1] - radii[k])
+            size = min(h, angular * face.radius, thin * min(spans))
+            out[face.index] = InterfaceSizing(size, max(h_max, size), decay)
+        return out
     return rule
+
+
+@contextlib.contextmanager
+def optimised_tetrahedra() -> Iterator[None]:
+    """Within this context gmsh's Netgen optimiser follows every
+    generation of a volume mesh, before the mesh is curved: it removes the
+    slivers the Delaunay mesher leaves between interfaces, and leaves the
+    nodes on the interfaces where they are."""
+    mesh = gmsh.model.mesh
+    generate = mesh.generate
+
+    def generate_and_optimise(dim: int = 3) -> None:
+        generate(dim)
+        if dim == 3:
+            mesh.optimize("Netgen")
+
+    mesh.generate = staticmethod(generate_and_optimise)
+    try:
+        yield
+    finally:
+        mesh.generate = staticmethod(generate)
 
 
 def fluid_attributes(model: Model) -> list[int]:
@@ -58,20 +100,22 @@ def fluid_attributes(model: Model) -> list[int]:
 
 
 def build_mesh(model: Model, out: Path, *, h: float, h_max: float, decay: float,
-               angular: float, buffer: float, order: int,
-               verbose: bool) -> dict:
+               angular: float, thin: float, buffer: float, order: int,
+               optimise: bool = True, verbose: bool = False) -> dict:
     """The mesh, the fields and the manifest; returns a summary."""
-    spec = MeshSpec(model.geometry, sizing(h, h_max, decay, angular),
+    spec = MeshSpec(model.geometry, sizing(h, h_max, decay, angular, thin),
                     dimension=3, order=order,
                     shells=[Shell(ratio=buffer, name="buffer")],
                     meta={"model": model.name,
                           "fluid_layers": fluid_attributes(model)})
     scratch = out / "gmsh"
     scratch.mkdir(parents=True, exist_ok=True)
-    built = build_layered_mesh(spec, scratch / BASENAME, verbose=verbose)
+    with optimised_tetrahedra() if optimise else contextlib.nullcontext():
+        built = build_layered_mesh(spec, scratch / BASENAME, verbose=verbose)
     export = export_mfem(built, out / BASENAME, model=model, fields=FIELDS)
     return {"h": h, "h_max": h_max, "decay": decay, "angular": angular,
-            "buffer": buffer,
+            "thin": thin,
+            "buffer": buffer, "optimised": optimise,
             "order": order, "counts": dict(export.counts),
             "validation": str(built.validation)}
 
@@ -103,6 +147,44 @@ def profiles(model: Model, lmax: int, *, per_layer: int) -> dict:
                                      "U": _clean(U), "V": _clean(V),
                                      "phi": _clean(phi)})
     return out
+
+
+def write_reference_fields(model: Model, lmax: int, path: Path, *,
+                           nodes: int) -> None:
+    """U, V and phi of the load problem by degree, per unit coefficient of
+    the surface density, on `nodes` Chebyshev points of the second kind in
+    each layer, from which a polynomial interpolant recovers them within
+    the layer. The end points sit just within the layer, so that each side
+    of an interface has its own values. In a fluid layer U and V are not
+    defined above degree zero and are written as zero.
+
+    The file is text: `lmax`, `layers`, then for each layer a line
+    `layer <attribute> <r_inner> <r_outer> <fluid> <nodes>`, the radii of
+    its nodes, the gravity of the model at them, and for each degree from
+    zero three lines, U, V and phi at the nodes.
+    """
+    b = np.asarray(model.skeleton.boundaries, dtype=float)
+    nudge = 1e-9 * b[-1]
+    x = np.cos(np.pi * np.arange(nodes) / (nodes - 1))[::-1]     # -1 .. 1
+    radii = [0.5 * (lo + hi) + 0.5 * (hi - lo - 2.0 * nudge) * x
+             for lo, hi in zip(b[:-1], b[1:])]
+    solutions = [solve_degree(model, l, forcing="load").evaluate(
+        np.concatenate(radii)) for l in range(lmax + 1)]
+    fluid = fluid_attributes(model)
+
+    def line(values: np.ndarray) -> str:
+        return " ".join(f"{v:.17e}" for v in np.nan_to_num(values, nan=0.0))
+
+    with path.open("w") as f:
+        f.write(f"lmax {lmax}\nlayers {len(radii)}\n")
+        for i, r in enumerate(radii):
+            f.write(f"layer {i + 1} {b[i]:.17e} {b[i + 1]:.17e} "
+                    f"{int(i + 1 in fluid)} {nodes}\n{line(r)}\n"
+                    f"{line(gravity(model, r))}\n")
+            part = slice(i * nodes, (i + 1) * nodes)
+            for U, V, phi in solutions:
+                f.write(f"{line(U[part])}\n{line(V[part])}\n"
+                        f"{line(phi[part])}\n")
 
 
 def reference(model: Model, lmax: int, *, per_layer: int) -> dict:
@@ -144,8 +226,13 @@ def main() -> None:
                    help="element size far from the interfaces (default 2 h)")
     p.add_argument("--decay", type=float, default=None,
                    help="distance over which the size grows (default 10 h)")
-    p.add_argument("--angular", type=float, default=0.4,
+    p.add_argument("--no-optimise", action="store_true",
+                   help="leave the tetrahedra as the mesher made them")
+    p.add_argument("--angular", type=float, default=0.3,
                    help="largest element size on an interface over its radius")
+    p.add_argument("--thin", type=float, default=4.0,
+                   help="largest element size on an interface over the "
+                        "thickness of the layers it bounds")
     p.add_argument("--buffer", type=float, default=0.2,
                    help="thickness of the buffer shell over the radius")
     p.add_argument("--order", type=int, default=2, help="geometry order")
@@ -155,6 +242,8 @@ def main() -> None:
                    help="time scale in seconds (default: G equal to one)")
     p.add_argument("--profile-points", type=int, default=41,
                    help="radii per layer in the reference's radial solutions")
+    p.add_argument("--field-nodes", type=int, default=33,
+                   help="Chebyshev nodes per layer in reference_fields.txt")
     p.add_argument("--reference-only", action="store_true",
                    help="write reference.json alone, leaving the mesh")
     p.add_argument("--verbose", action="store_true",
@@ -168,13 +257,17 @@ def main() -> None:
     (args.out / "reference.json").write_text(json.dumps(ref, indent=1))
     print(f"reference.json: degrees 0..{args.lmax}, G = {ref['G']:.6g}, "
           f"g = {ref['surface_gravity']:.6g}")
+    write_reference_fields(model, args.lmax, args.out / FIELDS_FILE,
+                           nodes=args.field_nodes)
     if args.reference_only:
         return
 
     h_max = 2.0 * args.h if args.h_max is None else args.h_max
     decay = 10.0 * args.h if args.decay is None else args.decay
     summary = build_mesh(model, args.out, h=args.h, h_max=h_max, decay=decay,
-                         angular=args.angular, buffer=args.buffer, order=args.order,
+                         angular=args.angular, thin=args.thin,
+                         buffer=args.buffer,
+                         optimise=not args.no_optimise, order=args.order,
                          verbose=args.verbose)
     (args.out / "mesh_summary.json").write_text(json.dumps(summary, indent=1))
     print(f"{BASENAME}.mesh: {summary['counts']}; {summary['validation']}")
