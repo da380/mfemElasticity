@@ -45,8 +45,8 @@ gitignored for `.msh` and `.json` anyway).
 | `unit_disc.py` | `disk.msh` | transformed_diffusion |
 | `unit_ball.py` | `ball.msh` | transformed_diffusion, anisotropic_elasticity |
 | `offset_disc.py` | `circular_offset.msh` | poisson_dtn, submesh_injection |
-| `disc_with_buffer.py` | `elastogravity_2d.msh` | self_gravitating_elasticity, love_numbers, tests |
-| `ball_with_buffer.py` | `coupled_poisson.msh` | coupled_poisson, self_gravitating_elasticity, love_numbers, tests |
+| `disc_with_buffer.py` | `elastogravity_2d.msh` | elastogravity_layered, love_numbers, tests |
+| `ball_with_buffer.py` | `coupled_poisson.msh` | coupled_poisson, elastogravity_layered, love_numbers, tests |
 | `layered_earth.py --all` | `elastogravity_{two,three}_layer_2d.msh`, `elastogravity_three_layer_3d.msh` | elastogravity_layered, self_gravitating_relaxation, tests |
 | `aspherical_body.py --all` | `aspherical_{2d,3d}.mesh`, `aspherical_buffer_{2d,3d}.mesh` | any example given `-m`; see the script |
 | `make_all.py` | all of the above | |

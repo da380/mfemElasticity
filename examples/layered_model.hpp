@@ -4,18 +4,22 @@
 // The PREM-like layered Earth models of the elastogravity_layered examples,
 // shared by the serial and parallel drivers.
 //
-// Two layerings, recognised from the mesh's number of domain attributes:
+// Three models, recognised from the mesh's number of domain attributes
+// (SetModel):
+//   uniform     (attributes 1 body, 2 buffer; boundary attributes 1 surface,
+//                2 outer), a solid of constant density and moduli whatever
+//                its shape
 //   two-layer   (attributes 1 fluid core, 2 mantle, 3 buffer;
 //                boundary attributes 1 CMB, 2 surface, 3 outer)
 //   three-layer (attributes 1 inner core, 2 fluid outer core, 3 mantle,
 //                4 buffer; boundary attributes 1 ICB, 2 CMB, 3 surface,
 //                4 outer)
-// with radii 1230/6371 (ICB), 3483/6371 (CMB) and 1 (surface), as produced by
-// meshes/layered_earth.py.
+// the layered ones with radii 1230/6371 (ICB), 3483/6371 (CMB) and 1
+// (surface), as produced by meshes/layered_earth.py.
 //
-// Profiles are piecewise linear in radius (dimensional values below), with a
-// degree-2 polar and an azimuthal perturbation of the mantle moduli and of
-// the load.
+// Profiles of the layered models are piecewise linear in radius
+// (dimensional values below), with a degree-2 polar and an azimuthal
+// perturbation of the mantle moduli and of the load.
 // Non-dimensionalisation: L = 6371 km, rho = 5000 kg/m^3, T = 1/sqrt(G rho),
 // so that the non-dimensional gravitational constant is 1.
 // ============================================================================
@@ -28,6 +32,8 @@
 
 namespace layered {
 
+using namespace mfem;
+
 inline Nondimensionalisation ND(6371e3, 1.0 / std::sqrt(Constants::G * 5000.0),
                                 5000.0);
 
@@ -35,12 +41,30 @@ constexpr real_t kRIcb = 1230.0 / 6371.0;
 constexpr real_t kRCmb = 3483.0 / 6371.0;
 constexpr real_t kRSurface = 1.0;
 
-// Set from the mesh before the coefficients are used.
+// Set from the mesh (SetModel) before the coefficients are used.
+inline bool uniform = false;
 inline bool inner_core = false;
+// Density [kg/m^3] and moduli [Pa] of the uniform model (-rho, -kappa, -mu).
+inline real_t uniform_density = 5500.0;
+inline real_t uniform_bulk_modulus = 300e9;
+inline real_t uniform_shear_modulus = 150e9;
 // The surface-load amplitude factor (-load) and whether the fluid is
 // treated as solid (-solid-core).
 inline real_t load_factor = 1.0;
 inline bool solid_core = false;
+
+// Choose the model from the mesh's number of domain attributes; false when
+// the mesh is none of the three.
+inline bool SetModel(const Mesh& mesh) {
+  const int n = mesh.attributes.Max();
+  uniform = n == 2;
+  inner_core = n == 4;
+  return n >= 2 && n <= 4;
+}
+
+inline const char* ModelName() {
+  return uniform ? "Uniform" : inner_core ? "Three-layer" : "Two-layer";
+}
 
 inline real_t Linear(real_t a, real_t b, real_t s) { return a + (b - a) * s; }
 
@@ -63,6 +87,9 @@ inline real_t MantlePerturbation(const Vector& x) {
 
 // Density of the whole body (kg/m^3, dimensional), by radius.
 inline real_t DensityDim(real_t r) {
+  if (uniform) {
+    return uniform_density;
+  }
   if (r > kRSurface) {
     return 0.0;
   }
@@ -97,6 +124,9 @@ inline real_t FluidDensity(const Vector& x) {
 
 inline real_t ShearModulus(const Vector& x) {
   const real_t r = x.Norml2();
+  if (uniform) {
+    return ND.ScaleStress(uniform_shear_modulus);
+  }
   if (r > kRSurface) {
     return 0.0;
   }
@@ -117,6 +147,10 @@ inline real_t ShearModulus(const Vector& x) {
 
 inline real_t Lame(const Vector& x) {
   const real_t r = x.Norml2();
+  if (uniform) {
+    return ND.ScaleStress(uniform_bulk_modulus -
+                          2.0 * uniform_shear_modulus / x.Size());
+  }
   if (r > kRSurface) {
     return 0.0;
   }
@@ -168,8 +202,16 @@ inline real_t TidalPotential(const Vector& x) {
   return ND.ScaleGravityPotential(tidal_amplitude) * 0.5 * (3.0 * z * z - r2);
 }
 
+// The mean over radius of the mantle's shear modulus [Pa].
+inline real_t MantleMeanShearModulusDim() {
+  return inner_core ? 0.5 * (294e9 + 68e9) : 0.5 * (280e9 + 70e9);
+}
+
 // Markers. The solid SubMesh inherits the interface and surface attributes.
 inline Array<int> SolidAttributes() {
+  if (uniform) {
+    return Array<int>({1});
+  }
   return inner_core ? (solid_core ? Array<int>({1, 2, 3}) : Array<int>({1, 3}))
                     : (solid_core ? Array<int>({1, 2}) : Array<int>({2}));
 }
@@ -181,7 +223,7 @@ inline int MantleAttribute() { return inner_core ? 3 : 2; }
 inline Array<int> SurfaceMarker(Mesh& solid) {
   Array<int> m(solid.bdr_attributes.Max());
   m = 0;
-  m[(inner_core ? 3 : 2) - 1] = 1;
+  m[(uniform ? 1 : inner_core ? 3 : 2) - 1] = 1;
   return m;
 }
 

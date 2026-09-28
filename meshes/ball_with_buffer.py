@@ -7,7 +7,7 @@ cheap; the examples that use it say so where it matters.
 Domain attribute 1 is the body and 2 the buffer. Boundary attribute 1 is
 the body's surface and 2 the outer sphere. Order-2 elements.
 
-Used by: coupled_poisson, self_gravitating_elasticity, love_numbers, the tests.
+Used by: coupled_poisson, elastogravity_layered, love_numbers, the tests.
 """
 from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,

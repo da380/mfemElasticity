@@ -101,18 +101,20 @@ All default to `OFF`.
 
 Examples are run from the build's `examples/` directory; they find their
 meshes in `../data`, which the build fills from the source tree's `data/`
-and from the scripts in `meshes/`. Each has `-h` for its options.
+and from the scripts in `meshes/`. Each has `-h` for its options. A program
+listed with `_p` has a parallel counterpart of that name; `transformed_diffusion`
+and `elastogravity_layered` are one program each, parallel when the library
+is built with MPI and serial otherwise.
 
 | Program | What it does |
 |---|---|
 | `poisson_dtn` / `_p` | Poisson equation on the whole space: Neumann, DtN and multipole outer conditions, static and linearised, against the exact uniform-sphere solution |
-| `transformed_diffusion` / `_p` | Laplace equation on a mapped domain solved on the reference domain with `TransformedDiffusionIntegrator` |
+| `transformed_diffusion` | Laplace equation on a mapped domain solved on the reference domain with `TransformedDiffusionIntegrator` |
 | `submesh_injection` / `_p` | Tour of `SubMeshDofInjection`: moving fields and assembling coupling blocks between a mesh and a submesh |
 | `coupled_poisson` / `_p` | Two Poisson equations, one on a submesh, coupled and solved monolithically |
-| `elastogravity_layered` / `_p` | `LinearQuasiStaticSelfGravitatingProblem` with a fluid outer core (two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
+| `elastogravity_layered` | `LinearQuasiStaticSelfGravitatingProblem` under a surface mass load or a tidal potential, Schur CG and block MINRES solvers compared, rigid-mode diagnostics (uniform solid of any shape; two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
 | `self_gravitating_relaxation` | Viscoelastic relaxation of the layered self-gravitating model with a fluid core under a Heaviside surface load (Maxwell mantle, elastic inner core) |
 | `quasi_static_elasticity` | Driver for the `LinearQuasiStaticProblem` interface |
-| `self_gravitating_elasticity` / `_p` | `LinearQuasiStaticSelfGravitatingProblem`: self-gravitating body under a surface mass load, Schur CG and block MINRES solvers compared, rigid-mode diagnostics |
 | `love_numbers` | Load and tidal Love numbers of a homogeneous self-gravitating sphere (disc) by degree, one solve each, against the incompressible-sphere formulas |
 | `viscoelasticity` | Generalised Maxwell viscoelasticity with `ViscoelasticOperator` |
 | `viscoelastic_schemes` | Cost and accuracy table of every time integrator (ETD1, exponential trapezoid, BE, SDIRK23, RK4, adaptive) on a clamped beam, linear or power-law |

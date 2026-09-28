@@ -12,3 +12,7 @@ refined.mesh
 # gmsh meshes are generated into the build tree by meshes/
 data/*.msh
 data/*.json
+
+# benchmark output
+benchmarks/**/runs/
+**/__pycache__/

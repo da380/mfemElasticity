@@ -8,7 +8,7 @@ the elastic problem lives on the body alone.
 Domain attribute 1 is the body and 2 the buffer. Boundary attribute 1 is
 the body's surface and 2 the outer circle. Order-2 elements.
 
-Used by: self_gravitating_elasticity, love_numbers, the tests.
+Used by: elastogravity_layered, love_numbers, the tests.
 """
 from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,

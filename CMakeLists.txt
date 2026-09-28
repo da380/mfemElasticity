@@ -71,6 +71,12 @@ if(BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+# Optionally build the benchmarks.
+option(BUILD_BENCHMARKS "Build the benchmark programs" OFF)
+if(BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()
+
 # Optionally build tests
 option(BUILD_TESTS "Build the test programs" OFF)
 if(BUILD_TESTS)

@@ -36,7 +36,10 @@ This is the parallel version of poisson_dtn.
 
 [-m, --mesh]:       Mesh file. Must have attributes as described above.
 [-o, --order]:      Finite element polynomial order. Default is 1.
-[-r, --refinement]: Number of uniform mesh refinements. Default is 0.
+[-sr, --serial_refinement]:   Number of uniform refinements before the mesh
+                    is partitioned. Default is 0.
+[-pr, --parallel_refinement]: Number of uniform refinements of the
+                    partitioned mesh. Default is 0.
 [-deg, --degree]:   Expansion degree for DtN/Multipole methods. Default is 8.
 [-res, --residual]: Set to 1 to output the pointwise error against an exact
                     solution (requires a spherical source). Default is 0.

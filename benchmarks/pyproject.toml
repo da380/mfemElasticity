@@ -1,0 +1,13 @@
+[project]
+name = "mfemelasticity-benchmarks"
+version = "0.1.0"
+description = "Benchmarks of mfemElasticity against radial reference solutions"
+requires-python = ">=3.12"
+dependencies = [
+    "planetmodel[meshing,mfem]>=1.2.1",
+    "pyslfp>=2.2.0",
+    "matplotlib>=3.9.0",
+]
+
+[tool.poetry]
+package-mode = false
