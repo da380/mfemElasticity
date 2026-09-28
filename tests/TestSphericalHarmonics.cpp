@@ -21,6 +21,8 @@
     (the same basis; the 2-D DtN operator carries no degree-zero term).
   - Radial component: u = Y_i n gives e_i, from a VectorCoefficient and from
     its interpolant on the vector space.
+  - Tangential component: u = grad_1 Y_i gives e_i, whatever radial part
+    and rotation are added, and nothing at degree zero.
   - LoadVector against a BoundaryLFIntegrator of the same expansion.
   - Interior harmonic continuation carries the factor (r/R)^l.
 */
@@ -275,6 +277,43 @@ TEST_P(SphericalHarmonicsTest, RadialComponent) {
     g.ProjectCoefficient(u);
     bhc.Coefficients(g, c);
     err_gf = std::max(err_gf, std::abs(c[i] - 1.0));
+  }
+  EXPECT_LT(err, GeomTol(dim));
+  EXPECT_LT(err_gf, InterpTol(dim));
+}
+
+TEST_P(SphericalHarmonicsTest, TangentialComponent) {
+  HarmonicCase s(GetParam());
+  BoundaryHarmonicCoefficients bhc(
+      *s.vector, s.surface, s.L,
+      BoundaryHarmonicCoefficients::Component::Tangential);
+  const int n = bhc.Size(), dim = s.dim;
+  const auto& basis = bhc.Basis();
+  double err = 0.0, err_gf = 0.0;
+  for (int i = 0; i < n; i++) {
+    // u = grad_1 Y_i + a radial part and a rotation, neither of which must
+    // contribute.
+    VectorFunctionCoefficient u(dim, [&](const Vector& x, Vector& v) {
+      Vector Y;
+      DenseMatrix gradY;
+      basis.EvalWithGradient(x, Y, gradY);
+      const double r = x.Norml2();
+      gradY.GetColumn(i, v);
+      v.Add(0.7 * Y[n - 1] / r, x);
+      v[0] += -x[1] / r * 0.4;
+      v[1] += x[0] / r * 0.4;
+    });
+    Vector c;
+    bhc.Coefficients(u, c);
+    const bool has_gradient = basis.Degree(i) > 0;
+    for (int j = 0; j < n; j++) {
+      err = std::max(err,
+                     std::abs(c[j] - (i == j && has_gradient ? 1.0 : 0.0)));
+    }
+    GridFunction g(s.vector.get());
+    g.ProjectCoefficient(u);
+    bhc.Coefficients(g, c);
+    err_gf = std::max(err_gf, std::abs(c[i] - (has_gradient ? 1.0 : 0.0)));
   }
   EXPECT_LT(err, GeomTol(dim));
   EXPECT_LT(err_gf, InterpTol(dim));

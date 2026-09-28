@@ -10,19 +10,21 @@
 //
 // For each degree l (order 0) the surface load is set to sigma = Y_l0 and,
 // separately for l >= 2, the tidal potential to psi = (r/a)^l Y_l0, with a
-// the radius of the surface. The radial displacement and the potential
-// perturbation are analysed into harmonic coefficients on the surface and on
-// every other interface that bounds a solid layer. With u_l and phi_l the
-// (l, 0) coefficients on the surface, g the surface gravity and phi_sigma the
-// load's own potential on the surface (solved on the same mesh with the body
-// held rigid, so that its discretisation error cancels in k'),
+// the radius of the surface. The displacement, u = U Y r^ + V grad_1 Y, and
+// the potential perturbation are analysed into harmonic coefficients on the
+// surface and on every other interface that bounds a solid layer. With u_l,
+// v_l and phi_l the (l, 0) coefficients of U, V and phi on the surface, g the
+// surface gravity and phi_sigma the load's own potential on the surface
+// (solved on the same mesh for the load alone, so that its discretisation
+// error cancels in k'),
 //
 //   load:   h'_l = -g u_l / phi_sigma        k'_l = phi_l / phi_sigma - 1
-//   tidal:  h_l  = -g u_l                    k_l  = phi_l
+//           l'_l = -g v_l / phi_sigma
+//   tidal:  h_l  = -g u_l     l_l = -g v_l   k_l  = phi_l
 //
 // The displacement is in the solver's default gauge, without rigid component
-// in the true-dof inner product. At degree one h' and k' depend on the frame,
-// both by the same constant, and h' - k' is what compares.
+// in the true-dof inner product. At degree one h', l' and k' depend on the
+// frame, all by the same constant, and h' - k' and l' - k' are what compare.
 //
 // The results are written as JSON, with the coefficients on every interface
 // per unit forcing, the sizes of the problem, the iteration counts and the
@@ -152,7 +154,7 @@ std::string List(const std::vector<real_t>& v) {
 // The analysis of u_r and phi on one interface of the solid.
 struct InterfaceAnalysis {
   MeshManifest::Interface interface;
-  std::unique_ptr<BHC> radial, scalar;
+  std::unique_ptr<BHC> radial, tangential, scalar;
 };
 
 // The response to one forcing of one degree.
@@ -161,8 +163,8 @@ struct Response {
   int outer = 0, inner = 0;
   double seconds = 0.0;
   real_t spurious = 0.0;
-  // (l, 0) coefficients of u_r and phi on each analysed interface.
-  std::vector<real_t> u, phi;
+  // (l, 0) coefficients of U, V and phi on each analysed interface.
+  std::vector<real_t> u, v, phi;
 };
 
 void Write(std::ostream& os, const char* name, const Response& r,
@@ -173,7 +175,8 @@ void Write(std::ostream& os, const char* name, const Response& r,
      << ", \"inner_iterations\": " << r.inner
      << ", \"seconds\": " << Num(r.seconds)
      << ", \"spurious\": " << Num(r.spurious) << ",\n      \"u\": "
-     << List(r.u) << ",\n      \"phi\": " << List(r.phi) << "}";
+     << List(r.u) << ",\n      \"v\": " << List(r.v) << ",\n      \"phi\": "
+     << List(r.phi) << "}";
 }
 
 }  // namespace
@@ -360,6 +363,8 @@ int main(int argc, char* argv[]) {
     an.interface = f;
     an.radial = std::make_unique<BHC>(fes_u, marker, lmax,
                                       BHC::Component::Radial);
+    an.tangential = std::make_unique<BHC>(fes_u, marker, lmax,
+                                          BHC::Component::Tangential);
     an.scalar = std::make_unique<BHC>(problem.PotentialSpaceOnBody(), marker,
                                       lmax, BHC::Component::Scalar);
     if (f.attribute == manifest.SurfaceAttribute()) {
@@ -415,11 +420,13 @@ int main(int argc, char* argv[]) {
     r.seconds = Seconds(t0);
     r.outer = problem.LastOuterIterations();
     r.inner = problem.LastInnerIterations();
-    Vector cu, cphi;
+    Vector cu, cv, cphi;
     for (const auto& an : analyses) {
       an.radial->Coefficients(problem.Displacement(), cu);
+      an.tangential->Coefficients(problem.Displacement(), cv);
       an.scalar->Coefficients(problem.PotentialOnBody(), cphi);
       r.u.push_back(cu[i]);
+      r.v.push_back(cv[i]);
       r.phi.push_back(cphi[i]);
       if (&an == &analyses[i_surface]) {
         r.spurious = std::max(Spurious(cu, i), Spurious(cphi, i));
@@ -433,8 +440,8 @@ int main(int argc, char* argv[]) {
       static_cast<ParFiniteElementSpace*>(&problem.PotentialSpaceOnBody()));
   if (root) {
     std::cout << std::setprecision(6)
-              << "\n  l          h'          k'           h           k"
-              << "    spurious   phi_s  its     time\n";
+              << "\n  l          h'          l'          k'           h"
+              << "           l           k    spurious   phi_s  its     time\n";
   }
   for (int l = lmin; l <= lmax; l++) {
     const int i = basis.Index(l, 0);
@@ -446,19 +453,22 @@ int main(int argc, char* argv[]) {
     const real_t phi_exact = -4.0 * kPi * G * a / (2.0 * l + 1.0);
     const real_t h_load = -g * load.u[i_surface] / phi_sigma;
     const real_t k_load = load.phi[i_surface] / phi_sigma - 1.0;
+    const real_t l_load = -g * load.v[i_surface] / phi_sigma;
 
     Response tidal;
-    real_t h = NAN, k = NAN;
+    real_t h = NAN, k = NAN, l_tide = NAN;
     const bool with_tide = tide && l >= 2;
     if (with_tide) {
       tidal = solve(i, false);
       h = -g * tidal.u[i_surface];
       k = tidal.phi[i_surface];
+      l_tide = -g * tidal.v[i_surface];
     }
 
     if (root) {
       std::cout << std::setw(3) << l << std::setw(12) << h_load
-                << std::setw(12) << k_load << std::setw(12) << h
+                << std::setw(12) << l_load << std::setw(12) << k_load
+                << std::setw(12) << h << std::setw(12) << l_tide
                 << std::setw(12) << k << std::setw(12) << std::setprecision(2)
                 << std::max(load.spurious, tidal.spurious) << std::setw(8)
                 << std::setprecision(4) << phi_sigma / phi_exact
@@ -471,13 +481,15 @@ int main(int argc, char* argv[]) {
                 << "\n";
       degrees << (l > lmin ? ",\n" : "") << "    {\"degree\": " << l << ",\n";
       Write(degrees, "load", load,
-            "\"h\": " + Num(h_load) + ", \"k\": " + Num(k_load) +
+            "\"h\": " + Num(h_load) + ", \"l\": " + Num(l_load) +
+                ", \"k\": " + Num(k_load) +
                 ", \"phi_direct\": " + Num(phi_sigma) +
                 ", \"phi_direct_exact\": " + Num(phi_exact) + ", ");
       if (with_tide) {
         degrees << ",\n";
         Write(degrees, "tide", tidal,
-              "\"h\": " + Num(h) + ", \"k\": " + Num(k) + ", ");
+              "\"h\": " + Num(h) + ", \"l\": " + Num(l_tide) +
+                  ", \"k\": " + Num(k) + ", ");
       }
       degrees << "}";
     }

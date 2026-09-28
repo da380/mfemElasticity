@@ -4,14 +4,14 @@ Reads the tree run.py writes for one model, `<runs>/<model>/h*/`, prints a
 table of the relative errors of every run and writes three figures beside
 the cases:
 
-  love_numbers.png   h', k' (load) and h, k (tide) by degree: the reference
+  love_numbers.png   h', l', k' (load) and h, l, k (tide) by degree: the reference
                      and the finest run of each order
   errors.png         the relative error of each by degree, for every run
   convergence.png    the relative error against the number of unknowns,
                      one line per degree, for each order
 
-At degree one the load numbers depend on the frame and h' - k' is compared
-in place of each; with a fluid layer degree zero is left out (see
+At degree one the load numbers depend on the frame and h' - k' and l' - k'
+are compared in place of each; with a fluid layer degree zero is left out (see
 README.md).
 
     python plot.py runs/homogeneous
@@ -41,10 +41,15 @@ INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 #: reference's array.
 QUANTITIES = (
     ("h_load", "load $h'$", "load", "h"),
+    ("l_load", "load $l'$", "load", "l"),
     ("k_load", "load $k'$", "load", "k"),
     ("h_tide", "tidal $h$", "tide", "h"),
+    ("l_tide", "tidal $l$", "tide", "l"),
     ("k_tide", "tidal $k$", "tide", "k"),
 )
+
+#: The load numbers compared at degree one, each less k'.
+FRAME_DEPENDENT = ("h", "l")
 
 
 @dataclass
@@ -79,16 +84,17 @@ def read_run(path: Path, *, fluid: bool) -> Run:
     for d in r["degrees"]:
         l = d["degree"]
         for key, _, forcing, name in QUANTITIES:
-            if forcing not in d or d[forcing][name] is None:
+            if forcing not in d or d[forcing].get(name) is None:
                 continue
-            seconds += d[forcing]["seconds"]
-            if forcing == "load" and l == 0 and (fluid or name == "k"):
-                # k' vanishes at degree zero: nothing to be relative to
+            if name == "h":
+                seconds += d[forcing]["seconds"]
+            if forcing == "load" and l == 0 and (fluid or name != "h"):
+                # k' and l' vanish at degree zero: nothing to be relative to
                 continue
             if forcing == "load" and l == 1:
-                # frame-dependent: h' - k' is kept under h, nothing under k
-                if name == "h":
-                    values[key][l] = d["load"]["h"] - d["load"]["k"]
+                # frame-dependent: h' - k' and l' - k' are kept, not k'
+                if name in FRAME_DEPENDENT:
+                    values[key][l] = d["load"][name] - d["load"]["k"]
                 continue
             values[key][l] = d[forcing][name]
     h = float(path.parent.name[1:])
@@ -102,9 +108,11 @@ def reference_values(ref: dict) -> dict[str, dict[int, float]]:
     for key, *_ in QUANTITIES:
         out[key] = {l: v for l, v in zip(ref["degree"], ref[key])
                     if v is not None}
-    # degree one as h' - k', to match the runs
-    out["h_load"][1] = ref["h_load"][1] - ref["k_load"][1]
+    # degree one as h' - k' and l' - k', to match the runs
+    for name in FRAME_DEPENDENT:
+        out[f"{name}_load"][1] = ref[f"{name}_load"][1] - ref["k_load"][1]
     out["k_load"].pop(1, None)
+    out["l_load"].pop(0, None)
     return out
 
 
@@ -118,7 +126,7 @@ def print_table(runs: list[Run], ref: dict) -> None:
     for run in runs:
         print(f"\n{run.label}: {run.unknowns} unknowns, {run.ranks} ranks, "
               f"{run.seconds:.1f} s")
-        print("   l " + "".join(f"{label:>24}" for _, label, *_ in QUANTITIES))
+        print("   l " + "".join(f"{label:>25}" for _, label, *_ in QUANTITIES))
         degrees = sorted({l for key, *_ in QUANTITIES
                           for l in run.values[key]})
         for l in degrees:
@@ -126,10 +134,10 @@ def print_table(runs: list[Run], ref: dict) -> None:
             for key, *_ in QUANTITIES:
                 if l in run.values[key]:
                     e = relative_error(run, ref, key).get(l, float("nan"))
-                    row += f"{run.values[key][l]:14.6f} ({e:7.1e})"
+                    row += f"{run.values[key][l]:15.6f} ({e:7.1e})"
                 else:
-                    row += " " * 24
-            print(row + ("   (h' - k')" if l == 1 else ""))
+                    row += " " * 25
+            print(row + ("   (less k')" if l == 1 else ""))
 
 
 def finest_per_order(runs: list[Run]) -> list[Run]:
@@ -141,7 +149,7 @@ def finest_per_order(runs: list[Run]) -> list[Run]:
 
 
 def plot_love_numbers(runs: list[Run], ref: dict, title: str, out: Path) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(14, 7), sharex=True)
     shown = finest_per_order(runs)
     for ax, (key, label, *_) in zip(axes.flat, QUANTITIES):
         ls = sorted(l for l in ref[key] if l != 1 and any(
@@ -165,7 +173,7 @@ def plot_love_numbers(runs: list[Run], ref: dict, title: str, out: Path) -> None
 
 
 def plot_errors(runs: list[Run], ref: dict, title: str, out: Path) -> None:
-    fig, axes = plt.subplots(2, 2, figsize=(10, 7), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 3, figsize=(14, 7), sharex=True, sharey=True)
     shown = runs[:len(COLOURS)]
     for ax, (key, label, *_) in zip(axes.flat, QUANTITIES):
         for i, run in enumerate(shown):
@@ -174,8 +182,9 @@ def plot_errors(runs: list[Run], ref: dict, title: str, out: Path) -> None:
             ax.semilogy(ls, [e[l] for l in ls], marker=MARKERS[i],
                         color=COLOURS[i], markeredgecolor=SURFACE,
                         markeredgewidth=1.0, label=run.label)
-        ax.set_title(label + (" ($h' - k'$ at degree 1)"
-                              if key == "h_load" else ""), loc="left")
+        ax.set_title(label + (" (less $k'$ at degree 1)"
+                              if key in ("h_load", "l_load") else ""),
+                     loc="left")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
     for ax in axes[-1]:
         ax.set_xlabel("degree")
@@ -191,7 +200,7 @@ def plot_errors(runs: list[Run], ref: dict, title: str, out: Path) -> None:
 
 def plot_convergence(runs: list[Run], ref: dict, title: str, out: Path) -> None:
     orders = sorted({run.order for run in runs})
-    fig, axes = plt.subplots(len(orders), 4, figsize=(14, 3.6 * len(orders)),
+    fig, axes = plt.subplots(len(orders), 6, figsize=(21, 3.6 * len(orders)),
                              sharey=True, squeeze=False)
     for row, order in zip(axes, orders):
         mine = sorted((r for r in runs if r.order == order),

@@ -281,7 +281,14 @@ BoundaryHarmonicCoefficients::BoundaryHarmonicCoefficients(
                 "BoundaryHarmonicCoefficients: Scalar needs vdim 1.");
   } else {
     MFEM_VERIFY(fes_->GetVDim() == dim_,
-                "BoundaryHarmonicCoefficients: Radial needs vdim = dim.");
+                "BoundaryHarmonicCoefficients: Radial and Tangential need "
+                "vdim = dim.");
+  }
+  // int |grad_1 Y_i|^2 over the unit sphere (circle).
+  norm_.SetSize(basis_.Size());
+  for (int i = 0; i < basis_.Size(); i++) {
+    const int l = basis_.Degree(i);
+    norm_[i] = dim_ == 2 ? l * l : l * (l + 1);
   }
   if (x0_.Size() == 0) {
     x0_.SetSize(dim_);
@@ -302,6 +309,8 @@ template <class F>
 void BoundaryHarmonicCoefficients::ForEachQuadraturePoint(F visit) const {
   Mesh* mesh = fes_->GetMesh();
   Vector x(dim_), Y;
+  DenseMatrix gradY;
+  const bool tangential = component_ == Component::Tangential;
   const real_t scale = std::pow(R_, 1 - dim_);
   for (int b = 0; b < fes_->GetNBE(); b++) {
     if (!marker_[mesh->GetBdrAttribute(b) - 1]) {
@@ -316,8 +325,20 @@ void BoundaryHarmonicCoefficients::ForEachQuadraturePoint(F visit) const {
       T->SetIntPoint(&ip);
       T->Transform(ip, x);
       x -= x0_;
-      basis_.Eval(x, Y);
-      visit(b, *fe, *T, ip, x, Y, ip.weight * T->Weight() * scale);
+      if (tangential) {
+        // grad_1 Y_i over its norm, so that the coefficients are those of
+        // the expansion in grad_1 Y_i; nothing at degree zero.
+        basis_.EvalWithGradient(x, Y, gradY);
+        for (int i = 0; i < gradY.Width(); i++) {
+          const real_t s = norm_[i] > 0.0 ? 1.0 / norm_[i] : 0.0;
+          for (int c = 0; c < dim_; c++) {
+            gradY(c, i) *= s;
+          }
+        }
+      } else {
+        basis_.Eval(x, Y);
+      }
+      visit(b, *fe, *T, ip, x, Y, gradY, ip.weight * T->Weight() * scale);
     }
   }
 }
@@ -384,7 +405,8 @@ void BoundaryHarmonicCoefficients::Assemble() {
   ForEachQuadraturePoint([&](int b, const FiniteElement& fe,
                              ElementTransformation& T,
                              const IntegrationPoint& ip, const Vector& x,
-                             const Vector& Y, real_t w) {
+                             const Vector& Y, const DenseMatrix& gradY,
+                             real_t w) {
     if (b != current) {
       flush();
       current = b;
@@ -399,6 +421,14 @@ void BoundaryHarmonicCoefficients::Assemble() {
       for (int j = 0; j < dof; j++) {
         for (int i = 0; i < n; i++) {
           elmat(j, i) += w * shape[j] * Y[i];
+        }
+      }
+    } else if (component_ == Component::Tangential) {
+      for (int c = 0; c < dim_; c++) {
+        for (int j = 0; j < dof; j++) {
+          for (int i = 0; i < n; i++) {
+            elmat(c * dof + j, i) += w * shape[j] * gradY(c, i);
+          }
         }
       }
     } else {
@@ -445,13 +475,13 @@ void BoundaryHarmonicCoefficients::Coefficients(Coefficient& f,
   ForEachQuadraturePoint(
       [&](int, const FiniteElement&, ElementTransformation& T,
           const IntegrationPoint& ip, const Vector&, const Vector& Y,
-          real_t w) { c.Add(w * f.Eval(T, ip), Y); });
+          const DenseMatrix&, real_t w) { c.Add(w * f.Eval(T, ip), Y); });
   Reduce(c);
 }
 
 void BoundaryHarmonicCoefficients::Coefficients(VectorCoefficient& f,
                                                 Vector& c) const {
-  MFEM_VERIFY(component_ == Component::Radial,
+  MFEM_VERIFY(component_ != Component::Scalar,
               "BoundaryHarmonicCoefficients: vector coefficient on a Scalar "
               "operator.");
   c.SetSize(Size());
@@ -460,9 +490,14 @@ void BoundaryHarmonicCoefficients::Coefficients(VectorCoefficient& f,
   ForEachQuadraturePoint([&](int, const FiniteElement&,
                              ElementTransformation& T,
                              const IntegrationPoint& ip, const Vector& x,
-                             const Vector& Y, real_t w) {
+                             const Vector& Y, const DenseMatrix& gradY,
+                             real_t w) {
     f.Eval(v, T, ip);
-    c.Add(w * (v * x) / x.Norml2(), Y);
+    if (component_ == Component::Tangential) {
+      gradY.AddMultTranspose(v, c, w);
+    } else {
+      c.Add(w * (v * x) / x.Norml2(), Y);
+    }
   });
   Reduce(c);
 }
@@ -470,6 +505,9 @@ void BoundaryHarmonicCoefficients::Coefficients(VectorCoefficient& f,
 void BoundaryHarmonicCoefficients::LoadVector(const Vector& c,
                                               Vector& b) const {
   MFEM_VERIFY(c.Size() == Size(), "BoundaryHarmonicCoefficients: size.");
+  MFEM_VERIFY(component_ != Component::Tangential,
+              "BoundaryHarmonicCoefficients: no load vector for the "
+              "Tangential component.");
   b.SetSize(M_.Height());
   M_.Mult(c, b);
   b *= std::pow(R_, dim_ - 1);

@@ -125,7 +125,13 @@ class HarmonicExpansionCoefficient : public mfem::Coefficient {
  * @brief Harmonic coefficients of a finite-element field on a spherical
  * boundary of its mesh: @f$c_i = R^{1-d}\int_S f\,Y_i\,dS@f$ for a scalar
  * field, or of the radial component @f$f = u\cdot\hat x@f$ of a vector
- * field, so that @f$f|_S \approx \sum_i c_i Y_i@f$. Serial or parallel
+ * field, so that @f$f|_S \approx \sum_i c_i Y_i@f$. For the tangential part
+ * of a vector field the coefficients are those of its expansion in the
+ * surface gradients, @f$u - (u\cdot\hat x)\hat x \approx \sum_i c_i
+ * \nabla_1 Y_i@f$ plus a part without radial curl that is not analysed:
+ * @f$c_i = R^{1-d}\int_S u\cdot\nabla_1 Y_i\,dS / \int |\nabla_1
+ * Y_i|^2\,d\Omega@f$, the denominator being @f$l(l+1)@f$ (@f$l^2@f$ in
+ * 2-D), and zero at degree zero. Serial or parallel
  * (the space's communicator; every boundary element is integrated once).
  *
  * The matrix @f$M_{ji} = R^{1-d}\int_S \varphi_j (\hat x_c) Y_i\,dS@f$ over
@@ -141,10 +147,11 @@ class HarmonicExpansionCoefficient : public mfem::Coefficient {
  */
 class BoundaryHarmonicCoefficients {
  public:
-  enum class Component { Scalar, Radial };
+  enum class Component { Scalar, Radial, Tangential };
 
   /**
-   * @param fes The field's space (vdim 1 for Scalar, dim for Radial).
+   * @param fes The field's space (vdim 1 for Scalar, dim for Radial and
+   * Tangential).
    * @param bdr_marker Boundary attributes of the sphere (sized to the mesh's
    * bdr_attributes.Max(); copied).
    * @param max_degree Highest harmonic degree.
@@ -172,11 +179,12 @@ class BoundaryHarmonicCoefficients {
    * boundary quadrature points (Scalar component). */
   void Coefficients(mfem::Coefficient& f, mfem::Vector& c) const;
 
-  /** @brief Coefficients of the radial component of @p f (Radial). */
+  /** @brief Coefficients of the radial component of @p f (Radial) or of
+   * its tangential part (Tangential). */
   void Coefficients(mfem::VectorCoefficient& f, mfem::Vector& c) const;
 
   /** @brief @f$b = R^{d-1} M c@f$: the load vector of the surface field
-   * with coefficients @p c, on the local (v)dofs. */
+   * with coefficients @p c, on the local (v)dofs (Scalar and Radial). */
   void LoadVector(const mfem::Vector& c, mfem::Vector& b) const;
 
   /** @brief A synthesis coefficient on this sphere with the given
@@ -202,6 +210,8 @@ class BoundaryHarmonicCoefficients {
   mfem::Vector x0_;
   mfem::real_t R_ = 0.0;
   SurfaceHarmonics basis_;
+  /** @f$\int |\nabla_1 Y_i|^2\,d\Omega@f$ by coefficient. */
+  mfem::Vector norm_;
   mfem::SparseMatrix M_;
 #ifdef MFEM_USE_MPI
   MPI_Comm comm_ = MPI_COMM_NULL;

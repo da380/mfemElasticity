@@ -79,10 +79,17 @@ solves the same model on its own radial mesh.
 | `two_solid` | two uniform solids, every parameter jumping between them |
 | `fluid_core` | a uniform fluid core under a uniform solid mantle |
 | `inner_core` | a solid inner core, a fluid outer core and a mantle, each uniform |
+| `linear_solid` | one solid, density and velocities linear in radius |
+| `stratified_core` | a fluid core whose density falls with radius, under a mantle, every parameter linear in radius |
+| `earth_like` | inner core, fluid outer core and mantle, every parameter linear in radius within each |
 
 The radius is the Earth's and the values are of the Earth's order, which
 makes the ratio of gravitational to elastic forces, rho g a / mu, of order
-one. A new model is a function in `models.py` and an entry in `MODELS`.
+one. A new model is a function in `models.py` and an entry in `MODELS`;
+uniform layers are planetmodel's `LayeredIsotropicElastic`, and
+`LayeredIsotropicPolynomial` in `models.py` takes polynomials in the radius.
+A fluid whose density varies with radius is the test of the term
+rho'_F phi of the weak form, which vanishes in a uniform one.
 
 ### Units
 
@@ -95,20 +102,22 @@ compared are dimensionless.
 
 ### What is compared
 
-With u_l and phi_l the coefficients of the radial displacement and of the
-potential perturbation on the surface, for the load sigma = Y_l0 or the
-tidal potential psi = (r/a)^l Y_l0:
+With u_l, v_l and phi_l the coefficients on the surface of the displacement
+u = U Y r^ + V grad_1 Y and of the potential perturbation, for the load
+sigma = Y_l0 or the tidal potential psi = (r/a)^l Y_l0:
 
 ```
-load:   h'_l = -g u_l / phi_sigma      k'_l = phi_l / phi_sigma - 1
-tidal:  h_l  = -g u_l                  k_l  = phi_l
+load:   h'_l = -g u_l / phi_sigma      l'_l = -g v_l / phi_sigma
+        k'_l = phi_l / phi_sigma - 1
+tidal:  h_l  = -g u_l      l_l = -g v_l      k_l  = phi_l
 ```
 
 where phi_sigma is the load's own potential on the surface, solved on the
-same mesh with the body held rigid.
+same mesh for the load alone: without the displacement and without the
+fluid's term rho'_F phi, which are the body's response.
 
-- **Degree one.** The load numbers depend on the frame, h' and k' by the
-  same constant, so their difference is compared.
+- **Degree one.** The load numbers depend on the frame, h', l' and k' by
+  the same constant, so h' - k' and l' - k' are compared.
 - **Degree zero with a fluid layer** is not compared. The finite-element
   problem describes a fluid by the potential alone, which says nothing of
   its compressibility; the radial solver solves degree zero in the fluid
@@ -117,7 +126,7 @@ same mesh with the body held rigid.
   unstructured mesh; the largest of them relative to the one wanted is in
   the results as `spurious`.
 
-The results also hold the coefficients of u_r and phi on every interface
+The results also hold the coefficients of U, V and phi on every interface
 bounding a solid layer, per unit forcing and in the model's units, and the
 reference the radial solutions U, V and phi by radius.
 
@@ -127,4 +136,7 @@ The element size `--h` is that on every interface, in units of the outer
 radius, capped at `--angular` times the interface's radius so that a small
 inner core is still a sphere; the size grows to twice that away from the
 interfaces. The geometry is of order two. A displacement of order three on
-it converges markedly faster than one of order two.
+it converges markedly faster than one of order two: at h = 0.2 every model
+here agrees with the reference to a few parts in ten thousand at degrees one
+to five with order three, and to about a per cent with order two. A model
+with an inner core takes two to three times the iterations of one without.
