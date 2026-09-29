@@ -446,12 +446,183 @@ transporting its boundary values is expected in addition. Maitra &
 Al-Attar (2021) is *consistent* with all of this: its content — how the
 elastic tensor changes when the equilibrium stress changes — is an
 inversion-coupling matter (density/initial-stress coupling), not part of
-the forward GIA problem. The derivation is to be written here (second
-variation of the referential energy over the broken space with the
-linearised slip map) and reviewed before the three-block
-`[u_s; u_f; ζ]` solver is built. Fluid admissibility of the background
-(§6): fluid attributes become dev-free-constrained subdomains of the
-minimum-deviatoric generator (agreed).
+the forward GIA problem. The derivation is §5.3, awaiting review before
+the three-block `[u_s; u_f; ζ]` solver is built. Fluid admissibility of
+the background (§6): fluid attributes become dev-free-constrained
+subdomains of the minimum-deviatoric generator (agreed).
+
+### 5.3 The linearised slip: derivation (FOR REVIEW)
+
+**The detailed write-up is `doc/slip_interface.tex` (compiled:
+`slip_interface.pdf`), which supersedes this section where they
+differ** — writing it out simplified the result twice: the
+"flux-variation × jump" term below turned out to be an artifact of a
+non-minimal organisation (everything interface-elastic collapses into
+the single form `B_Σ` = multiplier × second-order constraint), and the
+speculative gravity interface coupling `C_Σ` **vanishes to the order
+kept** (both candidate boundary terms die on the constraint
+`ν·[v] = 0`; the slip's gravitational physics is volume-only, through
+the fluid-mismatch coupling). The tex also re-derives `μ_b = π` from
+`V(x, J)` alone, independently confirming the dictionary.
+
+The second variation of the referential energy over the broken space
+with the linearised slip map. Everything is referential; the one rule
+enforced throughout is that interface integrals carry the **referential
+measure `dS` and the unnormalised Nanson normal**
+
+```
+ν := cof(F_e) N = J_e F_e⁻ᵀ N,      n̂ dS_phys = ν dS,   |ν| dS = dS_phys,
+```
+
+with `N` the referential unit normal on `Σ` (out of the fluid). The two
+conventions "unit physical normal × physical measure" and "Nanson normal
+× referential measure" give the *same* pairing, `∮ λ n̂·[v] dS_phys =
+∮ λ ν·[v] dS`; what must never happen is `n̂` against `dS` — a silent
+`|ν|`. (Maitra & Al-Attar 2024's fluid–solid boundary operator `Q`
+drops exactly such a Jacobian factor — an oversight, not a convention
+choice; harmless in the static problems there, load-bearing here. The
+working rule: at this level of complexity, explicit is better — every
+factor written out, no operator absorbs a Jacobian tacitly.)
+
+**Kinematics and the constraint.** Motions `φ_s` on `B_s`, `φ_f` on
+`B_f`, attached but free to slip: `φ_f(Σ) = φ_s(Σ)` as surfaces.
+Parameterise `φ_f|_Σ = φ_s|_Σ ∘ σ` with the slip map `σ: Σ → Σ`,
+`σ = id + ε s + (ε²/2) s₂ + …`, `s, s₂` tangent to `Σ`. Expanding both
+sides about `φ_e` (`φ_r = φ_e + ε v_r`):
+
+- First order: `v_f = v_s + F_e s` on `Σ`, i.e. the jump
+  `[v] := v_s − v_f = −F_e s` lies in `F_e(TΣ)`, equivalently
+
+  ```
+  ν · [v] = 0        (since ν·F_e t = J_e N·t = 0 for t ∈ TΣ).
+  ```
+
+  The normal-jump constraint of `gauged_fluid.md` §5, now with the
+  *mapped* normal: at `φ_e ≠ id` the constraint normal is `ν`, exactly
+  what `Diffeomorphism::MapNormal` and the mapped
+  `BoundaryNormalNormalIntegrator` already compute.
+- Second order (needed below, because the multiplier pairs with it):
+
+  ```
+  ν · [φ]₂ = −ν·(Dv_s s) − ½ ν·∇_Σ(F_e s)[s],
+  ```
+
+  the `s₂` term dropping by tangentiality. The second summand,
+  `ν·∇_Σ(F_e s)[s]`, is the second-fundamental-form of the *deformed*
+  interface evaluated on the slip — this is where Valette's Weingarten
+  operator lives. We will not need it in that guise: see the remark on
+  curvature below.
+
+**Equilibrium and the multiplier.** Fluid stored energy `W = V(x, J)`,
+pressure `π(x) := −D_J V` evaluated at equilibrium (the *referential*
+pressure, `π = p⁰∘φ_e` in Eulerian terms), first Piola–Kirchhoff
+`P_f = −π J_e F_e⁻ᵀ`, so the fluid boundary traction per referential
+area is `P_f N = −π ν` — the pressure–Nanson pairing appears by itself,
+`J` included. The first variation of the total broken energy leaves
+
+```
+δE|_Σ = ∮_Σ (P_s N)·v_s − (P_f N)·v_f  dS,
+```
+
+and stationarity under all constrained variations forces the
+**equilibrium consistency condition** `P_s N = −π ν` on `Σ` (the solid
+side of the background must hand the interface a purely normal traction
+of magnitude `π|ν|` per referential area — a checkable property of the
+generated background) and identifies the constraint multiplier: with
+the constraint functional `∮ λ ν·[v] dS`,
+
+```
+λ = π      (the referential pressure; per-physical-area convention gives the same λ).
+```
+
+**The variation of the Nanson normal.** From `ν = cof(F)N` and
+`δ(cof F) = cof F (tr(F⁻¹Dv) I − (F⁻¹Dv))ᵀ`:
+
+```
+δν(v) = tr(F_e⁻¹Dv) ν − F_e⁻ᵀ (Dv)ᵀ ν.
+```
+
+*Remark (no explicit curvature).* This is the same `a′`-family algebra
+as the volume gravity terms: the shape derivative of `ν` is a pointwise
+expression in `Dv` and `F_e`. Valette's Weingarten form is what one
+gets by splitting `Dv` into surface and normal parts; ours keeps the
+volume gradient whole, which is what the integrators see anyway. As
+with `∇∇Φ₀` in §3, the geometric objects need never be formed.
+
+**The second variation: interface terms.** Write the constrained
+Lagrangian `L = E_s[φ_s] + E_f[φ_f] + E_g[φ_s, φ_f] + ∮ λ ν·[φ] dS` and
+expand to second order about (`φ_e`, `λ = π`). The interior second
+variations are §3's operators, region by region, with each region's own
+field. The interface contributions collect into (all integrals `∮_Σ ·
+dS`, jump `[v] = v_s − v_f = −F_e s`):
+
+```
+B_Σ(v, v) =  ∮ π ν · ( 2 Dv_s s + ∇_Σ(F_e s)[s] ) dS          (i: multiplier × second-order constraint)
+           − ∮ ( δπ(v_f) ν + π δν(v_f) ) · [v] dS               (ii: variation of the fluid flux against the jump)
+```
+
+with `δπ(v_f) = −J_e⁻¹ κ̂ tr(F_e⁻¹ Dv_f) + …` the fluid's linearised
+pressure (κ̂ the bare bulk modulus) — term (ii) is generated by the
+same expansion that produces the interior operators and is written here
+before simplification; on substituting `s = −F_e⁻¹[v]` every term is a
+quadratic form in `(v_s, v_f)` traces built from `π`, `ν`, `F_e` and
+first derivatives only.
+
+**Gravity with single-valued `ζ`.** Let `φ̃` be the solid motion
+extended smoothly over `B_f` (gauge in the interior), `ζ = Φ∘φ̃`, and
+`w := v_f − ṽ` the fluid-vs-extension mismatch on `B_f`; on `Σ`,
+`w = −[v] = F_e s`. The fluid's mass moves with `φ_f`, so the source of
+the `ζ`-equation on `B_f` is the pullback of `ρ` through
+`φ̃⁻¹∘φ_f = id + ε F_e⁻¹w + …`. Expanding the weak source
+`∫_{B_f} ρ χ∘(id + εF_e⁻¹w + …)`:
+
+- First order: `∫ ρ (F_e⁻¹w)·∇χ = −∫ div(ρ F_e⁻¹ w) χ +
+  ∮_Σ ρ_f (w·ν/J_e) χ`. **The boundary term vanishes identically by the
+  constraint** (`w·ν = −[v]·ν = 0`): the welded result of §3.1 — no
+  gravity interface terms — survives the slip at first order, and the
+  volume term is the fluid relabelling source (gauge for admissible
+  `w`, physical for the rest — the same split as `gauged_fluid.md`).
+- Second order: the same expansion one order further produces (after
+  the by-parts that keeps only first derivatives of `χ`, as in §3) an
+  interface term in which the *normal* part again cancels by the
+  constraint and its second-order correction, leaving a coupling of the
+  **tangential slip against the interface data**
+
+  ```
+  C_Σ(ζ¹; s) ~ ∮ ρ_f (F_e s)·(a′-type combination of ∇ζ¹, ∇ζ⁰) dS + [ρ]-weighted analogues,
+  ```
+
+  the referential avatar of AC18's `ϖ⁰` interface couplings: absent on
+  a spherical, barotropic configuration (where the tangential data
+  vanish or are pure gauge), awake on aspherical interfaces and for
+  density jumps. For a stratified fluid the advection of boundary
+  values by `s` adds the interface `N²`-type term through
+  `δπ`'s dependence on position along `Σ`.
+
+**Status of the coefficients.** The kinematics, the constraint, the
+multiplier identification, `δν`, and the *vanishing* results (first-
+order gravity interface term; `s₂`-independence) are derived above and
+I am confident of them. The assembled quadratic coefficients in (i),
+(ii) and `C_Σ` are exactly the kind of bookkeeping where a factor hides:
+before implementation each will be finite-difference verified against
+the exact broken-motion energy functional (the `GravityFunctional`
+pattern that verified the volume gravity integrators), and the
+following reductions checked: **(a)** spherical hydrostatic reference →
+must reproduce the `F1–F3` interface terms of `doc/self_gravitation.md`
+under the change of variables (and AC18 eqs. 121/137, Valette's forms);
+**(b)** welded limit `s = 0` → §3.1 exactly; **(c)** gravity off →
+the verified sliding-interface formulation of `gauged_fluid.md` §5.
+
+**Implementation map (after review).** The constraint machinery is
+already general: pairing `J = Π_sᵀΠ_f`, penalty from the *mapped*
+`BoundaryNormalNormalIntegrator` (normal `ν` via `MapNormal`),
+multiplier = AL iterations with `λ → π` (a sharp diagnostic: the
+converged multiplier must approach the referential pressure — a free
+consistency check of the background). New pieces: the `B_Σ` interface
+bilinear form (boundary integrator in `(v_s, v_f)` traces via the
+pairing, coefficients `π`, `F_e`), the `C_Σ` interface gravity coupling
+(mixed boundary integrator against `ζ`), and the three-block
+`[u_s; u_f; ζ]` solver assembled from existing blocks.
 
 ## 6. Equilibrium stress in general models
 
