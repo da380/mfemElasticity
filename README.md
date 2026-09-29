@@ -31,10 +31,13 @@ pieces are
   (`null_space.hpp`);
 - real orthonormal harmonics on a circle or sphere, synthesis of surface
   fields and interior harmonic potentials from coefficients, and the
-  analysis of a finite-element field (scalar, or the radial component of a
-  vector) on any spherical boundary into coefficients, serial and parallel
-  (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads load and
-  tidal Love numbers off one solve per degree).
+  analysis of a finite-element field (scalar, or the radial or tangential
+  part of a vector) on any spherical boundary into coefficients, serial and
+  parallel (`spherical_harmonics.hpp`; `examples/love_numbers.cpp` reads
+  load and tidal Love numbers off one solve per degree);
+- the manifest that planetmodel writes beside a mesh, read into the
+  attribute lists and markers the problems take, with the mesh and the
+  fields of the model opened as it says (`mesh_manifest.hpp`).
 
 Serial and parallel (MPI) paths are provided throughout.
 
@@ -53,7 +56,10 @@ are, and what has been learned, are in `doc/`:
 | `null_space.md` | projected solvers for singular systems, the two gauges, element order on curved meshes |
 | `mfem_notes.md` | MFEM facts and pitfalls met along the way |
 
-`meshes/README.md` covers mesh generation.
+`meshes/README.md` covers mesh generation, and `benchmarks/README.md` the
+comparison of the self-gravitating solver with radial reference solutions:
+Love numbers, radial functions and fields, for a ladder of spherically
+layered models.
 
 ## Installation
 
@@ -92,6 +98,8 @@ All default to `OFF`.
 - `BUILD_EXAMPLES`: build the programs in `examples/`.
 - `BUILD_TESTS`: build the googletest suite in `tests/` (googletest is fetched
   at configure time); run with `ctest` in the build directory.
+- `BUILD_BENCHMARKS`: build the benchmark drivers and the launchers of
+  their scripts (with `USE_MPI`; see `benchmarks/README.md`).
 - `BUILD_DOCS`: generate the Doxygen API documentation.
 - `GENERATE_MESHES`: generate the gmsh meshes in the build's `data/` with
   the scripts in `meshes/` (default: on when examples or tests are on; see
@@ -101,18 +109,20 @@ All default to `OFF`.
 
 Examples are run from the build's `examples/` directory; they find their
 meshes in `../data`, which the build fills from the source tree's `data/`
-and from the scripts in `meshes/`. Each has `-h` for its options.
+and from the scripts in `meshes/`. Each has `-h` for its options. A program
+listed with `_p` has a parallel counterpart of that name; `transformed_diffusion`
+and `elastogravity_layered` are one program each, parallel when the library
+is built with MPI and serial otherwise.
 
 | Program | What it does |
 |---|---|
 | `poisson_dtn` / `_p` | Poisson equation on the whole space: Neumann, DtN and multipole outer conditions, static and linearised, against the exact uniform-sphere solution |
-| `transformed_diffusion` / `_p` | Laplace equation on a mapped domain solved on the reference domain with `TransformedDiffusionIntegrator` |
+| `transformed_diffusion` | Laplace equation on a mapped domain solved on the reference domain with `TransformedDiffusionIntegrator` |
 | `submesh_injection` / `_p` | Tour of `SubMeshDofInjection`: moving fields and assembling coupling blocks between a mesh and a submesh |
 | `coupled_poisson` / `_p` | Two Poisson equations, one on a submesh, coupled and solved monolithically |
-| `elastogravity_layered` / `_p` | `LinearQuasiStaticSelfGravitatingProblem` with a fluid outer core (two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
+| `elastogravity_layered` | `LinearQuasiStaticSelfGravitatingProblem` under a surface mass load or a tidal potential, Schur CG and block MINRES solvers compared, rigid-mode diagnostics (uniform solid of any shape; two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
 | `self_gravitating_relaxation` | Viscoelastic relaxation of the layered self-gravitating model with a fluid core under a Heaviside surface load (Maxwell mantle, elastic inner core) |
 | `quasi_static_elasticity` | Driver for the `LinearQuasiStaticProblem` interface |
-| `self_gravitating_elasticity` / `_p` | `LinearQuasiStaticSelfGravitatingProblem`: self-gravitating body under a surface mass load, Schur CG and block MINRES solvers compared, rigid-mode diagnostics |
 | `love_numbers` | Load and tidal Love numbers of a homogeneous self-gravitating sphere (disc) by degree, one solve each, against the incompressible-sphere formulas |
 | `viscoelasticity` | Generalised Maxwell viscoelasticity with `ViscoelasticOperator` |
 | `viscoelastic_schemes` | Cost and accuracy table of every time integrator (ETD1, exponential trapezoid, BE, SDIRK23, RK4, adaptive) on a clamped beam, linear or power-law |

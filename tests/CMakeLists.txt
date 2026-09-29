@@ -130,6 +130,10 @@ add_executable(TestRelaxationLaw TestRelaxationLaw.cpp)
 target_link_libraries(TestRelaxationLaw PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestRelaxationLaw)
 
+add_executable(TestMeshManifest TestMeshManifest.cpp)
+target_link_libraries(TestMeshManifest PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestMeshManifest)
+
 add_executable(TestSphericalHarmonics TestSphericalHarmonics.cpp)
 target_link_libraries(TestSphericalHarmonics PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestSphericalHarmonics)

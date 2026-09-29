@@ -26,7 +26,7 @@ aspherical_buffer_{2d,3d}.mesh; `--all` builds the four.
 Try them with the examples, e.g. from a build's examples/:
     ./anisotropic_elasticity -m ../data/aspherical_3d.mesh -o 1
     ./poisson_dtn -m ../data/aspherical_buffer_2d.mesh -o 2 -mth 1
-    ./self_gravitating_elasticity -m ../data/aspherical_buffer_2d.mesh -o 2 -s 2
+    ./elastogravity_layered -m ../data/aspherical_buffer_2d.mesh -o 2 -s 2
 (love_numbers is not among them: it reads harmonics off the body's surface,
 which must be a sphere, and says so.)
 """

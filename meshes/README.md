@@ -45,8 +45,8 @@ gitignored for `.msh` and `.json` anyway).
 | `unit_disc.py` | `disk.msh` | transformed_diffusion |
 | `unit_ball.py` | `ball.msh` | transformed_diffusion, anisotropic_elasticity |
 | `offset_disc.py` | `circular_offset.msh` | poisson_dtn, submesh_injection |
-| `disc_with_buffer.py` | `elastogravity_2d.msh` | self_gravitating_elasticity, love_numbers, tests |
-| `ball_with_buffer.py` | `coupled_poisson.msh` | coupled_poisson, self_gravitating_elasticity, love_numbers, tests |
+| `disc_with_buffer.py` | `elastogravity_2d.msh` | elastogravity_layered, love_numbers, tests |
+| `ball_with_buffer.py` | `coupled_poisson.msh` | coupled_poisson, elastogravity_layered, love_numbers, tests |
 | `layered_earth.py --all` | `elastogravity_{two,three}_layer_2d.msh`, `elastogravity_three_layer_3d.msh` | elastogravity_layered, self_gravitating_relaxation, tests |
 | `aspherical_body.py --all` | `aspherical_{2d,3d}.mesh`, `aspherical_buffer_{2d,3d}.mesh` | any example given `-m`; see the script |
 | `make_all.py` | all of the above | |
@@ -86,10 +86,10 @@ starts, is declared a knot of the displacement. These meshes are
 - **planetmodel** owns the model and the mesher: skeletons, geometries and
   mappings, the sizing rules, shells, the manifest and the MFEM export.
   Anything geometric that a mesh here needs and planetmodel lacks is a
-  planetmodel change, not a script here. Release 1.2.1 or later is
-  required: earlier releases gave gmsh a sampled distance to each
-  interface, so the element size rippled along every boundary and came out
-  coarser than asked.
+  planetmodel change, not a script here. Release 1.2.3 or later is
+  required: it writes manifest schema 5 and runs gmsh's linear-mesh
+  optimiser before curving, which removes the slivers the Delaunay mesher
+  leaves between interfaces.
 - **`meshes/`** owns the recipes: which skeleton, which sizes, which
   shells, which file name.
 - **The C++ side** reads the `.msh` files and identifies layers by
@@ -121,11 +121,9 @@ sizes in the scripts keep the meshes coarse, so that they build quickly and
 the tests on them are cheap. planetmodel checks every mesh before writing it and refuses one
 with an inverted element; a warning is printed when the worst element is
 usable but badly shaped. If a new sizing meets either, nudging the size by
-a few per cent is usually enough. The three-layer 3D Earth is the
-sensitive one: interface sizes of 0.13, 0.145, 0.15 and 0.16 each leave an
-inverted or sliver tetrahedron (minSICN below 0.02), while 0.135 gives a
-minSICN of 0.14. planetmodel runs gmsh's high-order optimiser but not its
-linear-mesh optimiser, which is where such slivers would be removed.
+a few per cent is usually enough, though since planetmodel 1.2.3 runs
+gmsh's linear-mesh optimiser by default the slivers that once made the
+three-layer 3D Earth sensitive to its sizes no longer appear.
 
 Everything a script can do is documented in planetmodel; its tutorial
 `04_a_mesh_for_mfem.py` walks through the same steps, including

@@ -3,6 +3,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        coefficient.cpp
                                        lininteg.cpp                                         
                                        mesh.cpp
+                                       mesh_manifest.cpp
                                        poisson.cpp
                                        spherical_harmonics.cpp
                                        rheology.cpp

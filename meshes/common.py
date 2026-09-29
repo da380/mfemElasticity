@@ -33,9 +33,7 @@ def parser(description: str) -> argparse.ArgumentParser:
 
 def report(result) -> None:
     """Say what a build wrote: the files, the counts and the checks."""
-    print(f"{result.msh_path.name}: {result.counts.get('elements', '?')} elements, "
-          f"{result.counts.get('nodes', '?')} nodes, "
-          f"{result.counts.get('layers', '?')} layers; {result.validation}")
+    print(f"{result.msh_path.name}: {result.summary()}")
     for warning in result.validation.warnings:
         print(f"  warning: {warning}")
     print(f"  manifest: {result.manifest_path}")

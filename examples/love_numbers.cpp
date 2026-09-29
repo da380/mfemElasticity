@@ -18,8 +18,8 @@
 //
 // where u_l, phi_l are the (l, 0) coefficients of u_r and phi on the surface,
 // g = 4 pi G M / |surface| the surface gravity, and phi_sigma the load's own
-// potential on the surface. The latter is computed on the same mesh with the
-// body held rigid (SolveLoadPotential), not from its exact value
+// potential on the surface. The latter is computed on the same mesh for the
+// load alone (SolveLoadPotential), not from its exact value
 // -4 pi G a / (2l + 1) (3-D) or -2 pi G a / l (2-D): phi_l is dominated by
 // the load's direct potential, and k' is its small remainder, so the
 // discretisation error of the direct potential must cancel. The ratio of

@@ -296,6 +296,7 @@ int main(int argc, char *argv[]) {
   delete b2;
   delete a11;
   delete a12;
+  delete a21;
   delete a22;
   delete mesh;
 

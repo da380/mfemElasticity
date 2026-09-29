@@ -7,6 +7,7 @@
 #include "mfemElasticity/index.hpp"
 #include "mfemElasticity/lininteg.hpp"
 #include "mfemElasticity/mesh.hpp"
+#include "mfemElasticity/mesh_manifest.hpp"
 #include "mfemElasticity/poisson.hpp"
 #include "mfemElasticity/quasi_static_problem.hpp"
 #include "mfemElasticity/relaxation_law.hpp"

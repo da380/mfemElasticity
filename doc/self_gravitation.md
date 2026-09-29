@@ -222,7 +222,10 @@ are for cheap testing only. Three dimensions are unaffected.
   with κ/μ = 200 agree to 0.1–0.7 % at degrees 2–4 on a fine order-2 mesh,
   the remainder being the finite bulk modulus; on the coarse test mesh the
   error is a few per cent and is the mesh's own. The load's own potential is
-  taken from the rigid-body solve on the same mesh (`SolveLoadPotential()`):
+  taken from a solve for the load alone on the same mesh
+  (`SolveLoadPotential()`, the Laplace–DtN operator without the fluid mass
+  term, which belongs to the body's response: with a stratified fluid core
+  it changes the potential of a degree-1 load by a per cent):
   subtracting the exact value instead leaves the direct potential's
   discretisation error in k′, a 30 % effect on a coarse 3-D mesh.
 - **Element order on curved meshes.** Order-1 displacements on an order-2

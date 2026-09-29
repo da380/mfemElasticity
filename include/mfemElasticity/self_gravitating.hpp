@@ -263,11 +263,12 @@ class LinearQuasiStaticSelfGravitatingProblem
   /** @brief The shadow of the potential space on the body's SubMesh. */
   mfem::FiniteElementSpace& PotentialSpaceOnBody() { return *shadow_phi_; }
   /**
-   * @brief The potential of the assembled loads with the body held rigid
-   * (@f$u = 0@f$): the potential equation solved for the potential load
-   * alone (surface mass loads and, with fluid regions, the tidal fluid-mass
-   * term), on the shadow space. For load Love numbers this is the load's
-   * own potential on the same discretisation as the solution. Call after
+   * @brief The potential of the assembled potential loads (the surface mass
+   * loads) on their own, as if the body were not there: the Laplace-DtN
+   * equation solved for the potential load, without the displacement and
+   * without the fluid mass term, both of which are the body's response. On
+   * the shadow space. For load Love numbers this is the load's own
+   * potential on the same discretisation as the solution. Call after
    * AssembleForce(); returns the inner solver's convergence.
    */
   bool SolveLoadPotential(mfem::GridFunction& phi_body);

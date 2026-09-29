@@ -23,6 +23,8 @@
   - The potential block is positive for the model; the diagnostic detects a
     steep fluid density gradient.
   - The viscoelastic operator runs on the problem.
+  - The load's own potential does not feel the fluid mass term: it is the
+    same with rho'_F set to zero.
 */
 
 namespace {
@@ -398,6 +400,26 @@ TEST_P(SelfGravitatingFluidTest, ViscoelasticCreep) {
     EXPECT_GT(now, previous);
     previous = now;
   }
+}
+
+TEST_P(SelfGravitatingFluidTest, LoadPotentialIgnoresTheFluidMass) {
+  const auto [dim, order] = GetParam();
+  Case c(dim, order);
+  ConstantCoefficient zero(0.0);
+  std::vector<FluidRegion> unstratified{OuterCore(*c.solid, c.rho_f, &zero)};
+  auto with = c.Problem();
+  auto without = c.Problem(true, true, &unstratified);
+  GridFunction phi_with(&with->PotentialSpaceOnBody());
+  GridFunction phi_without(&without->PotentialSpaceOnBody());
+  with->AssembleForce(0.0);
+  without->AssembleForce(0.0);
+  EXPECT_TRUE(with->SolveLoadPotential(phi_with));
+  EXPECT_TRUE(without->SolveLoadPotential(phi_without));
+  EXPECT_LT(RelDiff(phi_with, phi_without), 1e-8);
+  // and the problem's own solves still use the full potential block
+  ASSERT_TRUE(with->Solve());
+  ASSERT_TRUE(without->Solve());
+  EXPECT_GT(RelDiff(with->Potential(), without->Potential()), 1e-4);
 }
 
 INSTANTIATE_TEST_SUITE_P(SelfGravitatingFluid, SelfGravitatingFluidTest,

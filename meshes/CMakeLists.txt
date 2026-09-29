@@ -4,15 +4,15 @@
 #
 # A Python able to `import planetmodel.mesh3d` and `import mfem.ser` (the
 # aspherical meshes are written through PyMFEM) is needed, with planetmodel
-# at least PLANETMODEL_MINIMUM_VERSION (before 1.2.1 the element size rippled
-# along every interface and came out coarser than asked). MESHES_PYTHON
+# at least PLANETMODEL_MINIMUM_VERSION (1.2.3 first wrote manifest schema 5
+# and optimised the linear volume mesh before curving). MESHES_PYTHON
 # names one; otherwise the Python found by CMake is tried, and failing
 # that a virtual environment is created under the build directory and
 # planetmodel[meshing,mfem] is installed into it with pip (once).
 
 set(MESHES_PYTHON "" CACHE FILEPATH
     "Python interpreter with planetmodel[meshing]; found or created if empty")
-set(PLANETMODEL_MINIMUM_VERSION "1.2.1")
+set(PLANETMODEL_MINIMUM_VERSION "1.2.3")
 set(PLANETMODEL_REQUIREMENT
     "planetmodel[meshing,mfem]>=${PLANETMODEL_MINIMUM_VERSION}" CACHE STRING
     "pip requirement installed into the build's venv when no suitable Python is found")

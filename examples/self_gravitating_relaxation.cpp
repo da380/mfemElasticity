@@ -28,6 +28,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <iomanip>
 #include <iostream>
 #include <memory>
 
@@ -72,8 +73,7 @@ int main(int argc, char* argv[]) {
 
   Mesh parent(mesh_file, 1, 1);
   const int dim = parent.Dimension();
-  inner_core = parent.attributes.Max() == 4;
-  if (parent.attributes.Max() != 3 && parent.attributes.Max() != 4) {
+  if (!SetModel(parent) || uniform) {
     std::cerr << "Expected a two-layer (3 attributes) or three-layer "
                  "(4 attributes) mesh.\n";
     return 1;
@@ -88,9 +88,7 @@ int main(int argc, char* argv[]) {
   // uses the mean). With an inner core the rheology is a composite: elastic
   // in the inner core, Maxwell in the mantle (the same kappa and mu
   // coefficients serve both; each region reads its own radii).
-  const real_t mu_mantle_dim = inner_core ? 0.5 * (294e9 + 68e9)
-                                          : 0.5 * (280e9 + 70e9);
-  const real_t tau_dim = eta_dim / mu_mantle_dim;
+  const real_t tau_dim = eta_dim / MantleMeanShearModulusDim();
   const real_t tau_nd = tau_dim / ND.Time();
   FunctionCoefficient rho(Density), rho_f(FluidDensity), kappa(BulkModulus),
       mu(ShearModulus), sigma(SurfaceLoad);

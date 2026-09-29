@@ -58,7 +58,62 @@ using namespace mfemElasticity;
 //       mesh. This shows the final "push-forward" solution $u$ on
 //       the actual, physical domain.
 //
+// One source serves the serial and the parallel build: against an MFEM with
+// MPI the mesh, the spaces and the matrices are the parallel ones, the
+// preconditioner is BoomerAMG in place of Gauss-Seidel, and the program runs
+// under mpirun on any number of ranks.
+//
 //------------------------------------------------------------------------------
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SpaceType = ParFiniteElementSpace;
+using FieldType = ParGridFunction;
+using BilinearFormType = ParBilinearForm;
+using LinearFormType = ParLinearForm;
+using MatrixType = HypreParMatrix;
+using PreconditionerType = HypreBoomerAMG;
+#else
+using MeshType = Mesh;
+using SpaceType = FiniteElementSpace;
+using FieldType = GridFunction;
+using BilinearFormType = BilinearForm;
+using LinearFormType = LinearForm;
+using MatrixType = SparseMatrix;
+using PreconditionerType = GSSmoother;
+#endif
+
+// Whether this process is the one that prints.
+bool Root() {
+#ifdef MFEM_USE_MPI
+  return Mpi::Root();
+#else
+  return true;
+#endif
+}
+
+// A conjugate-gradient solver on the communicator of the build.
+CGSolver MakeCG() {
+#ifdef MFEM_USE_MPI
+  return CGSolver(MPI_COMM_WORLD);
+#else
+  return CGSolver();
+#endif
+}
+
+// Send a field on its mesh to GLVis.
+void Show(Mesh &mesh, const GridFunction &f, const char *title) {
+  char vishost[] = "localhost";
+  auto sock = socketstream(vishost, 19916);
+  sock.precision(8);
+#ifdef MFEM_USE_MPI
+  sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank() << "\n";
+#endif
+  sock << "solution\n" << mesh << f << "window_title '" << title << "'\n";
+  // 2D or 3D viewing keys
+  sock << (mesh.Dimension() == 2 ? "keys Rjlc\n" : "keys RRRjlci zZ\n")
+       << flush;
+}
 
 // Define pi using the mfem::real_t type
 constexpr real_t pi = std::numbers::pi_v<mfem::real_t>;
@@ -72,6 +127,11 @@ real_t exact_solution2(const Vector &x) { return x[0] * x[1]; }
 real_t exact_solution3(const Vector &x) { return x[1] * x[2]; }
 
 int main(int argc, char *argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   // === 1. Set default options and parse command-line arguments ===
 
   // Default mesh files
@@ -92,28 +152,43 @@ int main(int argc, char *argv[]) {
                  "Finite element order (polynomial degree) or -1 for"
                  " isoparametric space.");
   args.AddOption(&refinement, "-r", "--refinement",
-                 "number of  mesh refinements");
+                 "number of mesh refinements (before the mesh is partitioned)");
+#ifdef MFEM_USE_MPI
+  int parallel_refinement = 0;
+  args.AddOption(&parallel_refinement, "-pr", "--parallel-refinement",
+                 "number of refinements of the partitioned mesh");
+#endif
   args.AddOption(&theta, "-th", "--theta", "rotation angle in degrees");
   args.AddOption(&dim, "-d", "--dim", "dimension of problem (2 or 3)");
 
   // Parse the arguments
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (Root()) args.PrintUsage(cout);
     return 1;
   }
-  args.PrintOptions(cout);
+  if (Root()) args.PrintOptions(cout);
 
   // === 2. Load and refine the mesh ===
 
   // Read the mesh from file based on the dimension
-  auto mesh = Mesh(dim == 2 ? mesh_file2 : mesh_file3, 1, 1);
+  auto serial_mesh = Mesh(dim == 2 ? mesh_file2 : mesh_file3, 1, 1);
   {
     // Apply uniform refinements if requested
     for (int l = 0; l < refinement; l++) {
-      mesh.UniformRefinement();
+      serial_mesh.UniformRefinement();
     }
   }
+#ifdef MFEM_USE_MPI
+  // Partition the mesh, and refine it further if requested
+  auto mesh = ParMesh(MPI_COMM_WORLD, serial_mesh);
+  serial_mesh.Clear();
+  for (int l = 0; l < parallel_refinement; l++) {
+    mesh.UniformRefinement();
+  }
+#else
+  Mesh &mesh = serial_mesh;
+#endif
 
   // === 3. Define domain and boundary markers ===
   // These markers are used to specify which parts of the mesh
@@ -130,9 +205,9 @@ int main(int argc, char *argv[]) {
   // potentials)
   auto H1 = H1_FECollection(order, dim);
   // Scalar FE space (for the solution 'phi' and 'zeta')
-  auto fes = FiniteElementSpace(&mesh, &H1);
+  auto fes = SpaceType(&mesh, &H1);
   // Vector FE space (will be used later to deform the mesh nodes)
-  auto vfes = FiniteElementSpace(&mesh, &H1, dim);
+  auto vfes = SpaceType(&mesh, &H1, dim);
 
   // === 5. Set up the standard (untransformed) Laplace problem ===
 
@@ -148,14 +223,14 @@ int main(int argc, char *argv[]) {
       std::function(dim == 2 ? exact_solution2 : exact_solution3));
 
   // Create a GridFunction 'phi' to hold the FE solution
-  auto phi = GridFunction(&fes);
+  auto phi = FieldType(&fes);
   // Project the exact solution 'g' onto 'phi'. This sets the values
   // for the Dirichlet boundary conditions.
   phi.ProjectCoefficient(g);
 
   // Set up the bilinear form 'a' for the weak form of the Laplace equation:
   // a(u, v) = \int_{\Omega} \nabla u \cdot \nabla v dx
-  auto a = BilinearForm(&fes);
+  auto a = BilinearFormType(&fes);
   // Add the standard diffusion integrator (gradient-gradient term)
   a.AddDomainIntegrator(new DiffusionIntegrator());
   // Assemble the stiffness matrix 'A'
@@ -163,20 +238,20 @@ int main(int argc, char *argv[]) {
 
   // Set up the linear form 'b' for the right-hand side (RHS)
   // b(v) = \int_{\Omega} f * v dx. Here f = 0.
-  auto b = LinearForm(&fes);
+  auto b = LinearFormType(&fes);
   b.Assemble();  // Assemble the load vector 'B' (will be all zeros)
 
   // Form the final linear system A*X = B
-  SparseMatrix A;
+  MatrixType A;
   Vector B, X;
   // This function modifies A and B to incorporate the Dirichlet BCs
   a.FormLinearSystem(ess_tdof_list, phi, b, A, X, B);
 
-  // Set up a preconditioner (Gauss-Seidel smoother)
-  auto P = GSSmoother(A);
+  // Set up a preconditioner (Gauss-Seidel smoother, or BoomerAMG in parallel)
+  auto P = PreconditionerType(A);
 
   // Set up the solver (Conjugate Gradient)
-  auto solver = CGSolver();
+  auto solver = MakeCG();
   solver.SetRelTol(1e-12);
   solver.SetMaxIter(10000);
   solver.SetPrintLevel(1);  // Print solver progress
@@ -190,18 +265,8 @@ int main(int argc, char *argv[]) {
   a.RecoverFEMSolution(X, b, phi);
 
   // === 6. Visualize the standard solution ===
-  char vishost[] = "localhost";
-  int visport = 19916;
-
-  auto phi_sock = socketstream(vishost, visport);
-  phi_sock.precision(8);
   // Send the mesh and the solution 'phi' to GLVis
-  phi_sock << "solution\n" << mesh << phi << "window_title 'phi'" << flush;
-  if (dim == 2) {
-    phi_sock << "keys Rjlmmc\n" << flush;  // 2D viewing keys
-  } else {
-    phi_sock << "keys RRRjlci zZ\n" << flush;  // 3D viewing keys
-  }
+  Show(mesh, phi, "phi");
 
   // === 7. Set up the coordinate transformation (Diffeomorphism) ===
   // This defines a smooth, invertible map q(x) that deforms the domain.
@@ -237,14 +302,14 @@ int main(int argc, char *argv[]) {
   // === 8. Set up the transformed Laplace problem ===
 
   // Create a new GridFunction 'zeta' for the transformed solution
-  auto zeta = GridFunction(&fes);
+  auto zeta = FieldType(&fes);
   // Project the *same* boundary condition 'g'. We are solving on the
   // reference domain, so the boundary values on the reference boundary
   // are still given by g(x).
   zeta.ProjectCoefficient(g);
 
   // Set up the transformed bilinear form 'at'
-  auto at = BilinearForm(&fes);
+  auto at = BilinearFormType(&fes);
   // This is the key: TransformedDiffusionIntegrator.
   // It automatically computes the "pullback" of the diffusion operator
   // from the deformed domain to the reference domain using the
@@ -253,21 +318,21 @@ int main(int argc, char *argv[]) {
   at.Assemble();  // Assemble the transformed stiffness matrix 'At'
 
   // Set up an empty linear form (RHS is still 0)
-  auto bt = LinearForm(&fes);
+  auto bt = LinearFormType(&fes);
   bt.Assemble();
 
   // Set up the linear system
-  auto At = SparseMatrix();
+  auto At = MatrixType();
   auto Bt = Vector();
   auto Xt = Vector();
   // Form the system, applying the *same* boundary DoFs
   at.FormLinearSystem(ess_tdof_list, zeta, bt, At, Xt, Bt);
 
   // Set up a preconditioner
-  auto Pt = GSSmoother(At);
+  auto Pt = PreconditionerType(At);
 
   // Set up the solver
-  auto solverT = CGSolver();
+  auto solverT = MakeCG();
   solverT.SetRelTol(1e-12);
   solverT.SetMaxIter(10000);
   solverT.SetPrintLevel(1);
@@ -285,7 +350,9 @@ int main(int argc, char *argv[]) {
   // Get L2 error for the standard problem
   // Compare computed solution 'phi' with exact solution 'g'
   auto phi_error = phi.ComputeL2Error(g);
-  std::cout << "L2 error for potential = " << phi_error << std::endl;
+  if (Root()) {
+    std::cout << "L2 error for potential = " << phi_error << std::endl;
+  }
 
   // Get L2 error for the transformed problem
   // We must compare 'zeta' (solution on reference domain) with the
@@ -297,20 +364,15 @@ int main(int argc, char *argv[]) {
   // Compare computed transformed solution 'zeta' with exact transformed
   // solution 'h'
   auto zeta_error = zeta.ComputeL2Error(h);
-  std::cout << "L2 error for transformed potential = " << zeta_error
-            << std::endl;
+  if (Root()) {
+    std::cout << "L2 error for transformed potential = " << zeta_error
+              << std::endl;
+  }
 
   // === 10. Visualize the transformed solution ===
 
   // Visualize 'zeta' on the *original, undeformed* mesh.
-  auto zeta_sock = socketstream(vishost, visport);
-  zeta_sock.precision(8);
-  zeta_sock << "solution\n" << mesh << zeta << "window_title 'zeta'" << flush;
-  if (dim == 2) {
-    zeta_sock << "keys Rjlmmc\n" << flush;
-  } else {
-    zeta_sock << "keys RRRjlci zZ\n" << flush;
-  }
+  Show(mesh, zeta, "zeta");
 
   // === 11. Deform the mesh and visualize the "pushed-forward" solution ===
 
@@ -320,7 +382,7 @@ int main(int argc, char *argv[]) {
   auto *x = mesh.GetNodes();
 
   // Create a new GridFunction 'y' to store the deformed node positions
-  auto y = GridFunction(&vfes);
+  auto y = FieldType(&vfes);
   // Project the transformation  onto 'y'
   y.ProjectCoefficient(qv);
 
@@ -330,13 +392,6 @@ int main(int argc, char *argv[]) {
   // Visualize the *same* solution 'zeta' but on the *deformed* mesh.
   // GLVis will use the new node positions, showing the "push-forward"
   // of the solution onto the physical (deformed) domain.
-  auto zetaT_sock = socketstream(vishost, visport);
-  zetaT_sock.precision(8);
-  zetaT_sock << "solution\n"
-             << mesh << zeta << "window_title 'zeta pushed forward'" << flush;
-  if (dim == 2) {
-    zetaT_sock << "keys Rjlmmc\n" << flush;
-  } else {
-    zetaT_sock << "keys RRRjlci zZ\n" << flush;
-  }
+  Show(mesh, zeta, "zeta pushed forward");
+  return 0;
 }

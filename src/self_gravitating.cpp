@@ -318,8 +318,20 @@ bool LinearQuasiStaticSelfGravitatingProblem::SolveLoadPotential(
   MFEM_VERIFY(phi_body.FESpace() == shadow_phi_.get(),
               "SolveLoadPotential: the field must be on PotentialSpaceOnBody().");
   EnsureOperator();
+  // With the plain Laplace-DtN operator: the fluid mass term is part of the
+  // body's response, not of the load's own potential.
   Vector Phi;
-  const bool ok = SolvePotential(B_phi_, Phi);
+  bool ok;
+  if (A_phiphi_ == A_lap_.get()) {
+    ok = SolvePotential(B_phi_, Phi);
+  } else {
+    const Operator* saved = A_phiphi_;
+    A_phiphi_ = A_lap_.get();
+    SetupPotentialSolver();
+    ok = SolvePotential(B_phi_, Phi);
+    A_phiphi_ = saved;
+    SetupPotentialSolver();
+  }
   auto tmp = detail::MakeGridFunction(fes_phi_);
   tmp->SetFromTrueDofs(Phi);
   injection_->MultTranspose(*tmp, phi_body);
