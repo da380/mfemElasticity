@@ -621,3 +621,528 @@ TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
 
   rc = rc_saved;
 }
+
+
+// ---------------------------------------------------------------------------
+// Gravity for the broken motion (doc/slip_interface.tex, the gravity-
+// Hessian subsection): with a rigid stress-free solid (rho_s = 0 and the
+// hydrostatic fluid pressure vanishing at the interface, pi(rc) = 0),
+// B_Sigma and the extension terms switch off, isolating the new volume
+// pieces: the mismatch coupling (through its zeta1-eliminated
+// stationary value) and the rho w.grad grad zeta0 w term. Exact
+// disc-preserving families (radial squeeze, rotation, composition);
+// the density stays radial, so the exact gravitational self-energy is
+// a single 1-D integral by the shell theorem,
+//     E_g = 2 G int_0^rc ln R(r) M_enc(r) rho 2 pi r dr.
+// Checks: equilibrium stationarity, the radial-family identity, the
+// relabelling-null identity WITH gravity (azimuthal family: elastic
+// pi(r)-terms, the 2 pi G rho^2 |w|^2 term and the eliminated-zeta1
+// part cancel jointly), and the mixed family.
+namespace gravity_fd {
+
+constexpr double Gg = 0.5;
+constexpr double rho = 1.0;
+constexpr double kapF = 2.0;
+
+double PiHydro(double r2, double rc2) {
+  return kPi * Gg * rho * rho * (rc2 - r2);  // pi(rc) = 0
+}
+
+struct GravityFamily {
+  double beta;    // radial-squeeze amplitude: v_rad = m(r) x
+  double a1;      // theta-DEPENDENT rotation amplitude (chi ~ cos th)
+  double arot;    // AXISYMMETRIC rotation amplitude (chi = arot (r/rc)^3
+                  // -- volume preserving: the true relabelling)
+  double mfun(double r) const {
+    return beta * (rc * rc - r * r) / (rc * rc);
+  }
+  double chi_axi(double r) const {
+    return arot * r * r * r / (rc * rc * rc);
+  }
+  // phi_eps(x) = (1 + eps m(r)) Rot(eps [A(x) + chi_axi(r)]) x, exact
+  // disc-preserving.
+  Vec2 Map(double eps, const Vec2& x) const {
+    const SlipFlow S{a1, 0.0};
+    const double r = std::sqrt(x[0] * x[0] + x[1] * x[1]);
+    const double chi = eps * (S.A(x) + chi_axi(r));
+    const double c = std::cos(chi), sn = std::sin(chi);
+    const Vec2 y = {c * x[0] - sn * x[1], sn * x[0] + c * x[1]};
+    const double f = 1.0 + eps * mfun(r);
+    return {f * y[0], f * y[1]};
+  }
+  Mat2 Grad(double eps, const Vec2& x) const {
+    const SlipFlow S{a1, 0.0};
+    const double r = std::sqrt(x[0] * x[0] + x[1] * x[1]);
+    const double chi = eps * (S.A(x) + chi_axi(r));
+    const double c = std::cos(chi), sn = std::sin(chi);
+    const Mat2 R = {{{c, -sn}, {sn, c}}};
+    Vec2 gchi = S.GradA(x);
+    if (r > 1e-14) {
+      const double dchi = 3.0 * arot * r / (rc * rc * rc);
+      gchi[0] += dchi * x[0];
+      gchi[1] += dchi * x[1];
+    }
+    const Vec2 zx = {-x[1], x[0]};
+    Mat2 M = kI;
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 2; j++) {
+        M[i][j] += zx[i] * eps * gchi[j];
+      }
+    }
+    const Mat2 Dy = MatMul(R, M);
+    const Vec2 y = {c * x[0] - sn * x[1], sn * x[0] + c * x[1]};
+    const double f = 1.0 + eps * mfun(r);
+    const Vec2 gm = {-2.0 * beta * x[0] / (rc * rc),
+                     -2.0 * beta * x[1] / (rc * rc)};
+    Mat2 F{};
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 2; j++) {
+        F[i][j] = f * Dy[i][j] + eps * y[i] * gm[j];
+      }
+    }
+    return F;
+  }
+  // First-order field v = m(r) x + [A(x) + chi_axi(r)] (z cross x).
+  Vec2 V(const Vec2& x) const {
+    const SlipFlow S{a1, 0.0};
+    const double r = std::sqrt(x[0] * x[0] + x[1] * x[1]);
+    const double A = S.A(x) + chi_axi(r);
+    return {mfun(r) * x[0] - A * x[1], mfun(r) * x[1] + A * x[0]};
+  }
+  Mat2 DV(const Vec2& x) const {
+    const SlipFlow S{a1, 0.0};
+    const double r = std::sqrt(x[0] * x[0] + x[1] * x[1]);
+    const Vec2 gm = {-2.0 * beta * x[0] / (rc * rc),
+                     -2.0 * beta * x[1] / (rc * rc)};
+    Mat2 F = DSExt(S, x);
+    // axisymmetric rotation part: chi_axi (z cross x)
+    const double A0 = chi_axi(r);
+    Vec2 gA0 = {0.0, 0.0};
+    if (r > 1e-14) {
+      const double d = 3.0 * arot * r / (rc * rc * rc);
+      gA0 = {d * x[0], d * x[1]};
+    }
+    const Vec2 zx = {-x[1], x[0]};
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 2; j++) {
+        F[i][j] += zx[i] * gA0[j] + (i == 0 && j == 1 ? -A0 : 0.0) +
+                   (i == 1 && j == 0 ? A0 : 0.0);
+      }
+    }
+    for (int i = 0; i < 2; i++) {
+      for (int j = 0; j < 2; j++) {
+        F[i][j] += (i == j ? mfun(r) : 0.0) + x[i] * gm[j];
+      }
+    }
+    return F;
+  }
+};
+
+// Exact elastic energy of the fluid (hydrostatic pi(r), J_e = 1).
+double ElasticEnergy(const GravityFamily& fam, double eps, int Nr, int Nt) {
+  double E = 0.0;
+  const double rc2 = rc * rc;
+  for (int i = 0; i < Nr; i++) {
+    const double r = rc * (i + 0.5) / Nr;
+    const double wr = rc / Nr * r;
+    for (int j = 0; j < Nt; j++) {
+      const double th = 2.0 * kPi * (j + 0.5) / Nt;
+      const Vec2 x = {r * std::cos(th), r * std::sin(th)};
+      const double J = Det(fam.Grad(eps, x));
+      const double p = PiHydro(r * r, rc2);
+      E += wr * (2.0 * kPi / Nt) *
+           (-p * (J - 1.0) + 0.5 * kapF * (J - 1.0) * (J - 1.0));
+    }
+  }
+  return E;
+}
+
+// Exact gravitational self-energy: the deformed density is radial with
+// image radius R(r) = r (1 + eps m(r)), so by the 2-D shell theorem
+// E_g = 2 G int ln R(r) M_enc(r) dm(r).
+double GravityEnergy(const GravityFamily& fam, double eps, int N) {
+  double E = 0.0;
+  for (int i = 0; i < N; i++) {
+    const double r = rc * (i + 0.5) / N;
+    const double dr = rc / N;
+    const double R = r * (1.0 + eps * fam.mfun(r));
+    const double Menc = rho * kPi * r * r;
+    E += 2.0 * Gg * std::log(R) * Menc * rho * 2.0 * kPi * r * dr;
+  }
+  return E;
+}
+
+double TotalEnergy(const GravityFamily& fam, double eps, int Nr, int Nt) {
+  return ElasticEnergy(fam, eps, Nr, Nt) + GravityEnergy(fam, eps, 40000);
+}
+
+// Predicted Hessian: elastic + the two gravity pieces.
+double Prediction(const GravityFamily& fam, int Nr, int Nt) {
+  const double rc2 = rc * rc;
+  double Qel = 0.0, wnorm2 = 0.0;
+  for (int i = 0; i < Nr; i++) {
+    const double r = rc * (i + 0.5) / Nr;
+    const double wr = rc / Nr * r;
+    for (int j = 0; j < Nt; j++) {
+      const double th = 2.0 * kPi * (j + 0.5) / Nt;
+      const Vec2 x = {r * std::cos(th), r * std::sin(th)};
+      const Mat2 H = fam.DV(x);
+      const double trH = Tr(H);
+      const double trHH = H[0][0] * H[0][0] + 2.0 * H[0][1] * H[1][0] +
+                          H[1][1] * H[1][1];
+      const double p = PiHydro(r * r, rc2);
+      Qel += wr * (2.0 * kPi / Nt) *
+             (kapF * trH * trH - p * (trH * trH - trHH));
+      const Vec2 v = fam.V(x);
+      wnorm2 += wr * (2.0 * kPi / Nt) * (v[0] * v[0] + v[1] * v[1]);
+    }
+  }
+  // rho w . grad grad zeta0 . w = 2 pi G rho^2 |w|^2 inside the disc.
+  const double Qgg = 2.0 * kPi * Gg * rho * rho * wnorm2;
+  // The eliminated-zeta1 stationary value: NEGATIVE definite (the
+  // induced potential perturbation lowers the energy -- self-gravity
+  // destabilises). For the radial source div(rho w) the interior
+  // solution gives |value| = 8 pi^2 G rho^2 int m^2 r^3 dr.
+  double stat = 0.0;
+  const int N1 = 40000;
+  for (int i = 0; i < N1; i++) {
+    const double r = rc * (i + 0.5) / N1;
+    const double dr = rc / N1;
+    const double m = fam.mfun(r);
+    stat += 8.0 * kPi * kPi * Gg * rho * rho * m * m * r * r * r * dr;
+  }
+  return Qel + Qgg - stat;
+}
+
+}  // namespace gravity_fd
+
+TEST(SlipInterface, GravityHessianIdentity) {
+  using namespace gravity_fd;
+  rc = 0.6;
+  const int Nr = 400, Nt = 600;
+  const double eps = 2e-4;
+
+  struct Case {
+    GravityFamily fam;
+    const char* label;
+    bool expect_null;
+  };
+  const std::vector<Case> cases = {
+      {{0.4, 0.0, 0.0}, "radial", false},
+      {{0.0, 0.8, 0.0}, "azimuthal (non-volume-preserving)", false},
+      {{0.0, 0.0, 0.8}, "axisymmetric rotation (relabelling)", true},
+      {{0.4, 0.8, 0.5}, "mixed", false},
+  };
+
+  for (const auto& cs : cases) {
+    SCOPED_TRACE(cs.label);
+    const double Ep = TotalEnergy(cs.fam, eps, Nr, Nt);
+    const double E0 = TotalEnergy(cs.fam, 0.0, Nr, Nt);
+    const double Em = TotalEnergy(cs.fam, -eps, Nr, Nt);
+
+    // Equilibrium: the first variation vanishes along every family.
+    const double d1 = (Ep - Em) / (2.0 * eps);
+    const double d2 = (Ep - 2.0 * E0 + Em) / (eps * eps);
+    const double pred = Prediction(cs.fam, Nr, Nt);
+    const double scale = std::abs(pred) + std::abs(d2) + 1e-12;
+
+    EXPECT_LT(std::abs(d1), 1e-5 * scale * std::max(1.0, std::abs(E0)));
+    if (cs.expect_null) {
+      // The relabelling-null identity WITH gravity: the pi(r)-elastic
+      // terms, the grad grad zeta0 term and the (vanishing) stationary
+      // part cancel jointly; both the exact energy and the assembled
+      // prediction must see it.
+      const double term_scale =
+          2.0 * kPi * Gg * rho * rho;  // the size of the players
+      EXPECT_LT(std::abs(d2), 5e-4 * term_scale);
+      EXPECT_LT(std::abs(pred), 5e-4 * term_scale);
+    } else {
+      EXPECT_NEAR(d2, pred, 3e-4 * scale)
+          << "d2=" << d2 << " pred=" << pred;
+    }
+  }
+
+  // The gravity-slip cross terms vanish (Lemma vol): the mixed
+  // second derivative across (radial, rotation) equals the purely
+  // elastic cross term; gravity contributes nothing.
+  {
+    const GravityFamily fr{0.4, 0.0, 0.0}, fo{0.0, 0.8, 0.0};
+    auto Etwo = [&](double e1, double e2) {
+      // phi = (1 + e1 m) Rot(e2 A) x: an exact two-parameter family.
+      GravityFamily f{0.0, 0.0};
+      (void)f;
+      double E = 0.0;
+      const double rc2 = rc * rc;
+      for (int i = 0; i < Nr; i++) {
+        const double r = rc * (i + 0.5) / Nr;
+        const double wr = rc / Nr * r;
+        for (int j = 0; j < Nt; j++) {
+          const double th = 2.0 * kPi * (j + 0.5) / Nt;
+          const Vec2 x = {r * std::cos(th), r * std::sin(th)};
+          const SlipFlow S{fo.a1, 0.0};
+          const Vec2 y = S.Map(e2, x);
+          const Mat2 Dy = S.Grad(e2, x);
+          const double fscale = 1.0 + e1 * fr.mfun(r);
+          const Vec2 gm = {-2.0 * fr.beta * x[0] / rc2,
+                           -2.0 * fr.beta * x[1] / rc2};
+          Mat2 F{};
+          for (int a = 0; a < 2; a++) {
+            for (int b = 0; b < 2; b++) {
+              F[a][b] = fscale * Dy[a][b] + e1 * y[a] * gm[b];
+            }
+          }
+          const double J = Det(F);
+          const double p = PiHydro(r * r, rc2);
+          E += wr * (2.0 * kPi / Nt) *
+               (-p * (J - 1.0) + 0.5 * kapF * (J - 1.0) * (J - 1.0));
+        }
+      }
+      // Gravity: density depends on the radial part only.
+      GravityFamily frad = fr;
+      E += GravityEnergy(frad, e1, 40000);
+      return E;
+    };
+    const double Epp = Etwo(eps, eps), Epm = Etwo(eps, -eps);
+    const double Emp = Etwo(-eps, eps), Emm = Etwo(-eps, -eps);
+    const double d2mix = (Epp - Epm - Emp + Emm) / (4.0 * eps * eps);
+
+    // Elastic-only cross prediction (gravity cross = 0 by the lemma).
+    double Qcross = 0.0;
+    const double rc2 = rc * rc;
+    for (int i = 0; i < Nr; i++) {
+      const double r = rc * (i + 0.5) / Nr;
+      const double wr = rc / Nr * r;
+      for (int j = 0; j < Nt; j++) {
+        const double th = 2.0 * kPi * (j + 0.5) / Nt;
+        const Vec2 x = {r * std::cos(th), r * std::sin(th)};
+        const Mat2 Ha = fr.DV(x), Hb = fo.DV(x);
+        const double tra = Tr(Ha), trb = Tr(Hb);
+        const double trab = Ha[0][0] * Hb[0][0] + Ha[0][1] * Hb[1][0] +
+                            Ha[1][0] * Hb[0][1] + Ha[1][1] * Hb[1][1];
+        const double p = PiHydro(r * r, rc2);
+        Qcross += wr * (2.0 * kPi / Nt) *
+                  (kapF * tra * trb - p * (tra * trb - trab));
+      }
+    }
+    const double scale = std::abs(Qcross) + std::abs(d2mix) + 1e-12;
+    EXPECT_NEAR(d2mix, Qcross, 5e-4 * scale)
+        << "d2mix=" << d2mix << " elastic cross=" << Qcross;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Discrete realisation of the gravity pieces (the same pinning
+// treatment B_Sigma received): the fluid-side extension operator
+// (NewRadialFluidExtension) and the volume integrators that realise
+// the mismatch/Hessian terms at phi_e = id are cross-checked against
+// analytic quadrature on the two-layer mesh:
+//   (a) E reproduces the solid trace on the interface to round-off
+//       (the property w = v_f - tilde-v and the vanishing lemmas need);
+//   (b) rho w . grad grad zeta0 . w' via VectorMassIntegrator with the
+//       analytic uniform-disc MatrixConstantCoefficient 2 pi G rho^2 I;
+//   (c) H_zeta-w = 2 int rho w . grad zeta1 via
+//       DomainVectorGradScalarIntegrator(rho) (scalar trial);
+//   (d) the tilde-v term -2 int rho grad zeta0 . D tilde-v [w]. NOTE
+//       the semantics pinned here: DomainVectorGradVectorIntegrator
+//       nodally interpolates the scalar w-bar . u and differentiates
+//       the PRODUCT, so its form is int q w . grad(g0 . tilde-v)
+//       = int q g0 . D tilde-v [w] + int q w^T (grad g0)^T tilde-v,
+//       and the needed contraction is the compensated combination
+//       G - M(rho grad grad zeta0) -- the SAME mass matrix as (b),
+//       since grad g0 = grad grad zeta0. tilde-v = E u_s is folded
+//       through the new extension and referenced against the analytic
+//       extension rule t(r) u_s(rc x-hat), t = (r/rc)^2.
+TEST(SlipInterface, DiscreteGravityPiecesMatchQuadrature) {
+  using namespace mfem;
+  using namespace mfemElasticity;
+  using gravity_fd::Gg;
+  using gravity_fd::rho;
+
+  const double rc_saved = rc;
+  rc = 3483.0 / 6371.0;  // the two-layer mesh's interface radius
+
+  const gravity_fd::GravityFamily fam{0.4, 0.8, 0.5};  // generic fluid w
+  const Field US{0.31, 0.62, -0.41, 0.53, 0.27};       // solid-side u_s
+
+  // A generic smooth zeta1 test scalar and its gradient.
+  auto zeta = [](const Vec2& x) {
+    return 0.4 * x[0] - 0.7 * x[1] + 0.9 * x[0] * x[1] +
+           0.5 * (x[0] * x[0] - x[1] * x[1]) + 0.3 * x[0] * x[0] * x[1];
+  };
+  auto grad_zeta = [](const Vec2& x) -> Vec2 {
+    return {0.4 + 0.9 * x[1] + 1.0 * x[0] + 0.6 * x[0] * x[1],
+            -0.7 + 0.9 * x[0] - 1.0 * x[1] + 0.3 * x[0] * x[0]};
+  };
+  // grad zeta0 = 2 pi G rho x inside the uniform disc.
+  auto grad_zeta0 = [&](const Vec2& x) -> Vec2 {
+    return {2.0 * kPi * Gg * rho * x[0], 2.0 * kPi * Gg * rho * x[1]};
+  };
+
+  // The analytic image of the extension rule.
+  auto vtil = [&](const Vec2& x) -> Vec2 {
+    const double r = std::sqrt(x[0] * x[0] + x[1] * x[1]);
+    if (r < 1e-8 * rc) {
+      return {0.0, 0.0};
+    }
+    const double t = (r / rc) * (r / rc);
+    const Vec2 u = US.Eval({rc * x[0] / r, rc * x[1] / r});
+    return {t * u[0], t * u[1]};
+  };
+  auto Dvtil = [&](const Vec2& x) -> Mat2 {
+    const double h = 1e-6;
+    Mat2 D{};
+    for (int j = 0; j < 2; j++) {
+      Vec2 xp = x, xm = x;
+      xp[j] += h;
+      xm[j] -= h;
+      const Vec2 vp = vtil(xp), vm = vtil(xm);
+      for (int i = 0; i < 2; i++) {
+        D[i][j] = (vp[i] - vm[i]) / (2.0 * h);
+      }
+    }
+    return D;
+  };
+
+  // Quadrature references over the fluid disc.
+  double refMass = 0.0, refZeta = 0.0, refVtil = 0.0;
+  {
+    const int Nr = 600, Nt = 800;
+    for (int i = 0; i < Nr; i++) {
+      const double r = rc * (i + 0.5) / Nr;
+      const double wr = rc / Nr * r;
+      for (int j = 0; j < Nt; j++) {
+        const double th = 2.0 * kPi * (j + 0.5) / Nt;
+        const Vec2 x = {r * std::cos(th), r * std::sin(th)};
+        const double wq = wr * (2.0 * kPi / Nt);
+        const Vec2 w = fam.V(x);
+        refMass +=
+            wq * 2.0 * kPi * Gg * rho * rho * (w[0] * w[0] + w[1] * w[1]);
+        const Vec2 gz = grad_zeta(x);
+        refZeta += wq * 2.0 * rho * (w[0] * gz[0] + w[1] * gz[1]);
+        const Vec2 g0 = grad_zeta0(x);
+        const Mat2 D = Dvtil(x);
+        refVtil += wq * (-2.0) * rho *
+                   (g0[0] * (D[0][0] * w[0] + D[0][1] * w[1]) +
+                    g0[1] * (D[1][0] * w[0] + D[1][1] * w[1]));
+      }
+    }
+  }
+  // The references must be load-bearing.
+  ASSERT_GT(std::abs(refMass), 1e-3);
+  ASSERT_GT(std::abs(refZeta), 1e-3);
+  ASSERT_GT(std::abs(refVtil), 1e-4);
+
+  VectorFunctionCoefficient wC(2, [&](const Vector& x, Vector& v) {
+    const Vec2 val = fam.V({x(0), x(1)});
+    v.SetSize(2);
+    v(0) = val[0];
+    v(1) = val[1];
+  });
+  VectorFunctionCoefficient usC(2, [&](const Vector& x, Vector& v) {
+    const Vec2 val = US.Eval({x(0), x(1)});
+    v.SetSize(2);
+    v(0) = val[0];
+    v(1) = val[1];
+  });
+  FunctionCoefficient zC(
+      [&](const Vector& x) { return zeta({x(0), x(1)}); });
+  VectorFunctionCoefficient g0C(2, [&](const Vector& x, Vector& v) {
+    const Vec2 val = grad_zeta0({x(0), x(1)});
+    v.SetSize(2);
+    v(0) = val[0];
+    v(1) = val[1];
+  });
+  ConstantCoefficient rhoC(rho);
+  DenseMatrix hess0(2);
+  hess0 = 0.0;
+  hess0(0, 0) = hess0(1, 1) = 2.0 * kPi * Gg * rho * rho;
+  MatrixConstantCoefficient hess0C(hess0);
+
+  std::vector<double> relMass, relZeta, relVtil;
+  for (int order : {1, 2}) {
+    SCOPED_TRACE(order);
+    Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+    Array<int> fluid_attr({1}), solid_attr({2});
+    SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
+    H1_FECollection fec(order, 2);
+    FiniteElementSpace fes_parent(&parent, &fec, 2);
+    auto fes_s = SubMeshDofInjection::MakeShadowSpace(fes_parent, solid);
+    auto fes_f = SubMeshDofInjection::MakeShadowSpace(fes_parent, fluid);
+    FiniteElementSpace fes_z(&fluid, &fec);
+
+    GridFunction us(fes_s.get()), w(fes_f.get()), z(&fes_z);
+    us.ProjectCoefficient(usC);
+    w.ProjectCoefficient(wC);
+    z.ProjectCoefficient(zC);
+
+    // (a) The extension: trace rows exact, interior rows tapered.
+    auto E = NewRadialFluidExtension(*fes_s, *fes_f, rc);
+    GridFunction vt(fes_f.get());
+    E->Mult(us, vt);
+    {
+      SubMeshDofInjection inj_s(*fes_s, fes_parent),
+          inj_f(*fes_f, fes_parent);
+      auto J = NewSubMeshPairingMatrix(inj_f, inj_s);  // fluid x solid
+      Vector traced(fes_f->GetVSize());
+      J->Mult(us, traced);
+      double err = 0.0, scale = us.Normlinf() + 1e-30;
+      for (int r = 0; r < J->Height(); r++) {
+        if (J->RowSize(r) > 0) {
+          err = std::max(err, std::abs(vt(r) - traced(r)));
+        }
+      }
+      EXPECT_LT(err, 1e-12 * scale);
+    }
+
+    // (b) The grad grad zeta0 term.
+    BilinearForm M(fes_f.get());
+    M.AddDomainIntegrator(new VectorMassIntegrator(hess0C));
+    M.Assemble();
+    M.Finalize();
+    {
+      Vector t(w.Size());
+      M.Mult(w, t);
+      relMass.push_back(std::abs(InnerProduct(w, t) - refMass) /
+                        std::abs(refMass));
+    }
+
+    // (c) The mismatch coupling H_zeta-w (scalar trial).
+    {
+      MixedBilinearForm A(&fes_z, fes_f.get());
+      A.AddDomainIntegrator(new DomainVectorGradScalarIntegrator(rhoC));
+      A.Assemble();
+      A.Finalize();
+      Vector t(w.Size());
+      A.Mult(z, t);
+      relZeta.push_back(std::abs(2.0 * InnerProduct(w, t) - refZeta) /
+                        std::abs(refZeta));
+    }
+
+    // (d) The tilde-v term, folded through E: the compensated
+    // combination G - M (product-rule semantics, see the header note).
+    {
+      BilinearForm G(fes_f.get());
+      G.AddDomainIntegrator(
+          new DomainVectorGradVectorIntegrator(g0C, rhoC));
+      G.Assemble();
+      G.Finalize();
+      Vector t(w.Size()), tm(w.Size());
+      G.Mult(vt, t);
+      M.Mult(vt, tm);
+      const double val = -2.0 * (InnerProduct(w, t) - InnerProduct(w, tm));
+      relVtil.push_back(std::abs(val - refVtil) / std::abs(refVtil));
+    }
+  }
+
+  // Observed: order 1 at ~4e-2, order 2 at 2--5e-4 on every piece
+  // (a clean two-orders drop); 10x headroom on the bounds.
+  EXPECT_LT(relMass[1], 5e-3);
+  EXPECT_LT(relMass[1], relMass[0]);
+  EXPECT_LT(relZeta[1], 5e-3);
+  EXPECT_LT(relZeta[1], relZeta[0]);
+  EXPECT_LT(relVtil[1], 5e-3);
+  EXPECT_LT(relVtil[1], relVtil[0]);
+
+  rc = rc_saved;
+}

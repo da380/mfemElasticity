@@ -102,13 +102,55 @@ carry the whole derivation:
 \begin{equation}
   E_g[\varphi_{\mathrm{s}}, \varphi_{\mathrm{f}}]
   = \operatorname{stat}_{\Phi}
-    \Bigl[\, -\frac{1}{8\pi G}\int_{\R^d} |\nabla\Phi|^2 \dV
+    \Bigl[\, +\frac{1}{8\pi G}\int_{\R^d} |\nabla\Phi|^2 \dV
     \;+\; \sum_{r \in \{\mathrm{s,f}\}} \int_{B_r} \rho\,
           \Phi\circ\varphi_r \dV \Bigr],
   \label{eq:Eg}
 \end{equation}
-the Eulerian potential $\Phi$ composed with \emph{each region's own
-motion}. Its first variation is a pure volume integral in each region
+(the $+$ sign so that stationarity gives $\nabla^2\Phi = 4\pi G\varrho$
+in our convention and the value is $\tfrac12\int\varrho\Phi$; an
+earlier draft's minus was caught by the gravity finite differences).
+A related point that motivates the whole construction: the
+\emph{spatial} $\Phi$ is continuous ($C^1$) across the deformed
+interface, but a referential potential composed \emph{region-wise with
+each region's own motion} would not be --- at $\bx \in \Sigma$ the two
+compositions evaluate $\Phi$ at the two distinct physical points
+$\varphi_{\mathrm{s}}(\bx)$ and $\varphi_{\mathrm{f}}(\bx)$, so it
+would jump by $\Phi(\varphi_{\mathrm{s}}) - \Phi(\varphi_{\mathrm{f}})
+\approx \nabla\Phi_0\cdot(\text{slip})$ at linear order. Our $\zeta$
+is single-valued \emph{by fiat}: it composes with the one globally
+smooth extension $\tilde\varphi$, never with the fluid's own motion,
+inheriting $\Phi$'s continuity (ordinary $H^1$ space, DtN untouched);
+the price is the fluid-source mismatch below, which is the better
+trade. All of these formulations --- Eulerian $\Phi$, referential
+$a$-form with any smooth extension, single-valued or region-wise
+$\zeta$ --- are \emph{exactly} equivalent, related by bijective changes
+of variables in the stationary problem; the choices here are about
+discretisation convenience only, and the extension-invariance is
+asserted numerically at the solver level. Why start Eulerian rather than from the referential
+$\tfrac{1}{8\pi G}\langle a(F)\nabla\zeta, \nabla\zeta\rangle$ form of
+MA24? \emph{Not} because the $a$-form requires one composition map ---
+it does not: the spatial field energy splits over the images of the
+material regions (the attached broken motion tiles $\R^d$; the
+attachment forbids gaps and overlaps), each piece transforms with its
+\emph{own} motion, and the result is precisely the region-wise
+$a(F_r)$-form in the broken variables $\zeta_r = \Phi\circ\varphi_r$
+--- which \emph{is} the broken-$\zeta$ formulation, with the
+continuity of $\Phi$, automatic Eulerian, resurfacing as the interface
+compatibility $\zeta_{\mathrm{s}} = \zeta_{\mathrm{f}}\circ\sigma$ on
+$\Sigma$ (linearised: the jump condition of the topology remark
+below). The reason to start Eulerian is derivational: keeping $\Phi$
+spatial while varying makes its continuity and the gauge status of
+the extension manifest, so the single-valued route's mismatch terms
+and the broken route's jump condition are \emph{derived} rather than
+posited; substituting $\Phi = \zeta\circ\tilde\varphi^{-1}$ afterwards
+produces the $a(\tilde F)$-form \emph{plus} the fluid source composed
+through $\tilde\varphi^{-1}\circ\varphi_{\mathrm{f}}$ --- which is
+where the mismatch terms live. An $a$-form with a silently chosen
+composition map would hide exactly this bookkeeping. Note that
+in \eqref{eq:Eg} the Eulerian potential $\Phi$ is composed with
+\emph{each region's own motion}, and its first variation is a pure
+volume integral in each region
 ($\delta E_g = \sum_r \int \rho\, (\nabla\Phi\circ\varphi_r)\cdot
 \bm{\eta}_r$): \textbf{gravity contributes no interface flux}, a fact
 used repeatedly.
@@ -400,6 +442,156 @@ extension $\tilde{\bv}$ is gauge; the assembled operator's
 independence of it (given the constraint) is the built-in invariance
 test, exactly as for the vacuum extension.
 
+\subsection{The gravity Hessian of the broken motion, explicitly}
+\label{sec:gravhess}
+
+For implementation the volume-only content of Lemma~\ref{lem:vol} must
+be written out. Expanding $\psi_\eps = \tilde\varphi_\eps^{-1}\circ
+\varphi_{\mathrm{f},\eps} = \mathrm{id} + \eps\,\mathbf{g}_1 +
+\tfrac{\eps^2}{2}\mathbf{g}_2$ by composing the two motions
+($\tilde\varphi = \varphi_e + \eps\tilde{\bv}$ straight):
+\begin{equation}
+  \mathbf{g}_1 = F_e^{-1}\bw, \qquad
+  \mathbf{g}_2 = F_e^{-1}\bigl( \mathbf{u}_2
+    - D^2\varphi_e[\mathbf{g}_1, \mathbf{g}_1]
+    - 2\,D\tilde{\bv}[\mathbf{g}_1] \bigr),
+  \qquad \bw := \bv_{\mathrm{f}} - \tilde{\bv} .
+\end{equation}
+The $\mathbf{u}_2$ piece of $\mathbf{g}_2$ is the already-booked
+path-curvature contribution of \eqref{eq:d2E} (interior EL $\times$
+$\mathbf{u}_2$ plus the boundary term that became $B_\Sigma$) and must
+\emph{not} be counted again; the genuinely quadratic remainder,
+together with the $\nabla\nabla\zeta^0$ term of the source expansion,
+gives the extra gravity Hessian on $\Bf$. Killing
+$\nabla\nabla\zeta^0$ by parts (boundary term $\propto
+\mathbf{g}_1\cdot\bN = \bw\cdot\bnu/J_e = 0$) produces a
+$\nabla_{\mathbf{g}_1}\mathbf{g}_1$ remainder that \textbf{cancels the
+$D^2\varphi_e$ term identically} (via $\nabla_{\mathbf{g}_1}(F_e
+\mathbf{g}_1) = D^2\varphi_e[\mathbf{g}_1,\mathbf{g}_1] +
+F_e\nabla_{\mathbf{g}_1}\mathbf{g}_1$) --- the volume analogue of the
+curvature collapse \eqref{eq:collapse}. With $\mathbf{b} :=
+F_e^{-T}\nabla\zeta^0$, the additions to the \S3 operators (which act
+with the \emph{extended} field $\tilde{\bv}$ ball-wide) are, in
+Hessian normalisation,
+\begin{align}
+  H_{\zeta\bw}
+  &= 2\int_{\Bf} \rho\,(F_e^{-1}\bw)\cdot\nabla\zeta^1 \dV
+  &&\text{(the mismatch coupling)},
+  \label{eq:mismatch}\\
+  H_{\bw\bw}
+  &= -\int_{\Bf} \Div(\rho F_e^{-1}\bw)\,
+      \bigl((F_e^{-1}\bw)\cdot\nabla\zeta^0\bigr) \dV
+   \;-\;\int_{\Bf} \rho\,\mathbf{b}\cdot D\bw[F_e^{-1}\bw] \dV
+   \;-\;2\int_{\Bf} \rho\,\mathbf{b}\cdot
+      D\tilde{\bv}[F_e^{-1}\bw] \dV,
+  \label{eq:wextra}
+\end{align}
+all first-derivative volume forms (in the discrete realisation the
+$\Div(\rho\,\cdot)$ form may be traded against a gradient of the
+projected $\nabla\zeta^0$ field to avoid density gradients). The
+$\tilde{\bv}$-dependence of \eqref{eq:wextra} and of the \S3 operators
+is extension gauge: the assembled operator is invariant under changes
+of the extension for constrained fields --- the built-in invariance
+test, as for the vacuum extension.
+
+When $\zeta^1$ is eliminated at fixed motion, its stationary
+contribution to the Hessian is \textbf{negative definite}
+($-\tfrac{1}{4\pi G}\int|\nabla\zeta^{1*}|^2$): the induced potential
+perturbation always lowers the energy --- self-gravity destabilises,
+as it must.
+
+\textbf{Verification} (\texttt{TestSlipInterface}, gravity cases,
+all passing at $\le 3\times10^{-4}$ relative): with a rigid,
+stress-free solid ($\rho_{\mathrm{s}} = 0$, $\pi(r_c) = 0$ hydrostatic
+fluid, so $B_\Sigma$ and the $\tilde{\bv}$-terms switch off and
+\eqref{eq:mismatch}--\eqref{eq:wextra} are isolated), exact
+disc-preserving families give the total energy exactly --- the
+gravitational part in closed 1-D form by the shell theorem, since the
+families' densities stay radial. Verified: the radial-squeeze identity
+(pinning the sign of the eliminated-$\zeta^1$ part: the first draft
+had it positive, and the exact energy disagreed by exactly twice the
+stationary value); a $\theta$-dependent azimuthal family (not
+volume-preserving, hence \emph{not} a relabelling --- the assembled
+prediction matched the exact energy to $4\times10^{-6}$ anyway); the
+\emph{axisymmetric} rotation, which is the true relabelling and is
+jointly annihilated with gravity on (elastic $\pi(r)$-terms,
+$\nabla\nabla\zeta^0$-term and stationary part cancelling); the mixed
+family; and the vanishing of the gravity--slip cross terms demanded by
+Lemma~\ref{lem:vol}.
+
+\textbf{Discrete realisation} (same file, against the same analytic
+quadrature; order~1 at $\sim\!4\times10^{-2}$, order~2 at
+$2$--$5\times10^{-4}$ relative on every piece). The extension is a
+prescribed sparse operator $\tilde{\bv} = E\,\bv_{\mathrm{s}}$
+(\texttt{NewRadialFluidExtension}): interface trace rows copy the
+solid values exactly through the SubMesh dof pairing --- to round-off,
+the property the mismatch $\bw = \bv_{\mathrm{f}} - \tilde{\bv}$ and
+the vanishing lemmas rely on --- and interior rows take
+$t(r)\,\bv_{\mathrm{s}}(r_c\hat{\bx})$ with $t = (r/r_c)^2$ vanishing
+at the centre, where the radial direction is undefined; the interior
+rule is gauge. The volume pieces at $\varphi_e = \mathrm{id}$ assemble
+from the library integrators: the
+$\int\rho\,\bw\cdot\nabla\nabla\zeta^0\,\bw'$ term as a vector mass
+matrix $M$ with matrix coefficient $\rho\nabla\nabla\zeta^0$
+($= 2\pi G\rho^2\,\mathbf{1}$ inside a uniform disc); the mismatch
+coupling $2\int\rho\,\bw\cdot\nabla\zeta^1$ as the mixed
+vector--scalar-gradient form with coefficient $\rho$; and the
+$\tilde{\bv}$-term $-2\int\rho\,\nabla\zeta^0\cdot D\tilde{\bv}[\bw]$
+as the \emph{compensated combination} $G - M$: the library's
+vector--gradient--vector form interpolates the scalar
+$\nabla\zeta^0\cdot\tilde{\bv}$ nodally and differentiates the
+\emph{product}, so $G$ realises
+$\int\rho\,\bw\cdot\nabla(\nabla\zeta^0\cdot\tilde{\bv})$ and the
+excess $\int\rho\,\bw^T(\nabla\nabla\zeta^0)\,\tilde{\bv}$ is exactly
+the mass term already assembled. (On the test fields the uncompensated
+form cancels the target almost entirely --- the cross-check exists to
+catch precisely such semantics.)
+
+\begin{remark}[Topology, the extension, and the broken-$\zeta$
+alternative]
+With a solid inner core the fluid shell has two solid boundaries and
+the extension interpolates between two \emph{independent} solid
+motions (a spherical ICB/CMB pair even leaves the inner core's
+rotation free --- known null-space bookkeeping). Nothing in the theory
+changes: the constraint gives $\bnu\cdot\bw = 0$ on \emph{each
+component} of $\partial\Bf$, the vanishing lemmas hold
+interface-by-interface, and $B_\Sigma$ appears once per interface; the
+taper rules generalise to two-sided data (the harmonic-extension
+builder already imposes Dirichlet data on all boundaries). Oceans are
+the degenerate case: constraint at the seafloor only. For genuinely
+aspherical fluid regions the sparse geometric extension has no natural
+recipe; the robust route is to hold the extension \emph{implicitly} as
+an auxiliary field with a fixed elliptic rule (a well-posed extra
+block, eliminated in the solver) --- unlike the failed
+$\eps$-penalised ball-wide vacuum field, which had no fixed rule.
+Since the extension is gauge, the cheapest rule may be chosen per
+geometry. Note finally that a \emph{broken}-$\zeta$ formulation
+(region-wise composition; jump condition $\jump{\zeta^1} =
+-\bs\cdot\nabla_\Sigma\zeta^0$ per interface, and no fluid extension
+at all) is exactly equivalent and scales trivially with topology: it
+is the natural self-benchmark of the mismatch terms, and for complex
+topologies possibly the cleaner primary.
+
+A third organisation, by superposition of \emph{sources}:
+$\Phi = \sum_r \Phi_r$ with $\Phi_r$ generated by region $r$'s density
+alone, so the energy splits into the pairwise interactions
+$\tfrac12\sum_{r,r'}\int\rho_r\,\Phi_{r'}$ and each part can be
+computed separately --- at evaluation level this is already exploited
+(the shell-theorem references of the verification are exactly such
+interaction integrals). As a \emph{formulation} its cost is one
+ball-wide potential block (with its own DtN) per region, and the extra
+solves do not remove the interface structure: what breaks $\zeta$ is
+not any discontinuity of the field --- each $\Phi_r$ is globally $C^1$
+--- but the \emph{composition with the broken motion}, and each split
+potential faces the same choice as the total one: composed region-wise
+it jumps on every interface (with the partial field's gradient,
+$\jump{\zeta_r^1} = -\bs\cdot\nabla_\Sigma\zeta_r^0$, summing back to
+the total condition), composed through a single smooth extension it
+generates mismatch terms per region pair. Its natural use is therefore
+diagnostic --- region-wise attribution of the induced potential ---
+not primary.
+\end{remark}
+
 \begin{remark}[Stratification]
 For a two-parameter fluid the energy carries the additional advected
 scalar; its second variation contributes the interface-adjacent
@@ -521,8 +713,13 @@ $\varphi_e = \mathrm{id}$ and a curved radial-$\varphi_e$ configuration
 (non-trivial $\bnu$, $J_e$), for the diagonal and the polarised (mixed
 two-parameter) second differences, with the interface term resolved at
 better than fifty times the residual: sign, factor of two, Nanson
-content and polarisation all pinned. Lemma~\ref{lem:vol} rests on the
-no-double-booking organisation of \eqref{eq:d2E} and will get the same
-treatment when the gravity coupling is implemented.
+content and polarisation all pinned. The gravity coupling has received
+the same treatment (the verification record of \S\ref{sec:gravhess}),
+and both $B_\Sigma$ and the gravity volume pieces now also exist as
+\textbf{pinned discrete operators} (library integrators plus the
+extension operator, cross-checked against the quadrature values with
+order convergence). What remains for the single-valued-$\zeta$ solver
+is assembly only; the mapped ($\varphi_e \neq \mathrm{id}$) discrete
+gravity pieces and the broken-$\zeta$ variant follow.
 
 \end{document}

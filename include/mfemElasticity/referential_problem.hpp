@@ -66,6 +66,35 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
 #endif
 
 /**
+ * @brief A prescribed radial fluid-extension operator @f$E@f$: fluid
+ * displacement vdofs from solid displacement vdofs — the smooth
+ * solid-side extension @f$\tilde v@f$ of the gauged gravity treatment
+ * for slipping interfaces (doc/slip_interface.tex, the gravity
+ * subsection), for a fluid CORE inside a solid shell.
+ *
+ * Fluid dofs shared with the solid (the interface trace @f$\Sigma@f$)
+ * copy their solid values exactly through the SubMesh dof pairing, so
+ * @f$\tilde v|_\Sigma = v_s|_\Sigma@f$ holds to round-off — the property
+ * the mismatch @f$w = v_f - \tilde v@f$ and the vanishing lemmas rely
+ * on. Interior fluid nodes at radius @f$r@f$ take
+ * @f$t(r)\,v_s(x_\Sigma)@f$ with @f$t = (r/r_c)^p@f$ (vanishing at the
+ * centre, where the radial direction is undefined) and @f$x_\Sigma@f$
+ * the radial projection onto the interface, pushed slightly outward
+ * into the solid by @p pushout for robust point location. The interior
+ * rule is a gauge choice: agreement of observables between two
+ * @f$E@f$s is a gauge-invariance test. Two-sided variants (nested
+ * shells) are deferred to the inner-core work.
+ *
+ * Both spaces must share the solid space's FiniteElementCollection
+ * object and live on SubMeshes of one parent. Returns fluid vsize by
+ * solid vsize. Serial.
+ */
+std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
+    mfem::FiniteElementSpace& solid_fes, mfem::FiniteElementSpace& fluid_fes,
+    mfem::real_t r_interface, mfem::real_t taper_power = 2.0,
+    mfem::real_t pushout = 1.001);
+
+/**
  * @brief The symmetrised slip-interface pressure blocks
  * (doc/slip_interface.tex, Proposition 1): with @f$G@f$ the one-sided
  * kernel of SlipInterfacePressureIntegrator assembled on the solid

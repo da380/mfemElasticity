@@ -262,6 +262,185 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
 }
 
 
+std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
+    FiniteElementSpace& solid_fes, FiniteElementSpace& fluid_fes,
+    real_t r_interface, real_t taper_power, real_t pushout) {
+  MFEM_VERIFY(solid_fes.FEColl() == fluid_fes.FEColl() &&
+                  solid_fes.GetVDim() == fluid_fes.GetVDim(),
+              "NewRadialFluidExtension: the spaces must share a "
+              "collection and vdim.");
+  Mesh* solid = solid_fes.GetMesh();
+  Mesh* fluid = fluid_fes.GetMesh();
+  const int dim = solid->Dimension();
+
+  // The shared parent and the trace pairing.
+  auto* solid_sub = dynamic_cast<SubMesh*>(solid);
+  auto* fluid_sub = dynamic_cast<SubMesh*>(fluid);
+  MFEM_VERIFY(solid_sub && fluid_sub &&
+                  solid_sub->GetParent() == fluid_sub->GetParent(),
+              "NewRadialFluidExtension: both spaces must live on SubMeshes "
+              "of one parent.");
+  FiniteElementSpace parent_fes(
+      const_cast<Mesh*>(static_cast<const Mesh*>(solid_sub->GetParent())),
+      const_cast<FiniteElementCollection*>(solid_fes.FEColl()),
+      solid_fes.GetVDim(), solid_fes.GetOrdering());
+  SubMeshDofInjection inj_solid(solid_fes, parent_fes);
+  SubMeshDofInjection inj_fluid(fluid_fes, parent_fes);
+  auto J = NewSubMeshPairingMatrix(inj_fluid, inj_solid);  // fluid x solid
+
+  // Scalar nodal coordinates of the fluid space.
+  const int ns_flu = fluid_fes.GetNDofs();
+  DenseMatrix coords(dim, ns_flu);
+  {
+    Array<int> dofs;
+    Vector x(dim);
+    for (int e = 0; e < fluid->GetNE(); e++) {
+      const auto* fe = fluid_fes.GetFE(e);
+      auto* T = fluid->GetElementTransformation(e);
+      fluid_fes.GetElementDofs(e, dofs);
+      const auto& nodes = fe->GetNodes();
+      for (int i = 0; i < dofs.Size(); i++) {
+        T->Transform(nodes.IntPoint(i), x);
+        for (int d = 0; d < dim; d++) {
+          coords(d, dofs[i]) = x(d);
+        }
+      }
+    }
+  }
+
+  // Which fluid scalar dofs are paired (the interface trace).
+  std::vector<char> paired(ns_flu, 0);
+  for (int sb = 0; sb < ns_flu; sb++) {
+    if (J->RowSize(fluid_fes.DofToVDof(sb, 0)) > 0) {
+      paired[sb] = 1;
+    }
+  }
+
+  // Interior nodes carrying a nonzero taper. A node at (or numerically
+  // at) the centre has t = 0 and an undefined radial direction, so its
+  // row is simply left zero -- a valid piece of the gauge.
+  std::vector<int> interior;
+  std::vector<real_t> taper;
+  for (int sb = 0; sb < ns_flu; sb++) {
+    if (paired[sb]) {
+      continue;
+    }
+    real_t r = 0.0;
+    for (int d = 0; d < dim; d++) {
+      r += coords(d, sb) * coords(d, sb);
+    }
+    r = std::sqrt(r);
+    real_t t = r / r_interface;
+    t = std::min(real_t(1), std::max(real_t(0), t));
+    t = std::pow(t, taper_power);
+    if (t > 0.0 && r > 1e-12 * r_interface) {
+      interior.push_back(sb);
+      taper.push_back(t);
+    }
+  }
+
+  // Locate the interior nodes' interface projections in the solid mesh,
+  // pushed slightly OUTWARD (pushout > 1): the solid lies outside the
+  // interface, and its discrete inner boundary can bulge above the
+  // nominal radius. The interior rule is a gauge choice, so the push
+  // costs nothing.
+  DenseMatrix pts(dim, static_cast<int>(interior.size()));
+  for (std::size_t i = 0; i < interior.size(); i++) {
+    real_t r = 0.0;
+    for (int d = 0; d < dim; d++) {
+      r += coords(d, interior[i]) * coords(d, interior[i]);
+    }
+    r = std::sqrt(r);
+    const real_t scale = pushout * r_interface / r;
+    for (int d = 0; d < dim; d++) {
+      pts(d, i) = scale * coords(d, interior[i]);
+    }
+  }
+  Array<int> elem;
+  Array<IntegrationPoint> ips;
+  if (pts.Width() > 0) {
+    solid->FindPoints(pts, elem, ips);
+    // Retry unfound projections deeper inside the solid (further out).
+    for (real_t factor : {1.01, 1.03, 1.1}) {
+      int missing = 0;
+      for (int i = 0; i < elem.Size(); i++) {
+        if (elem[i] < 0) {
+          missing++;
+        }
+      }
+      if (missing == 0) {
+        break;
+      }
+      DenseMatrix retry(dim, missing);
+      std::vector<int> which;
+      for (int i = 0; i < elem.Size(); i++) {
+        if (elem[i] < 0) {
+          for (int d = 0; d < dim; d++) {
+            retry(d, static_cast<int>(which.size())) =
+                pts(d, i) * factor / pushout;
+          }
+          which.push_back(i);
+        }
+      }
+      Array<int> elem2;
+      Array<IntegrationPoint> ips2;
+      solid->FindPoints(retry, elem2, ips2);
+      for (std::size_t j = 0; j < which.size(); j++) {
+        if (elem2[j] >= 0) {
+          elem[which[j]] = elem2[j];
+          ips[which[j]] = ips2[j];
+        }
+      }
+    }
+  }
+
+  auto E = std::make_unique<SparseMatrix>(fluid_fes.GetVSize(),
+                                          solid_fes.GetVSize());
+  const int vdim = solid_fes.GetVDim();
+  // Trace rows: copy the solid values exactly.
+  {
+    Array<int> cols;
+    Vector vals;
+    for (int sb = 0; sb < ns_flu; sb++) {
+      if (!paired[sb]) {
+        continue;
+      }
+      for (int k = 0; k < vdim; k++) {
+        const int row = fluid_fes.DofToVDof(sb, k);
+        J->GetRow(row, cols, vals);
+        for (int j = 0; j < cols.Size(); j++) {
+          E->Set(row, cols[j], vals[j]);
+        }
+      }
+    }
+  }
+  // Interior rows: tapered inward radial interpolation of the solid trace.
+  {
+    Array<int> dofs;
+    Vector shape;
+    for (std::size_t i = 0; i < interior.size(); i++) {
+      const int sb = interior[i];
+      MFEM_VERIFY(elem[i] >= 0,
+                  "NewRadialFluidExtension: interface projection not found "
+                  "in the solid mesh; increase `pushout`.");
+      const real_t t = taper[i];
+      const auto* fe = solid_fes.GetFE(elem[i]);
+      shape.SetSize(fe->GetDof());
+      fe->CalcShape(ips[i], shape);
+      solid_fes.GetElementDofs(elem[i], dofs);
+      for (int k = 0; k < vdim; k++) {
+        const int row = fluid_fes.DofToVDof(sb, k);
+        for (int a = 0; a < dofs.Size(); a++) {
+          E->Set(row, solid_fes.DofToVDof(dofs[a], k), t * shape(a));
+        }
+      }
+    }
+  }
+  E->Finalize();
+  return E;
+}
+
+
 #ifdef MFEM_USE_MPI
 std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
     ParFiniteElementSpace& body_fes, ParFiniteElementSpace& buffer_fes,
