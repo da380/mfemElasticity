@@ -303,7 +303,8 @@ Structural remarks:
   stiffness share the same `h`-scaling, but the vacuum has *no* physical
   buffer stiffness (only the zeroth-order gravity terms) while the
   harmonic penalty scales like `1/h²`, so refinement diverges with mesh
-  or order (observed; `TestReferentialProblem` documents the regime).
+  or order (observed; `TestReferentialProblem` documents the regime;
+  the full spectral argument is `doc/gauge_penalty_iteration.tex` §4).
   (b) a *prescribed* linear extension `u_ext = E(u|_{∂B})` — e.g. a
   radial interpolation of the boundary values tapered to zero at the DtN
   sphere, a pairing the structured buffer meshes can supply — with the
@@ -472,7 +473,7 @@ exists:
 | `C ε(u):ε(v)`, 21-component bare tensor | `ElasticTensorIntegrator` (Mandel) — exists |
 | PREM → bare conversion `C = C^eff − p⁰(δδ−δδ−δδ)` | small `ElasticTensorCoefficient` decorator — **new**, trivial |
 | initial-stress term `∫ T⁰_AB ∂_A u_k ∂_B v_k` | matrix-coefficient vector diffusion — **new integrator**, small |
-| background state `Φ₀, p⁰, T⁰` | hydrostatic path exists; general `T⁰` supplied as a coefficient (equilibrium consistency is the modeller's burden) |
+| background state `Φ₀, p⁰, T⁰` | `background.hpp`: `RadialHydrostaticBackground` (hydrostatic `g`/`p⁰` by cumulative quadrature, bare conversion, `S_e = −p⁰1`, identity map, assembled rheology) and `RelabelledBackground` (the transformation-law chains, owned here — drivers never hand-roll); general `S_e` beyond these generators supplied as a coefficient (equilibrium consistency is the modeller's burden) |
 | gravity, mixed Eulerian | exists (`self_gravitating.*`) |
 | gravity, mixed referential | `TransformedDiffusionIntegrator` + linearised-coefficient coupling — mostly exists via mappings |
 | fluid–solid slip, linearised | pairing + penalty/AL machinery exists; the `ϖ⁰ Q/S` equilibrium-geometry terms — **new**, from AC18 eqs. 121/137 |

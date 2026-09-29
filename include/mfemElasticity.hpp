@@ -1,6 +1,7 @@
 #pragma once
 
 #include "mfem.hpp"
+#include "mfemElasticity/background.hpp"
 #include "mfemElasticity/bilininteg.hpp"
 #include "mfemElasticity/coefficient.hpp"
 #include "mfemElasticity/elastic_tensor.hpp"

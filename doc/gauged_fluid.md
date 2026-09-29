@@ -9,7 +9,11 @@ of 25 September 2026 (`doc/BenchmarkPapers/research_notes_2026-09-25.pdf`,
 and the relabelling gauge is fixed by a small shear penalty whose bias is
 removed by iterated Tikhonov refinement. It is the alternative to Dahlen's
 treatment of `doc/self_gravitation.md`, which eliminates the fluid
-displacement in favour of the potential.
+displacement in favour of the potential. A self-contained mathematical
+account of the penalty/refinement machinery and of the sliding-interface
+discontinuity (spectral analysis, failure condition, semi-convergence,
+augmented-Lagrangian connection) is `doc/gauge_penalty_iteration.tex`
+(compiled: `gauge_penalty_iteration.pdf`).
 
 ## 1. Formulation
 

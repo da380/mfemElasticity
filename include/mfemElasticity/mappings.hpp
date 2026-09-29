@@ -94,6 +94,30 @@ class Diffeomorphism : public mfem::VectorCoefficient {
 };
 
 /**
+ * @brief The identity mapping, exactly: @f$\boldsymbol{\xi}(\mathbf{x}) =
+ * \mathbf{x}@f$, @f$F = I@f$. The default equilibrium mapping of every
+ * unmapped problem, as a first-class object.
+ */
+class IdentityDiffeomorphism : public Diffeomorphism {
+ public:
+  explicit IdentityDiffeomorphism(int dim) : Diffeomorphism(dim) {}
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override {
+    T.Transform(ip, V);
+  }
+
+  void EvalGradient(mfem::DenseMatrix& F, mfem::ElementTransformation&,
+                    const mfem::IntegrationPoint&) override {
+    F.SetSize(vdim);
+    F = 0.0;
+    for (int i = 0; i < vdim; i++) {
+      F(i, i) = 1.0;
+    }
+  }
+};
+
+/**
  * @brief A diffeomorphism given by callables for @f$\boldsymbol{\xi}@f$ and
  * @f$F@f$ as functions of position: analytic mappings with exact
  * derivatives, the production and convergence-benchmark mode.

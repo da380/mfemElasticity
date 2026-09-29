@@ -127,3 +127,41 @@ Readings:
   universal approximation genuinely bites — and where no member of the
   Dahlen family, exact or approximate, can be fixed by tuning the CMB
   condition.
+
+### 4.1 Tidal Love numbers: the differences grow an order of magnitude
+
+The table above is for *loading*, whose response is concentrated near
+the surface. A tidal potential samples the deep interior much more
+strongly, so the CMB treatment should matter more. The same runs
+computed the tidal response (l ≥ 2), and it does:
+
+| l | qty | pyslfp | full | nomass | uniform | winkler | gauged |
+|---|---|---|---|---|---|---|---|
+| 2 | h | 0.60412 | 0.60555 | 1.09 % | 1.09 % | 28.0 % | 0.60814 |
+| 2 | k | 0.29845 | 0.29902 | 2.51 % | 2.51 % | 42.2 % | 0.30043 |
+| 3 | h | 0.28829 | 0.28693 | 0.21 % | 0.21 % | 12.4 % | 0.28690 |
+| 3 | k | 0.09215 | 0.09162 | 0.78 % | 0.78 % | 21.0 % | 0.09162 |
+| 4 | h | 0.17508 | 0.17357 | 0.05 % | 0.05 % | 5.0 % | 0.17351 |
+| 4 | k | 0.04146 | 0.04102 | 0.26 % | 0.26 % | 8.7 % | 0.04100 |
+
+(same conventions: percentages are the relative change against the full
+treatment on the same mesh/order.)
+
+Readings:
+
+- **Every approximation costs roughly ten times more on tides than on
+  loading.** The `uniform`/`nomass` conditions, harmless for loading
+  (≤0.1 % at l ≥ 2), reach 1.1 % on tidal h₂ and 2.5 % on tidal k₂ —
+  now comparable to or above the discretisation error of a production
+  run, and above the accuracy targets of modern body-tide work.
+  `winkler` degrades from 8 % to 28 % (h₂) and 42 % (k₂).
+- **k is consistently more sensitive than h** (about ×2.3 at every
+  degree): k is sourced by the internal mass redistribution, which is
+  exactly what the core treatment controls.
+- **`nomass` and `uniform` coincide to 6 digits on tides** (they
+  differed slightly on loading at l = 1 only): for l ≥ 2 the internal
+  core buoyancy term they differ by integrates to nearly nothing.
+- Practical upshot: GIA codes borrowed the CMB condition from a loading
+  context where it is safe; reusing the same operator for tidal
+  computations (e.g. combined GIA + body-tide inversions) imports a
+  percent-level systematic that the full or gauged treatments remove.

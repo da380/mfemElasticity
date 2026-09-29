@@ -539,36 +539,29 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
 // with phi_e = xi must reproduce the phi_e = id solution under
 // composition, u~(x) = u(xi(x)), zeta~ = zeta o xi (modulo the 2-D
 // constant), at the discretisation level and improving with order.
+// Both legs run on the background-state module (background.hpp): the
+// generators own the moduli conversion and the transformation laws that
+// this test originally hand-rolled (the coefficient-level agreement with
+// the hand-rolled chains is TestBackground).
 TEST(ReferentialProblem, RelabelledEquilibrium2D) {
   const int dim = 2;
   std::vector<double> u_err, z_err;
+  RadialHydrostaticBackground bg(
+      dim, [](double) { return kRho; }, [](double) { return kKappa; },
+      [](double) { return kMu; }, kG, 1.0);
   for (int order : {1, 2}) {
-    ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
-    FunctionCoefficient p0(UniformDiscPressure);
-    auto C_eff =
-        IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
     Array<int> buffer_attr({2});
 
     // Reference: phi_e = id.
     Setting s(dim, order);
-    auto id = IdentityMap(dim);
-    BareElasticTensorCoefficient C_id(dim, C_eff, p0);
-    MatrixFunctionCoefficient S_id(dim, [](const Vector& x, DenseMatrix& S) {
-      S.SetSize(x.Size());
-      S = 0.0;
-      const double p = std::max(0.0, UniformDiscPressure(x));
-      for (int i = 0; i < x.Size(); i++) {
-        S(i, i) = -p;
-      }
-    });
-    ReferentialElasticRheology rheo_id(dim, C_id, S_id, id);
     SubMesh buffer(SubMesh::CreateFromDomain(*s.parent, buffer_attr));
     FiniteElementSpace fes_buffer(&buffer, s.fec.get(), dim);
     Vector bb_min, bb_max;
     s.parent->GetBoundingBox(bb_min, bb_max);
     const double r_out = bb_max.Normlinf();
     LinearQuasiStaticReferentialProblem ref(s.fes_u.get(), s.fes_zeta.get(),
-                                            rheo_id, rho, kG, kDtNDegree);
+                                            bg.Rheology(), bg.Density(), kG,
+                                            kDtNDegree);
     auto E = NewRadialVacuumExtension(*s.fes_u, fes_buffer, 1.0, r_out);
     ref.SetPrescribedVacuumExtension(fes_buffer, *E);
     FunctionCoefficient sigma(SurfaceLoad);
@@ -578,31 +571,15 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
     ref.AssembleForce(0.0);
     ASSERT_TRUE(ref.Solve());
 
-    // Relabelled: phi_e = xi, coefficients through the transformation
-    // laws.
+    // Relabelled: phi_e = xi, coefficients through the generator.
     Setting s2(dim, order);
     auto xi = InteriorMap(dim, 0.3);
-    TransformedFunctionCoefficient p0_xi(xi, UniformDiscPressure);
-    BareElasticTensorCoefficient C_comp(dim, C_eff, p0_xi);
-    RelabelledElasticTensorCoefficient C_rel(dim, C_comp, xi);
-    TransformedMatrixFunctionCoefficient S_comp(
-        dim, xi, [](const Vector& y, DenseMatrix& S) {
-          S.SetSize(y.Size());
-          S = 0.0;
-          const double p = std::max(0.0, UniformDiscPressure(y));
-          for (int i = 0; i < y.Size(); i++) {
-            S(i, i) = -p;
-          }
-        });
-    PullbackStressCoefficient S_rel(dim, S_comp, xi);
-    JacobianCoefficient jac(xi);
-    ProductCoefficient rho_rel(kRho, jac);
-    ReferentialElasticRheology rheo_rel(dim, C_rel, S_rel, xi);
+    RelabelledBackground rel_bg(bg, xi);
     SubMesh buffer2(SubMesh::CreateFromDomain(*s2.parent, buffer_attr));
     FiniteElementSpace fes_buffer2(&buffer2, s2.fec.get(), dim);
-    LinearQuasiStaticReferentialProblem rel(s2.fes_u.get(),
-                                            s2.fes_zeta.get(), rheo_rel,
-                                            rho_rel, kG, kDtNDegree);
+    LinearQuasiStaticReferentialProblem rel(
+        s2.fes_u.get(), s2.fes_zeta.get(), rel_bg.Rheology(),
+        rel_bg.Density(), kG, kDtNDegree);
     auto E2 = NewRadialVacuumExtension(*s2.fes_u, fes_buffer2, 1.0, r_out);
     rel.SetPrescribedVacuumExtension(fes_buffer2, *E2);
     FunctionCoefficient sigma2(SurfaceLoad);
