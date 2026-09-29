@@ -212,8 +212,17 @@ struct CaseOptions {
   bool gauged = false;
   real_t gauge_eps = 1e-2;
   int gauge_refinements = 3;
+  const char* cmb = "full";
 
   void Add(OptionsParser& args) {
+    args.AddOption(&cmb, "-cmb", "--cmb-approximation",
+                   "Fluid-interface treatment of the Dahlen path: 'full' "
+                   "(stratified, F1+F2+F3), 'nomass' (drop the fluid mass "
+                   "term F1), 'uniform' (nomass with a constant fluid-side "
+                   "density, the region's outermost interface value: the "
+                   "standard unmeshed-core condition of the GIA codes), "
+                   "'winkler' (uniform without the interface potential "
+                   "coupling F3: buoyancy alone).");
     args.AddOption(&gauged, "-gauged", "--gauged", "-dahlen", "--dahlen",
                    "Gauged fluid treatment: the fluid layers join the "
                    "displacement SubMesh with their bulk modulus and a gauge "
@@ -346,6 +355,12 @@ class Case {
 
     // The fluid layers: the density on the parent's fluid elements, and on
     // the solid's boundary elements the density of the fluid beyond them.
+    const std::string cmb(options.cmb);
+    MFEM_VERIFY(cmb == "full" || cmb == "nomass" || cmb == "uniform" ||
+                    cmb == "winkler",
+                "-cmb must be full, nomass, uniform or winkler.");
+    MFEM_VERIFY(!options.gauged || cmb == "full",
+                "-cmb applies to the Dahlen path only.");
     const int n_bdr = solid->bdr_attributes.Max();
     std::vector<FluidRegion> fluids;
     if (!options.gauged) {
@@ -358,9 +373,31 @@ class Case {
         f.interface_density = rho_interface_c_.get();
         f.interface_marker = MeshManifest::Marker(
             manifest.FluidSolidInterfaces(attribute), n_bdr);
-        if (options.no_fluid_gradient) {
+        if (options.no_fluid_gradient || cmb != "full") {
           f.density_gradient = &zero_;
         }
+        if (cmb == "uniform" || cmb == "winkler") {
+          // The constant fluid density of the approximate condition: the
+          // fluid-side value at the region's outermost interface (the
+          // core-top density for a core).
+          const int first = manifest.Interfaces().front().attribute;
+          real_t rho_c = 0.0, r_max = -1.0;
+          for (const int b : manifest.FluidSolidInterfaces(attribute)) {
+            const auto& itf = manifest.Interfaces()[b - first];
+            if (itf.radius > r_max) {
+              r_max = itf.radius;
+              rho_c = itf.ValueBeside("rho", attribute);
+            }
+          }
+          cmb_rho_.push_back(std::make_unique<ConstantCoefficient>(rho_c));
+          f.interface_density = cmb_rho_.back().get();
+          if (root) {
+            std::cout << "CMB approximation '" << cmb << "': fluid layer "
+                      << attribute << " with constant interface density "
+                      << rho_c << "\n";
+          }
+        }
+        f.interface_potential_coupling = cmb != "winkler";
         fluids.push_back(f);
       }
     }
@@ -619,6 +656,7 @@ class Case {
        << (options_.solver == 0 ? "schur_cg" : "block_minres")
        << "\",\n  \"fluid_treatment\": \""
        << (options_.gauged ? "gauged" : "dahlen") << "\""
+       << ",\n  \"cmb\": \"" << options_.cmb << "\""
        << (options_.gauged
                ? ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps) +
                      ",\n  \"gauge_refinements\": " +
@@ -675,6 +713,7 @@ class Case {
   std::unique_ptr<GridFunctionCoefficient> rho_c_, kappa_c_, mu_c_,
       rho_parent_c_;
   Vector fluid_side_;
+  std::vector<std::unique_ptr<ConstantCoefficient>> cmb_rho_;
   Array<int> gauge_marker_;
   std::unique_ptr<PWConstCoefficient> rho_interface_c_;
   ConstantCoefficient zero_{0.0};

@@ -219,7 +219,9 @@ Setting mfemElasticity's design choices against the field:
    formulation) touch physics none of these codes even represents. On
    the campaign's list: implement the Latychev-style approximate CMB
    condition here as an option and compare against the meshed core, to
-   quantify whether the universal approximation matters.
+   quantify whether the universal approximation matters. [Done: the
+   published conditions, their (F1)–(F3) translation and the measured
+   cost are in `cmb_conditions.md`; benchmark option `-cmb`.]
 3. **Boundary and interface topography.** No surveyed code handles
    aspherical internal boundaries: grids and spectral expansions honour
    spherical PREM interfaces (Seakon's unstructured grid could in

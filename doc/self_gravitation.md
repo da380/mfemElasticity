@@ -7,7 +7,11 @@ weak form follows Al-Attar & Tromp (2014, eq. 2.52) and Yu, Al-Attar, Syvret
 & Lloyd (2025, eq. 3 and Appendix A). The fluid treatment described here is
 Dahlen's; the alternative gauged treatment, in which the fluid keeps its
 displacement and the interface and fluid mass terms below never arise, is
-`doc/gauged_fluid.md`.
+`doc/gauged_fluid.md`. Everything in this note is the hydrostatic
+specialisation of the general linearised theory collected in
+`doc/gravitating_elasticity.md` — including the fact that the moduli fed
+to this implementation are correctly the seismological (PREM) ones, which
+ceases to hold for the general initial-stress form described there.
 
 ## 1. Continuous problem
 
@@ -110,6 +114,28 @@ The interface integrators take the normal from `CalcOrtho` of the boundary
 transformation, which is outward from the SubMesh for MFEM's boundary
 elements, on interfaces inherited from the parent and on cut ones alike (the
 tests check ∫ x·m dS on both).
+
+**Approximate CMB conditions.** Every GIA code in the survey
+(`doc/BenchmarkPapers/code_survey.md`) reduces the core to a CMB boundary
+condition for a uniform (or neutrally stratified) incompressible inviscid
+fluid — "potential stress plus Winkler buoyancy"
+(`doc/BenchmarkPapers/cmb_conditions.md` collects the published
+conditions, their translation into (F1)–(F3), and the measured cost). Those conditions are
+degenerate cases of the FluidRegion machinery, exposed so the
+approximations can be quantified against the full treatment (benchmark
+option `-cmb`, `run.py --cmb`):
+
+| `-cmb` | terms | FluidRegion settings |
+|---|---|---|
+| `full` | (F1)+(F2)+(F3), stratified | defaults |
+| `nomass` | (F2)+(F3) | `density_gradient = 0` |
+| `uniform` | (F2)+(F3), constant ρ_F | + constant `interface_density` (the region's outermost fluid-side value, e.g. the core-top density) — the standard unmeshed-core condition of the GIA literature |
+| `winkler` | (F2) only | + `interface_potential_coupling = false` (both halves of (F3) dropped, so the operator stays symmetric): buoyancy alone, no core-mass contribution to the potential |
+
+In every case the core's *background* density still enters Φ₀ and the
+ball-wide Poisson solve (that is our discretisation of the potential, not
+part of the approximation being tested). The alternative gauged treatment
+is a separate axis (`-gauged`); the two options are exclusive.
 
 **Where coefficients are evaluated.** The solid density is evaluated on the
 SubMesh. A fluid density is evaluated on the *parent's* fluid elements (for

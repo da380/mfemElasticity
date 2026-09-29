@@ -107,6 +107,11 @@ def main() -> None:
                    default="dahlen",
                    help="fluid treatment (gauged: doc/gauged_fluid.md); "
                         "gauged results carry a _gauged suffix")
+    p.add_argument("--cmb", choices=("full", "nomass", "uniform", "winkler"),
+                   default="full",
+                   help="Dahlen-path fluid-interface approximation "
+                        "(doc/self_gravitation.md); non-full results carry "
+                        "the choice as a suffix")
     p.add_argument("--solver", type=int, default=1, choices=(0, 1),
                    help="0: Schur-complement CG, 1: block MINRES")
     p.add_argument("--buffer", type=float, default=0.2,
@@ -177,9 +182,12 @@ def main() -> None:
         for order in args.order:
             gauged = args.fluid == "gauged"
             suffix = "_gauged" if gauged else ""
+            if args.cmb != "full":
+                suffix += f"_{args.cmb}"
             common = ["-c", str(case / "case.json"), "-o", str(order),
                       "-rt", f"{args.rel_tol:g}", "-s", str(args.solver),
                       *(["-gauged"] if gauged else []),
+                      *(["-cmb", args.cmb] if args.cmb != "full" else []),
                       *shlex.split(args.program_args)]
             jobs = []
             if not args.field_only:

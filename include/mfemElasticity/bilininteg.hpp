@@ -1123,6 +1123,106 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
+ * @brief The geometric (initial-stress) stiffness of the total-Lagrangian
+ * split about an equilibrium (doc/gravitating_elasticity.md §2):
+ * @f[
+ *   (u, v) \mapsto \int_B S_{AB}\,\partial_A u_k\,\partial_B v_k\,dV,
+ * @f]
+ * with @f$\mathbf{S}@f$ the (symmetric) second Piola–Kirchhoff equilibrium
+ * stress as a @f$d \times d@f$ MatrixCoefficient. The initial stress acts
+ * on the full displacement gradient — this is the term through which a
+ * pre-stressed state stiffens (or destabilises) the linearised operator,
+ * and at a natural reference @f$\mathbf{S} = \mathbf{T}^0@f$, the
+ * equilibrium Cauchy stress.
+ *
+ * The optional trailing Diffeomorphism is the *relabelling* pull-back of
+ * the Domain* family (derivatives with respect to the mapped coordinates,
+ * Jacobian in the weight; doc/mappings.md) — the equilibrium-mapping role
+ * belongs to MaterialStiffnessIntegrator, and the geometric term itself
+ * carries no @f$F_e@f$.
+ */
+class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::MatrixCoefficient* S_;
+  Diffeomorphism* map_ = nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape_, gshape_, Sq_, tmp_, G_;
+  mfem::DenseMatrix F_, gshape_map_;
+#endif
+
+ public:
+  explicit GeometricStiffnessIntegrator(
+      mfem::MatrixCoefficient& S, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), S_(&S) {}
+
+  /** @brief Relabelling pull-back through @p map (not owned). */
+  GeometricStiffnessIntegrator(mfem::MatrixCoefficient& S, Diffeomorphism& map,
+                               const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), S_(&S), map_(&map) {}
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+};
+
+/**
+ * @brief The material stiffness of the total-Lagrangian split about an
+ * equilibrium mapping @f$\varphi_e@f$ (doc/gravitating_elasticity.md §2):
+ * @f[
+ *   (u, v) \mapsto \int_B \bigl\langle \hat C\,
+ *     \widehat{\mathrm{sym}(F_e^T Du)},\,
+ *     \widehat{\mathrm{sym}(F_e^T Dv)} \bigr\rangle\,dV,
+ * @f]
+ * with @f$\hat C@f$ the second elastic tensor at equilibrium
+ * (@f$n_s \times n_s@f$ Mandel, classical symmetries) and
+ * @f$\mathrm{sym}(F_e^T Du)@f$ the linearised Green strain. There is no
+ * Jacobian factor: the strain energy is per referential volume. With the
+ * identity mapping this is ElasticTensorIntegrator.
+ *
+ * The Diffeomorphism here is the *equilibrium mapping* (exact or
+ * interpolated per the object), not the relabelling pull-back of the
+ * other mapped integrators: a relabelling composes into the mapping and
+ * transforms the coefficients (AC18 eqs. 134–136, owned by the
+ * background-state layer), leaving this integrator's form unchanged.
+ */
+class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::MatrixCoefficient* C_;
+  Diffeomorphism* map_;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape_, gshape_, B_, Cq_, CB_, F_;
+#endif
+
+ public:
+  /**
+   * @param C The Mandel-form second elastic tensor at equilibrium.
+   * @param phi_e The equilibrium mapping (not owned).
+   * @param ir An optional integration rule.
+   */
+  MaterialStiffnessIntegrator(mfem::MatrixCoefficient& C,
+                              Diffeomorphism& phi_e,
+                              const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), C_(&C), map_(&phi_e) {}
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+
+  /**
+   * @brief The strain-displacement matrix of the linearised Green strain:
+   * @f$B@f$ (size @f$n_s \times d\,\mathrm{dof}@f$) such that @f$B\,u@f$
+   * is the Mandel vector of @f$\mathrm{sym}(\mathbf{F}^T Du)@f$. With
+   * @f$\mathbf{F} = \mathbf{1}@f$ this is
+   * ElasticTensorIntegrator::StrainDisplacementMatrix.
+   */
+  static void StrainDisplacementMatrix(int dim, const mfem::DenseMatrix& gshape,
+                                       const mfem::DenseMatrix& F,
+                                       mfem::DenseMatrix& B);
+};
+
+/**
  * @brief BilinearFormIntegrator for the transformed Laplace integrator.
  *
  * The bilinear form acts on a pair of scalar fields through

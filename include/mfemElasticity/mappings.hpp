@@ -263,6 +263,27 @@ class TransformedVectorFunctionCoefficient : public mfem::VectorCoefficient {
 };
 
 /**
+ * @brief The matrix analogue of TransformedFunctionCoefficient:
+ * @f$M(\xi(x))@f$ for a matrix-valued function of physical position (the
+ * referential expression of a physical matrix field, e.g. a stress).
+ */
+class TransformedMatrixFunctionCoefficient : public mfem::MatrixCoefficient {
+ public:
+  TransformedMatrixFunctionCoefficient(
+      int dim, mfem::VectorCoefficient& xi,
+      std::function<void(const mfem::Vector&, mfem::DenseMatrix&)> f)
+      : mfem::MatrixCoefficient(dim), xi_{&xi}, f_{std::move(f)} {}
+
+  void Eval(mfem::DenseMatrix& M, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::VectorCoefficient* xi_;
+  std::function<void(const mfem::Vector&, mfem::DenseMatrix&)> f_;
+  mfem::Vector y_;
+};
+
+/**
  * @brief The Jacobian @f$J = \det F@f$ of a mapping (not owned) as a
  * scalar coefficient: the factor of every pulled-back volume term.
  */

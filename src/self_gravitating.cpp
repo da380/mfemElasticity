@@ -442,6 +442,9 @@ void LinearQuasiStaticSelfGravitatingProblem::SetupCoupling() {
   Array<int> empty;
   auto add_interfaces = [&](MixedBilinearForm& form) {
     for (auto& f : fluids_) {
+      if (!f.interface_potential_coupling) {
+        continue;  // buoyancy-only (Winkler) interface: no (F3)
+      }
       auto minus_rho = std::make_unique<ProductCoefficient>(
           -1.0, InterfaceDensity(f));
       form.AddBoundaryIntegrator(

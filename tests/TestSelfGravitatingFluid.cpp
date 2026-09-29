@@ -422,6 +422,60 @@ TEST_P(SelfGravitatingFluidTest, LoadPotentialIgnoresTheFluidMass) {
   EXPECT_GT(RelDiff(with->Potential(), without->Potential()), 1e-4);
 }
 
+// The approximate CMB conditions of the GIA literature are degenerate
+// cases of the FluidRegion machinery (doc/self_gravitation.md): 'uniform'
+// = constant interface density with the fluid mass term dropped, 'winkler'
+// = uniform without the interface potential coupling (F3). Both stay
+// symmetric (the two solvers agree), and both move the answer.
+TEST(SelfGravitatingFluidCMB, ApproximateConditions) {
+  Case c(2, 2);
+  ConstantCoefficient zero(0.0);
+  ConstantCoefficient rho_c(1.1);  // the core-top density of the profile
+
+  auto full = c.Problem();
+  full->AssembleForce(0.0);
+  ASSERT_TRUE(full->Solve());
+  GridFunction phi_full(full->Potential());
+
+  auto make = [&](bool coupling) {
+    std::vector<FluidRegion> regions;
+    auto f = OuterCore(*c.solid, c.rho_f);
+    f.density_gradient = &zero;
+    f.interface_density = &rho_c;
+    f.interface_potential_coupling = coupling;
+    regions.push_back(f);
+    return c.Problem(true, true, &regions);
+  };
+
+  auto uniform = make(true);
+  uniform->AssembleForce(0.0);
+  ASSERT_TRUE(uniform->Solve());
+  GridFunction phi_uniform(uniform->Potential());
+
+  auto winkler = make(false);
+  winkler->AssembleForce(0.0);
+  ASSERT_TRUE(winkler->Solve());
+  GridFunction phi_winkler(winkler->Potential());
+
+  auto rel_diff = [](const GridFunction& a, const GridFunction& b) {
+    GridFunction d(a);
+    d -= b;
+    return L2Norm(d) / L2Norm(b);
+  };
+
+  // A sign slip in dropping one half of F3 would break the symmetry the
+  // two solvers share; their agreement is the sharpest check.
+  winkler->SetSolverType(
+      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+  winkler->AssembleForce(0.0);
+  ASSERT_TRUE(winkler->Solve());
+  EXPECT_LT(rel_diff(winkler->Potential(), phi_winkler), 1e-6);
+
+  // The approximations are not no-ops on the stratified test model.
+  EXPECT_GT(rel_diff(phi_full, phi_uniform), 1e-3);
+  EXPECT_GT(rel_diff(phi_uniform, phi_winkler), 1e-3);
+}
+
 INSTANTIATE_TEST_SUITE_P(SelfGravitatingFluid, SelfGravitatingFluidTest,
                          testing::Values(Param{2, 1}, Param{2, 2},
                                          Param{3, 1}));

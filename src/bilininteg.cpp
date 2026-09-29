@@ -682,6 +682,151 @@ void ElasticTensorIntegrator::AssembleElementMatrix(
   }
 }
 
+void GeometricStiffnessIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dof = el.GetDof();
+  const auto dim = el.GetDim();
+  MFEM_VERIFY(dim == Trans.GetSpaceDim(),
+              "GeometricStiffnessIntegrator: manifold elements are not "
+              "supported.");
+  MFEM_VERIFY(S_->GetHeight() == dim && S_->GetWidth() == dim,
+              "GeometricStiffnessIntegrator: the stress coefficient must be "
+              "d x d.");
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape_, gshape_, Sq_, tmp_, G_;
+  DenseMatrix F_, gshape_map_;
+#endif
+  dshape_.SetSize(dof, dim);
+  gshape_.SetSize(dof, dim);
+  Sq_.SetSize(dim);
+  tmp_.SetSize(dof, dim);
+  G_.SetSize(dof);
+  G_ = 0.0;
+  if (map_) {
+    F_.SetSize(dim);
+    gshape_map_.SetSize(dof, dim);
+  }
+
+  const IntegrationRule* ir = IntRule;
+  if (ir == nullptr) {
+    ir = &IntRules.Get(el.GetGeomType(), 2 * Trans.OrderGrad(&el));
+  }
+
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    el.CalcDShape(ip, dshape_);
+    Mult(dshape_, Trans.InverseJacobian(), gshape_);
+    auto w = ip.weight * Trans.Weight();
+    const DenseMatrix* g = &gshape_;
+    if (map_) {
+      // Relabelling pull-back: derivatives w.r.t. the mapped coordinates
+      // and the Jacobian in the weight.
+      map_->EvalGradient(F_, Trans, ip);
+      w *= F_.Det();
+      F_.Invert();
+      Mult(gshape_, F_, gshape_map_);
+      g = &gshape_map_;
+    }
+    S_->Eval(Sq_, Trans, ip);
+    Mult(*g, Sq_, tmp_);
+    AddMult_a_ABt(w, tmp_, *g, G_);
+  }
+
+  // One copy of G per displacement component.
+  const auto uidx = VectorIndex(dim, dof);
+  elmat.SetSize(dof * dim);
+  elmat = 0.0;
+  for (auto k = 0; k < dim; k++) {
+    for (auto i = 0; i < dof; i++) {
+      for (auto j = 0; j < dof; j++) {
+        elmat(uidx(i, k), uidx(j, k)) = G_(i, j);
+      }
+    }
+  }
+}
+
+void MaterialStiffnessIntegrator::StrainDisplacementMatrix(
+    int dim, const mfem::DenseMatrix& gshape, const mfem::DenseMatrix& F,
+    mfem::DenseMatrix& B) {
+  using namespace mfem;
+  const auto dof = gshape.Height();
+  const auto uidx = VectorIndex(dim, dof);
+  const auto sidx = SymmetricMatrixIndex(dim, dof);
+  const real_t inv_sqrt2 = 1.0 / std::numbers::sqrt2_v<real_t>;
+  B.SetSize(sidx.ComponentSize(), uidx.Size());
+  B = 0.0;
+  // sym(F^T Du)_{AB} = (F_{kA} d_B u_k + F_{kB} d_A u_k) / 2, Mandel
+  // scaled: every displacement component contributes to every row.
+  for (auto A = 0; A < dim; A++) {
+    for (auto Bb = 0; Bb <= A; Bb++) {
+      const auto s = sidx.ComponentOffset(A, Bb);
+      if (A == Bb) {
+        for (auto k = 0; k < dim; k++) {
+          for (auto i = 0; i < dof; i++) {
+            B(s, uidx(i, k)) = F(k, A) * gshape(i, A);
+          }
+        }
+      } else {
+        for (auto k = 0; k < dim; k++) {
+          for (auto i = 0; i < dof; i++) {
+            B(s, uidx(i, k)) =
+                inv_sqrt2 * (F(k, A) * gshape(i, Bb) + F(k, Bb) * gshape(i, A));
+          }
+        }
+      }
+    }
+  }
+}
+
+void MaterialStiffnessIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dof = el.GetDof();
+  const auto dim = el.GetDim();
+  const auto n = SymmetricMatrixIndex(dim, dof).ComponentSize();
+  MFEM_VERIFY(dim == Trans.GetSpaceDim(),
+              "MaterialStiffnessIntegrator: manifold elements are not "
+              "supported.");
+  MFEM_VERIFY(C_->GetHeight() == n && C_->GetWidth() == n,
+              "MaterialStiffnessIntegrator: the tensor coefficient must be "
+              "n_s x n_s with n_s = d(d+1)/2.");
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape_, gshape_, B_, Cq_, CB_, F_;
+#endif
+  dshape_.SetSize(dof, dim);
+  gshape_.SetSize(dof, dim);
+  F_.SetSize(dim);
+  CB_.SetSize(n, dim * dof);
+  elmat.SetSize(dof * dim);
+  elmat = 0.0;
+
+  const IntegrationRule* ir = IntRule;
+  if (ir == nullptr) {
+    ir = &IntRules.Get(el.GetGeomType(), 2 * Trans.OrderGrad(&el));
+  }
+
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    el.CalcDShape(ip, dshape_);
+    Mult(dshape_, Trans.InverseJacobian(), gshape_);
+    // The equilibrium mapping enters the strain operator alone: no
+    // Jacobian factor (the strain energy is per referential volume).
+    map_->EvalGradient(F_, Trans, ip);
+    StrainDisplacementMatrix(dim, gshape_, F_, B_);
+    const auto w = ip.weight * Trans.Weight();
+    C_->Eval(Cq_, Trans, ip);
+    Mult(Cq_, B_, CB_);
+    AddMult_a_AtB(w, B_, CB_, elmat);
+  }
+}
+
 const mfem::IntegrationRule& TransformedDiffusionIntegrator::GetRule(
     const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
     const mfem::ElementTransformation& Trans) {

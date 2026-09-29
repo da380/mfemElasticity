@@ -104,4 +104,74 @@ class BarotropicDensityGradientCoefficient : public mfem::Coefficient {
   mfem::Vector gr_, gp_;
 };
 
+/**
+ * @brief A matrix-valued delta function @f$\mathbf{M}\,\delta(\mathbf{x} -
+ * \mathbf{x}_c)@f$: a constant matrix (a moment tensor, or a point stress
+ * glut) times an mfem::DeltaCoefficient, following the pattern of
+ * mfem::VectorDeltaCoefficient.
+ *
+ * Passed to a DomainLFDeformationGradientIntegrator it assembles the point
+ * source @f$v \mapsto M_{ij}\,\partial_j v_i(\mathbf{x}_c)@f$ (times the
+ * delta's scale and optional weight), the weak form of the equivalent body
+ * force @f$-\mathrm{Div}[\mathbf{M}\,\delta(\mathbf{x}-\mathbf{x}_c)]@f$ of
+ * a moment-tensor point source. The center, scale and time dependence are
+ * the wrapped DeltaCoefficient's. Like its scalar and vector counterparts
+ * it cannot be Eval()uated pointwise.
+ *
+ * In parallel the source is assembled on the rank whose local mesh contains
+ * the center (MFEM's delta machinery); a center placed exactly on a shared
+ * element boundary may be found by more than one rank, so keep point
+ * sources strictly inside elements.
+ */
+class MatrixDeltaCoefficient : public mfem::MatrixCoefficient {
+ public:
+  /** @brief A unit delta at the origin times @p M (square, its dimension
+   * the space dimension); @p M is copied. */
+  explicit MatrixDeltaCoefficient(const mfem::DenseMatrix& M)
+      : mfem::MatrixCoefficient(M.Height()), M_(M) {}
+
+  /** @brief 2-D: @f$s\,\mathbf{M}\,\delta(\mathbf{x} - (x,y))@f$. */
+  MatrixDeltaCoefficient(const mfem::DenseMatrix& M, mfem::real_t x,
+                         mfem::real_t y, mfem::real_t s)
+      : mfem::MatrixCoefficient(M.Height()), M_(M), d_(x, y, s) {}
+
+  /** @brief 3-D: @f$s\,\mathbf{M}\,\delta(\mathbf{x} - (x,y,z))@f$. */
+  MatrixDeltaCoefficient(const mfem::DenseMatrix& M, mfem::real_t x,
+                         mfem::real_t y, mfem::real_t z, mfem::real_t s)
+      : mfem::MatrixCoefficient(M.Height()), M_(M), d_(x, y, z, s) {}
+
+  /** @brief Set the time in the wrapped DeltaCoefficient (for a
+   * time-dependent weight). */
+  void SetTime(mfem::real_t t) override;
+
+  /** @brief The wrapped scalar DeltaCoefficient (center, scale, weight). */
+  mfem::DeltaCoefficient& GetDeltaCoefficient() { return d_; }
+
+  void SetScale(mfem::real_t s) { d_.SetScale(s); }
+  void SetDeltaCenter(const mfem::Vector& center) {
+    d_.SetDeltaCenter(center);
+  }
+  void GetDeltaCenter(mfem::Vector& center) { d_.GetDeltaCenter(center); }
+
+  /** @brief Replace the matrix (same dimensions). */
+  void SetMatrix(const mfem::DenseMatrix& M);
+
+  /** @brief The matrix @f$\mathbf{M}@f$. */
+  const mfem::DenseMatrix& Matrix() const { return M_; }
+
+  /** @brief @f$\mathbf{M}@f$ times DeltaCoefficient::EvalDelta() of the
+   * wrapped delta. */
+  virtual void EvalDelta(mfem::DenseMatrix& M, mfem::ElementTransformation& T,
+                         const mfem::IntegrationPoint& ip);
+
+  /** @brief A delta function cannot be evaluated pointwise: calling this
+   * is an MFEM error, as for mfem::VectorDeltaCoefficient. */
+  void Eval(mfem::DenseMatrix& M, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::DenseMatrix M_;
+  mfem::DeltaCoefficient d_;
+};
+
 }  // namespace mfemElasticity

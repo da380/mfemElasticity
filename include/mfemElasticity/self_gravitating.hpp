@@ -46,6 +46,13 @@ namespace mfemElasticity {
  *   sign of @f$\mathbf{m}\cdot\nabla\Phi_0@f$ does that.
  * - @p interface_density: @f$\rho_F@f$ on those boundary elements; default
  *   @p density.
+ * - @p interface_potential_coupling: when false, the interface coupling
+ *   (F3) is dropped — both halves, so the operator stays symmetric — and
+ *   the fluid presses on the solid through the buoyancy term (F2) alone
+ *   (a "Winkler foundation"). With @p density_gradient zero and a constant
+ *   @p interface_density this reproduces, in steps, the approximate CMB
+ *   conditions of the GIA literature (see doc/self_gravitation.md §2 and
+ *   the benchmark option `-cmb`).
  */
 struct FluidRegion {
   mfem::Array<int> attributes;
@@ -53,6 +60,7 @@ struct FluidRegion {
   mfem::Coefficient* density_gradient = nullptr;
   mfem::Array<int> interface_marker;
   mfem::Coefficient* interface_density = nullptr;
+  bool interface_potential_coupling = true;
 };
 
 /**

@@ -94,6 +94,7 @@ def style() -> None:
 def read_run(path: Path, *, fluid: bool) -> Run:
     r = json.loads(path.read_text())
     gauged = r.get("fluid_treatment") == "gauged"
+    cmb = r.get("cmb", "full")
     values: dict[str, dict[int, float]] = {key: {} for key, *_ in QUANTITIES}
     seconds = r["setup_seconds"]
     for d in r["degrees"]:
@@ -117,6 +118,8 @@ def read_run(path: Path, *, fluid: bool) -> Run:
             values[key][l] = d[forcing][name]
     h = float(path.parent.name[1:])
     label = f"h = {h:g}, order {r['order']}" + (" (gauged)" if gauged else "")
+    if cmb != "full":
+        label += f" (cmb {cmb})"
     return Run(h=h, order=r["order"], ranks=r["ranks"], seconds=seconds,
                unknowns=r["displacement_unknowns"] + r["potential_unknowns"],
                values=values, label=label)
@@ -157,11 +160,12 @@ def print_table(runs: list[Run], ref: dict) -> None:
 
 
 def finest_per_order(runs: list[Run]) -> list[Run]:
-    # One entry per order and fluid treatment (gauged runs are their own
-    # series).
-    best: dict[tuple[int, bool], Run] = {}
+    # One entry per order and fluid/CMB treatment (each variant is its own
+    # series, tagged in the label's parenthetical).
+    best: dict[tuple[int, str], Run] = {}
     for run in runs:
-        key = (run.order, "(gauged)" in run.label)
+        i = run.label.find("(")
+        key = (run.order, run.label[i:] if i >= 0 else "")
         if key not in best or run.h < best[key].h:
             best[key] = run
     return [best[k] for k in sorted(best)]

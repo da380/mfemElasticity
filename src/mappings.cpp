@@ -186,6 +186,14 @@ void TransformedVectorFunctionCoefficient::Eval(Vector& V,
   f_(y_, V);
 }
 
+void TransformedMatrixFunctionCoefficient::Eval(DenseMatrix& M,
+                                                ElementTransformation& T,
+                                                const IntegrationPoint& ip) {
+  xi_->Eval(y_, T, ip);
+  M.SetSize(height, width);
+  f_(y_, M);
+}
+
 real_t JacobianCoefficient::Eval(ElementTransformation& T,
                                  const IntegrationPoint& ip) {
   return xi_->Jacobian(T, ip);

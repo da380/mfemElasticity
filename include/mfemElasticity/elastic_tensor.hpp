@@ -243,4 +243,43 @@ class DeviatoricProjectionElasticTensorCoefficient
   mfem::DenseMatrix P_, Cq_, tmp_;
 };
 
+/**
+ * @brief The bare (strain-energy) elastic tensor from the seismological
+ * effective one under hydrostatic pre-stress with pressure @f$p^0@f$:
+ * @f[
+ *   C_{ijkl} = C^{\mathrm{eff}}_{ijkl}
+ *     - p^0\,(\delta_{ij}\delta_{kl} - \delta_{il}\delta_{jk}
+ *             - \delta_{ik}\delta_{jl}),
+ * @f]
+ * i.e. in Mandel form @f$\hat C = \hat C^{\mathrm{eff}} - p^0\,\hat 1
+ * \hat 1^T + 2 p^0 I@f$ — the inverse of Woodhouse & Deuss (2007, eq. 61).
+ * Tabulated (PREM) moduli are components of @f$C^{\mathrm{eff}}@f$; the
+ * general referential form assembles the bare @f$C@f$, and this decorator
+ * keeps model files seismological while making the conversion impossible
+ * to forget (doc/gravitating_elasticity.md §2). Isotropically:
+ * @f$\lambda = \lambda^{\mathrm{eff}} - p^0@f$,
+ * @f$\mu = \mu^{\mathrm{eff}} + p^0@f$,
+ * @f$\kappa = \kappa^{\mathrm{eff}} - p^0/3@f$; a fluid
+ * (@f$\mu^{\mathrm{eff}} = 0@f$) has the bare shear modulus @f$p^0@f$.
+ * The conversion is three-dimensional physics; the 2-D variant applies
+ * the same Mandel formula and is formal.
+ */
+class BareElasticTensorCoefficient : public ElasticTensorCoefficient {
+ public:
+  /**
+   * @param dim Space dimension.
+   * @param C_eff The effective (seismological) tensor; not owned.
+   * @param p0 The equilibrium pressure @f$p^0@f$; not owned.
+   */
+  BareElasticTensorCoefficient(int dim, mfem::MatrixCoefficient& C_eff,
+                               mfem::Coefficient& p0);
+
+  void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::MatrixCoefficient* C_;
+  mfem::Coefficient* p_;
+};
+
 }  // namespace mfemElasticity

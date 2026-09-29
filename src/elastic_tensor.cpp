@@ -371,4 +371,31 @@ void DeviatoricProjectionElasticTensorCoefficient::Eval(
   }
 }
 
+BareElasticTensorCoefficient::BareElasticTensorCoefficient(
+    int dim, MatrixCoefficient& C_eff, Coefficient& p0)
+    : ElasticTensorCoefficient(dim), C_(&C_eff), p_(&p0) {
+  MFEM_VERIFY(C_eff.GetHeight() == SymmetricTensorBasis::Size(dim) &&
+                  C_eff.GetWidth() == SymmetricTensorBasis::Size(dim),
+              "BareElasticTensorCoefficient: size mismatch.");
+}
+
+void BareElasticTensorCoefficient::Eval(DenseMatrix& K,
+                                        ElementTransformation& T,
+                                        const IntegrationPoint& ip) {
+  C_->Eval(K, T, ip);
+  const auto p = p_->Eval(T, ip);
+  const int n = SymmetricTensorBasis::Size(dim_);
+  // C_eff - p 1^ 1^T + 2 p I in Mandel form (the identity's Mandel vector
+  // has entry 1 on the diagonal components and 0 on the shears).
+  for (int j = 0; j < dim_; j++) {
+    const int sj = SymmetricTensorBasis::Index(dim_, j, j);
+    for (int k = 0; k < dim_; k++) {
+      K(sj, SymmetricTensorBasis::Index(dim_, k, k)) -= p;
+    }
+  }
+  for (int s = 0; s < n; s++) {
+    K(s, s) += 2.0 * p;
+  }
+}
+
 }  // namespace mfemElasticity
