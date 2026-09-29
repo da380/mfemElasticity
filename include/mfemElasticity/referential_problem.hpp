@@ -66,6 +66,42 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
 #endif
 
 /**
+ * @brief The symmetrised slip-interface pressure blocks
+ * (doc/slip_interface.tex, Proposition 1): with @f$G@f$ the one-sided
+ * kernel of SlipInterfacePressureIntegrator assembled on the solid
+ * side, the pairing @f$J@f$, the sum map @f$S = [I, J]@f$ and the jump
+ * map @f$D = [I, -J]@f$, the interface bilinear form on the broken pair
+ * @f$(u_s, u_f)@f$ is
+ * @f[
+ *   B_\Sigma = -\tfrac12\,(S^T G D + D^T G^T S),
+ * @f]
+ * the minus because @f$G@f$ is assembled with the SOLID submesh's
+ * outward boundary normal, which is @f$-N@f$ of the derivation
+ * (@f$N@f$ out of the fluid) — pinned by the discrete-vs-quadrature
+ * cross-check of TestSlipInterface. Returned as four blocks in the
+ * (solid, fluid) ordering; @f$B@f$ is symmetric, and it annihilates
+ * welded pairs in the quadratic-form sense.
+ */
+struct SlipInterfaceBlocks {
+  std::unique_ptr<mfem::SparseMatrix> ss, sf, fs, ff;
+};
+
+/**
+ * @param fes_s The solid-side shadow space (SubMeshDofInjection).
+ * @param J The dof pairing (solid vdofs x fluid vdofs,
+ * NewSubMeshPairingMatrix).
+ * @param interface_marker Boundary attributes of @f$\Sigma@f$ on the
+ * solid SubMesh.
+ * @param pi The referential pressure on the interface.
+ * @param map The equilibrium mapping (Nanson normal); pass an
+ * IdentityDiffeomorphism at @f$\varphi_e = \mathrm{id}@f$. Serial.
+ */
+SlipInterfaceBlocks NewSlipInterfaceMatrix(
+    mfem::FiniteElementSpace& fes_s, const mfem::SparseMatrix& J,
+    const mfem::Array<int>& interface_marker, mfem::Coefficient& pi,
+    Diffeomorphism& map);
+
+/**
  * @brief The constitutive state of the linearised referential problem as a
  * Rheology: the second elastic tensor @f$\hat C@f$ at equilibrium (Mandel,
  * classical symmetries), the second Piola–Kirchhoff equilibrium stress

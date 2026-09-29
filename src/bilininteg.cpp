@@ -1310,6 +1310,101 @@ void BoundaryNormalNormalIntegrator::AssembleElementMatrix(
   }
 }
 
+const mfem::IntegrationRule& SlipInterfacePressureIntegrator::GetRule(
+    const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
+  const auto order = 2 * el.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(el.GetGeomType(), order);
+}
+
+void SlipInterfacePressureIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto sdim = el.GetDim();
+  const auto dof = el.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector shape_, normal_, nu_;
+  DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
+#endif
+  shape_.SetSize(dof);
+  dshape_.SetSize(dof, sdim);
+  gshape_.SetSize(dof, dim);
+  elmat.SetSize(dim * dof);
+  elmat = 0.0;
+
+  DenseMatrix T(dof, dim);  // T(p, j) = gshape_p . dir_col_j
+
+  const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    if (!BoundaryUnitNormal(Trans, normal_)) {
+      continue;
+    }
+
+    // Physical tangential gradients of the surface shapes:
+    // gshape = dshape (J^T J)^{-1} J^T, and the tangential projector
+    // P_T = J (J^T J)^{-1} J^T, with J the dim x (dim-1) surface
+    // Jacobian.
+    el.CalcShape(ip, shape_);
+    el.CalcDShape(ip, dshape_);
+    const DenseMatrix& Js = Trans.Jacobian();
+    JtJ_.SetSize(sdim);
+    MultAtB(Js, Js, JtJ_);
+    DenseMatrixInverse JtJinv(JtJ_);
+    DenseMatrix JtJi(sdim);
+    JtJinv.GetInverseMatrix(JtJi);
+    // Jt_ = (J^T J)^{-1} J^T
+    Jt_.SetSize(sdim, dim);
+    {
+      DenseMatrix JsT(sdim, dim);
+      for (int a = 0; a < sdim; a++) {
+        for (int b = 0; b < dim; b++) {
+          JsT(a, b) = Js(b, a);
+        }
+      }
+      Mult(JtJi, JsT, Jt_);
+    }
+    Mult(dshape_, Jt_, gshape_);
+    PT_.SetSize(dim);
+    Mult(Js, Jt_, PT_);
+
+    // Mapping data: nu = cof(F) n (identity: nu = n), and F^{-1}.
+    F_.SetSize(dim);
+    Fi_.SetSize(dim);
+    if (map_) {
+      map_->MapNormal(normal_, Trans, ip, nu_);
+      map_->EvalGradient(F_, Trans, ip);
+      CalcInverse(F_, Fi_);
+    } else {
+      nu_ = normal_;
+      Fi_ = 0.0;
+      for (int d = 0; d < dim; d++) {
+        Fi_(d, d) = 1.0;
+      }
+    }
+    dir_.SetSize(dim);
+    Mult(PT_, Fi_, dir_);
+    Mult(gshape_, dir_, T);
+
+    const auto w =
+        ip.weight * Trans.Weight() * pi_->Eval(Trans, ip);
+    for (int i = 0; i < dim; i++) {
+      for (int p = 0; p < dof; p++) {
+        const double row = w * nu_[i];
+        for (int j = 0; j < dim; j++) {
+          const double tv = row * T(p, j);
+          for (int qq = 0; qq < dof; qq++) {
+            elmat(p + i * dof, qq + j * dof) += tv * shape_[qq];
+          }
+        }
+      }
+    }
+  }
+}
+
 const mfem::IntegrationRule& BoundaryNormalScalarIntegrator::GetRule(
     const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
     const mfem::ElementTransformation& Trans) {

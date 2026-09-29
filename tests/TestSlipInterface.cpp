@@ -4,6 +4,8 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "mfem.hpp"
+#include "mfemElasticity.hpp"
 
 /*
   Finite-difference verification of the slip-interface second variation
@@ -50,7 +52,8 @@ using Vec2 = std::array<double, 2>;
 using Mat2 = std::array<std::array<double, 2>, 2>;
 
 constexpr double kPi = 3.14159265358979323846;
-constexpr double rc = 0.6;      // referential interface radius
+double rc = 0.6;  // referential interface radius (a variable: the
+                  // discrete cross-check resets it to the mesh's)
 constexpr double rOut = 0.9;    // support limit of the solid field
 constexpr double piP = 0.3;     // referential pressure
 constexpr double lam = 1.1, mu = 0.7, kap = 2.0;
@@ -482,4 +485,139 @@ TEST(SlipInterface, SecondVariationMapped) {
   // f = 1.15 - (0.15/0.81) r^2: curved radial map, f(0.9) = 1 - ish,
   // J_e and nu genuinely non-trivial on Sigma.
   RunCase(EquilibriumMap{1.15, 0.15 / 0.81}, "phi_e radial");
+}
+
+
+// ---------------------------------------------------------------------------
+// The discrete interface matrix (SlipInterfacePressureIntegrator +
+// NewSlipInterfaceMatrix) against the FD-verified quadrature form: the
+// same analytic fields interpolated onto the broken FE pair must
+// reproduce B_Sigma(v, v) at interpolation accuracy, improving with
+// order; a welded pair (equal traces) is annihilated in the quadratic
+// form to round-off. Both the identity and the curved radial mapping.
+TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
+  using namespace mfem;
+  using namespace mfemElasticity;
+
+  const double rc_saved = rc;
+  rc = 3483.0 / 6371.0;  // the two-layer mesh's interface radius
+
+  const Field V1{0.31, 0.62, -0.41, 0.53, 0.27};
+  const SlipFlow S1{0.8, 0.0};
+
+  struct Case {
+    EquilibriumMap phi;
+    const char* label;
+  };
+  const std::vector<Case> cases = {{EquilibriumMap{1.0, 0.0}, "id"},
+                                   {EquilibriumMap{1.15, 0.15 / 0.81},
+                                    "radial"}};
+
+  for (const auto& cs : cases) {
+    SCOPED_TRACE(cs.label);
+    Model m{cs.phi};
+    const double ref = BSigma(m, V1, S1, V1, S1, 4096);
+
+    // The discrete mapping object matching EquilibriumMap.
+    const double f0 = cs.phi.f0, f2 = cs.phi.f2;
+    CallableDiffeomorphism map(
+        2,
+        [f0, f2](const Vector& x, Vector& y) {
+          const double f = f0 - f2 * (x * x);
+          y.SetSize(2);
+          y(0) = f * x(0);
+          y(1) = f * x(1);
+        },
+        [f0, f2](const Vector& x, DenseMatrix& F) {
+          const double f = f0 - f2 * (x * x);
+          F.SetSize(2);
+          F = 0.0;
+          F(0, 0) = f;
+          F(1, 1) = f;
+          for (int i = 0; i < 2; i++) {
+            for (int j = 0; j < 2; j++) {
+              F(i, j) += -2.0 * f2 * x(i) * x(j);
+            }
+          }
+        });
+
+    VectorFunctionCoefficient vs_coeff(2, [&](const Vector& x, Vector& v) {
+      const Vec2 val = V1.Eval({x(0), x(1)});
+      v.SetSize(2);
+      v(0) = val[0];
+      v(1) = val[1];
+    });
+    VectorFunctionCoefficient vf_coeff(2, [&](const Vector& x, Vector& v) {
+      const Vec2 val = VFluid(m, V1, S1, {x(0), x(1)});
+      v.SetSize(2);
+      v(0) = val[0];
+      v(1) = val[1];
+    });
+
+    std::vector<double> rel;
+    double welded = 0.0, scale = 0.0;
+    for (int order : {1, 2}) {
+      Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+      Array<int> fluid_attr({1}), solid_attr({2});
+      SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attr));
+      SubMesh fluid(SubMesh::CreateFromDomain(parent, fluid_attr));
+      H1_FECollection fec(order, 2);
+      FiniteElementSpace fes_parent(&parent, &fec, 2);
+      auto fes_s = SubMeshDofInjection::MakeShadowSpace(fes_parent, solid);
+      auto fes_f = SubMeshDofInjection::MakeShadowSpace(fes_parent, fluid);
+      SubMeshDofInjection inj_s(*fes_s, fes_parent),
+          inj_f(*fes_f, fes_parent);
+      auto J = NewSubMeshPairingMatrix(inj_s, inj_f);
+
+      // Interface marker: the solid-submesh boundary attributes whose
+      // elements sit at the CMB radius.
+      Array<int> marker(solid.bdr_attributes.Max());
+      marker = 0;
+      for (int i = 0; i < solid.GetNBE(); i++) {
+        auto* tr = solid.GetBdrElementTransformation(i);
+        Vector c(2);
+        tr->Transform(Geometries.GetCenter(solid.GetBdrElementGeometry(i)),
+                      c);
+        const double r = c.Norml2();
+        if (r > 0.9 * rc && r < 1.1 * rc) {
+          marker[solid.GetBdrAttribute(i) - 1] = 1;
+        }
+      }
+
+      ConstantCoefficient piC(piP);
+      auto B = NewSlipInterfaceMatrix(*fes_s, *J, marker, piC, map);
+
+      GridFunction us(fes_s.get()), uf(fes_f.get());
+      us.ProjectCoefficient(vs_coeff);
+      uf.ProjectCoefficient(vf_coeff);
+
+      auto quadform = [&](const GridFunction& a, const GridFunction& b) {
+        Vector t(us.Size());
+        double v = 0.0;
+        B.ss->Mult(a, t);
+        v += InnerProduct(a, t);
+        B.sf->Mult(b, t);
+        v += 2.0 * InnerProduct(a, t);
+        Vector tf(uf.Size());
+        B.ff->Mult(b, tf);
+        v += InnerProduct(b, tf);
+        return v;
+      };
+      const double val = quadform(us, uf);
+      rel.push_back(std::abs(val - ref) / std::abs(ref));
+
+      if (order == 2) {
+        // Welded pair: same field on both sides -> quadratic form ~ 0.
+        GridFunction uw(fes_f.get());
+        uw.ProjectCoefficient(vs_coeff);
+        welded = std::abs(quadform(us, uw));
+        scale = std::abs(ref);
+      }
+    }
+    EXPECT_LT(rel[1], 0.05);
+    EXPECT_LT(rel[1], rel[0]);
+    EXPECT_LT(welded, 1e-10 * scale);
+  }
+
+  rc = rc_saved;
 }

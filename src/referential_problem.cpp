@@ -53,6 +53,43 @@ class ReferentialStiffness : public ElasticStiffness {
 
 }  // namespace
 
+SlipInterfaceBlocks NewSlipInterfaceMatrix(FiniteElementSpace& fes_s,
+                                           const SparseMatrix& J,
+                                           const Array<int>& interface_marker,
+                                           Coefficient& pi,
+                                           Diffeomorphism& map) {
+  // The one-sided kernel G on the solid side.
+  Array<int> marker(interface_marker);
+  BilinearForm g(&fes_s);
+  g.AddBoundaryIntegrator(new SlipInterfacePressureIntegrator(pi, map),
+                          marker);
+  g.Assemble();
+  g.Finalize();
+  const SparseMatrix& G = g.SpMat();
+  std::unique_ptr<SparseMatrix> Gt(Transpose(G));
+
+  // B = (S^T G D + D^T G^T S)/2, S = [I, J], D = [I, -J]:
+  //   ss =  (G + G^T)/2,          sf = (G^T - G)/2 J,
+  //   fs = sf^T,                  ff = -J^T (G + G^T)/2 J.
+  std::unique_ptr<SparseMatrix> Gsym(Add(0.5, G, 0.5, *Gt));
+  std::unique_ptr<SparseMatrix> Gskew(Add(0.5, *Gt, -0.5, G));
+  std::unique_ptr<SparseMatrix> Jt(Transpose(J));
+
+  // Normal convention: the derivation's N points OUT OF THE FLUID, but
+  // assembly on the solid submesh supplies the solid's outward normal,
+  // which is -N -- hence the overall minus on every block (pinned by
+  // the discrete-vs-quadrature cross-check).
+  SlipInterfaceBlocks B;
+  B.ss = std::make_unique<SparseMatrix>(*Gsym);
+  *B.ss *= -1.0;
+  B.sf.reset(mfem::Mult(*Gskew, J));
+  *B.sf *= -1.0;
+  B.fs.reset(Transpose(*B.sf));
+  std::unique_ptr<SparseMatrix> tmp(mfem::Mult(*Jt, *Gsym));
+  B.ff.reset(mfem::Mult(*tmp, J));
+  return B;
+}
+
 
 std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
     FiniteElementSpace& body_fes, FiniteElementSpace& buffer_fes,

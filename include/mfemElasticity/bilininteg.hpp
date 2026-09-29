@@ -1701,6 +1701,55 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
+ * @brief The one-sided kernel of the slip-interface pressure form
+ * (doc/slip_interface.tex, Proposition 1): on boundary elements of one
+ * (solid-side) vector space,
+ * \f[
+ *   G(\bvec{u}, \bvec{w}) = \oint_\Sigma \pi\;
+ *     \bnu\cdot\nabla_\Sigma \bvec{u}\,[\,P_T F_e^{-1}\bvec{w}\,]\,\dd S,
+ * \f]
+ * with \f$\bnu = \mathrm{cof}(F_e)\,\bvec{n}\f$ the unnormalised Nanson
+ * normal of the mapping (identity map: \f$\bnu = \bvec{n}\f$),
+ * \f$\nabla_\Sigma\f$ the tangential (surface shape-function) gradient,
+ * and \f$P_T\f$ the tangential projector (the direction slot is
+ * tangential on the slip constraint; the projector makes the discrete
+ * form well defined off it). NON-symmetric by design: the symmetrised
+ * two-field interface blocks are built from \f$G\f$ and the pairing by
+ * NewSlipInterfaceMatrix. The space must be a nodal vector space with
+ * vdim equal to the space dimension and Ordering::byNODES.
+ */
+class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::Coefficient* pi_;
+  Diffeomorphism* map_ = nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector shape_, normal_, nu_;
+  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
+#endif
+
+ public:
+  /** @param pi The referential pressure on the interface.
+   *  @param ir Optional integration rule. The mapping defaults to the
+   *  identity. */
+  explicit SlipInterfacePressureIntegrator(
+      mfem::Coefficient& pi, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), pi_{&pi} {}
+
+  SlipInterfacePressureIntegrator(mfem::Coefficient& pi, Diffeomorphism& map,
+                                  const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), pi_{&pi}, map_{&map} {}
+
+  /** @brief Default rule: 2 el.GetOrder() + Trans.OrderW(). */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans);
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+};
+
+/**
  * @brief Mixed boundary integrator acting on a scalar trial field \f$p\f$
  * and a vector test field \f$\bvec{v}\f$:
  * \f[

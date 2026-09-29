@@ -493,12 +493,19 @@ natural configuration ($J^{(0)} = 1$) --- hence in all their stated
 applications --- and consistent with the general rule of
 Remark~\ref{rem:jacobian}: an oversight, not a convention.
 
-Organisationally, both papers keep the multiplier
-($\varpi^{(1)}$) as an unknown (a mixed formulation); our $B_\Sigma$
-is the same content with the \emph{background} multiplier eliminated
-through its known value $\pi$, plus the collapse to trace-only
-tangential derivatives, which appears to be new and is what makes the
-implementation curvature-free.
+Organisationally the two papers differ: AC18's final weak form
+(their eqs.~118--120) imposes the slip constraint on the configuration
+space and \emph{eliminates} the first-order multiplier
+$\varpi^{(1)}$, so their linearised equations carry only the
+\emph{given} background field $\varpi^{(0)}$ (their footnote relates
+$-\varpi^{(0)}$ to Woodhouse--Dahlen's $\pi_0$; the identification
+with our $\pi$ is up to that sign convention, which nothing here
+relies on). MA24 instead imposes the test-function constraint weakly
+with a multiplier field $\varpi$ (their eq.~170) --- a mixed
+formulation. Our $B_\Sigma$ is AC18's organisation --- background
+data only, constraint on the space (via penalty + AL in practice) ---
+plus the collapse to trace-only tangential derivatives, which appears
+to be new and is what makes the implementation curvature-free.
 
 \textbf{Status.} \S\ref{sec:kin}--\ref{sec:first},
 Lemma~\ref{lem:mub}, Lemma~\ref{lem:noflux}, the $\bs_2$-independence
