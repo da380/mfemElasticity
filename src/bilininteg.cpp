@@ -827,6 +827,177 @@ void MaterialStiffnessIntegrator::AssembleElementMatrix(
   }
 }
 
+void ReferentialGravityIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dof = el.GetDof();
+  const auto dim = el.GetDim();
+  MFEM_VERIFY(dim == Trans.GetSpaceDim(),
+              "ReferentialGravityIntegrator: manifold elements are not "
+              "supported.");
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape_, gshape_, F_, a_, M_, P_, ag_;
+  Vector g0v_, w_, beta_, gamma_;
+#endif
+  dshape_.SetSize(dof, dim);
+  gshape_.SetSize(dof, dim);
+  F_.SetSize(dim);
+  a_.SetSize(dim);
+  M_.SetSize(dof, dim);
+  P_.SetSize(dof);
+  ag_.SetSize(dof, dim);
+  g0v_.SetSize(dim);
+  w_.SetSize(dim);
+  beta_.SetSize(dof);
+  gamma_.SetSize(dim);
+  const auto uidx = VectorIndex(dim, dof);
+  elmat.SetSize(dof * dim);
+  elmat = 0.0;
+
+  const IntegrationRule* ir = IntRule;
+  if (ir == nullptr) {
+    ir = &IntRules.Get(el.GetGeomType(), 2 * Trans.OrderGrad(&el));
+  }
+
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    el.CalcDShape(ip, dshape_);
+    Mult(dshape_, Trans.InverseJacobian(), gshape_);
+    const auto wq = scale_ * ip.weight * Trans.Weight();
+
+    map_->EvalGradient(F_, Trans, ip);
+    const auto J = F_.Det();
+    F_.Invert();  // F_ now holds F_e^{-1}
+    MultAAt(F_, a_);
+    a_ *= J;  // a_e = J F^{-1} F^{-T}
+    g0_->Eval(g0v_, Trans, ip);
+    a_.Mult(g0v_, w_);                  // w = a_e g0
+    const auto c0 = g0v_ * w_;          // <a_e g0, g0>
+    Mult(gshape_, F_, M_);              // M(a,k) = grad(phi_a) . f_k = tr H
+    gshape_.Mult(w_, beta_);            // beta_a = grad(phi_a) . w
+    F_.MultTranspose(g0v_, gamma_);     // gamma_k = f_k . g0
+    Mult(gshape_, a_, ag_);             // a_e grad(phi_a)
+    MultABt(ag_, gshape_, P_);          // P(a,b) = grad(phi_a) . a_e grad(phi_b)
+
+    // <a''(u,v) g0, g0> for the rank-one H of each basis pair (a,k),(b,l):
+    //   c0 [M_ak M_bl - M_al M_bk]
+    //   - 2 M_ak beta_b gamma_l - 2 M_bl beta_a gamma_k
+    //   + 2 M_al beta_b gamma_k + 2 M_bk beta_a gamma_l
+    //   + 2 gamma_k gamma_l P_ab.
+    for (auto k = 0; k < dim; k++) {
+      for (auto a = 0; a < dof; a++) {
+        const auto row = uidx(a, k);
+        for (auto l = 0; l < dim; l++) {
+          for (auto b = 0; b < dof; b++) {
+            const auto val =
+                c0 * (M_(a, k) * M_(b, l) - M_(a, l) * M_(b, k)) -
+                2.0 * (M_(a, k) * beta_(b) * gamma_(l) +
+                       M_(b, l) * beta_(a) * gamma_(k)) +
+                2.0 * (M_(a, l) * beta_(b) * gamma_(k) +
+                       M_(b, k) * beta_(a) * gamma_(l)) +
+                2.0 * gamma_(k) * gamma_(l) * P_(a, b);
+            elmat(row, uidx(b, l)) += wq * val;
+          }
+        }
+      }
+    }
+  }
+}
+
+void ReferentialGravityCouplingIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dof_p = trial_fe.GetDof();  // scalar potential space
+  const auto dof_u = test_fe.GetDof();   // vector displacement space
+  const auto dim = test_fe.GetDim();
+  MFEM_VERIFY(dim == Trans.GetSpaceDim(),
+              "ReferentialGravityCouplingIntegrator: manifold elements are "
+              "not supported.");
+
+#ifdef MFEM_THREAD_SAFE
+  DenseMatrix dshape_u_, gshape_u_, dshape_p_, gshape_p_, F_, a_, M_;
+  Vector g0v_, w_, beta_, gamma_, fw_, agp_;
+#endif
+  dshape_u_.SetSize(dof_u, dim);
+  gshape_u_.SetSize(dof_u, dim);
+  dshape_p_.SetSize(dof_p, dim);
+  gshape_p_.SetSize(dof_p, dim);
+  F_.SetSize(dim);
+  a_.SetSize(dim);
+  M_.SetSize(dof_u, dim);
+  g0v_.SetSize(dim);
+  w_.SetSize(dim);
+  beta_.SetSize(dof_u);
+  gamma_.SetSize(dim);
+  const auto uidx = VectorIndex(dim, dof_u);
+  elmat.SetSize(dof_u * dim, dof_p);
+  elmat = 0.0;
+
+  const IntegrationRule* ir = IntRule;
+  if (ir == nullptr) {
+    ir = &IntRules.Get(trial_fe.GetGeomType(),
+                       trial_fe.GetOrder() + test_fe.GetOrder() +
+                           Trans.OrderGrad(&test_fe));
+  }
+
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    trial_fe.CalcDShape(ip, dshape_p_);
+    Mult(dshape_p_, Trans.InverseJacobian(), gshape_p_);
+    test_fe.CalcDShape(ip, dshape_u_);
+    Mult(dshape_u_, Trans.InverseJacobian(), gshape_u_);
+    const auto wq = scale_ * ip.weight * Trans.Weight();
+
+    map_->EvalGradient(F_, Trans, ip);
+    const auto J = F_.Det();
+    F_.Invert();
+    MultAAt(F_, a_);
+    a_ *= J;
+    g0_->Eval(g0v_, Trans, ip);
+    a_.Mult(g0v_, w_);
+    Mult(gshape_u_, F_, M_);
+    gshape_u_.Mult(w_, beta_);
+    F_.MultTranspose(g0v_, gamma_);
+
+    // a_e grad(phi_a), once per point.
+    agp_.SetSize(dof_u, dim);
+    Mult(gshape_u_, a_, agp_);
+
+    // <a'(phi_a e_k) g0, grad psi_c>
+    //   = M_ak (w . grad psi_c) - beta_a (f_k . grad psi_c)
+    //     - gamma_k (a_e grad phi_a . grad psi_c).
+    fw_.SetSize(dim);
+    for (auto c = 0; c < dof_p; c++) {
+      real_t wg = 0.0;
+      for (auto A = 0; A < dim; A++) {
+        wg += w_(A) * gshape_p_(c, A);
+      }
+      // f_k . grad psi_c: column k of F^{-1} dotted with the gradient.
+      for (auto k = 0; k < dim; k++) {
+        fw_(k) = 0.0;
+        for (auto A = 0; A < dim; A++) {
+          fw_(k) += F_(A, k) * gshape_p_(c, A);
+        }
+      }
+      for (auto k = 0; k < dim; k++) {
+        for (auto a = 0; a < dof_u; a++) {
+          real_t agg = 0.0;  // a_e grad phi_a . grad psi_c
+          for (auto A = 0; A < dim; A++) {
+            agg += agp_(a, A) * gshape_p_(c, A);
+          }
+          const auto val = M_(a, k) * wg - beta_(a) * fw_(k) - gamma_(k) * agg;
+          elmat(uidx(a, k), c) += wq * val;
+        }
+      }
+    }
+  }
+}
+
 const mfem::IntegrationRule& TransformedDiffusionIntegrator::GetRule(
     const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
     const mfem::ElementTransformation& Trans) {

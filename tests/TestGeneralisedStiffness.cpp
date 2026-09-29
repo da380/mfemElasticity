@@ -315,6 +315,143 @@ TEST_P(GeneralisedStiffnessTest, MaterialAffineEnergyPatch) {
   EXPECT_NEAR(energy, expected, 1e-12 * std::abs(expected));
 }
 
+
+// The referential gravity blocks against second differences of the exact
+// functional T = int <a(F) grad zeta, grad zeta> dV at the equilibrium
+// mapping: the assembled bilinear forms must reproduce the mixed partial
+// derivatives of T in the FE directions to finite-difference accuracy.
+namespace {
+
+double GravityFunctional(Mesh& mesh, Diffeomorphism& phi,
+                         VectorCoefficient& g0, const GridFunction* u,
+                         const GridFunction* v, double e, double d,
+                         const GridFunction* zeta1, double dz, int rule_order) {
+  const int dim = mesh.Dimension();
+  DenseMatrix F(dim), Du(dim), Dv(dim), Finv(dim), a(dim);
+  Vector g(dim), gz(dim), ag(dim);
+  double total = 0.0;
+  for (int el = 0; el < mesh.GetNE(); el++) {
+    auto* T = mesh.GetElementTransformation(el);
+    const auto& ir = IntRules.Get(mesh.GetElementGeometry(el), rule_order);
+    for (int q = 0; q < ir.GetNPoints(); q++) {
+      const auto& ip = ir.IntPoint(q);
+      T->SetIntPoint(&ip);
+      phi.EvalGradient(F, *T, ip);
+      if (u) {
+        u->GetVectorGradient(*T, Du);
+        F.Add(e, Du);
+      }
+      if (v) {
+        v->GetVectorGradient(*T, Dv);
+        F.Add(d, Dv);
+      }
+      const double J = F.Det();
+      Finv = F;
+      Finv.Invert();
+      MultAAt(Finv, a);
+      a *= J;
+      g0.Eval(g, *T, ip);
+      if (zeta1) {
+        zeta1->GetGradient(*T, gz);
+        g.Add(dz, gz);
+      }
+      a.Mult(g, ag);
+      total += ip.weight * T->Weight() * (g * ag);
+    }
+  }
+  return total;
+}
+
+}  // namespace
+
+TEST_P(GeneralisedStiffnessTest, ReferentialGravityMatchesFiniteDifference) {
+  const auto [dim, order, elementType] = GetParam();
+  auto mesh = SmallMesh(dim, elementType);
+  mesh.SetCurvature(order);
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&mesh, &fec, dim);
+  FiniteElementSpace fes_p(&mesh, &fec);
+  const int rule_order = 2 * order + 3;
+  const IntegrationRule& ir =
+      IntRules.Get(mesh.GetTypicalElementGeometry(), rule_order);
+
+  auto phi = SmoothMap(dim, 0.07);
+  VectorFunctionCoefficient g0(dim, [dim](const Vector& x, Vector& g) {
+    for (int i = 0; i < dim; i++) {
+      g(i) = 0.4 + 0.3 * std::cos(x(i) + 0.2 * x((i + 1) % dim)) + 0.1 * i;
+    }
+  });
+
+  VectorFunctionCoefficient u_fn(dim, [dim](const Vector& x, Vector& y) {
+    for (int i = 0; i < dim; i++) {
+      y(i) = std::sin(1.3 * x(i)) + 0.5 * x((i + 1) % dim);
+    }
+  });
+  VectorFunctionCoefficient v_fn(dim, [dim](const Vector& x, Vector& y) {
+    for (int i = 0; i < dim; i++) {
+      y(i) = std::cos(0.9 * x((i + 1) % dim)) - 0.3 * x(i) * x(i);
+    }
+  });
+  GridFunction u(&fes_u), v(&fes_u);
+  u.ProjectCoefficient(u_fn);
+  v.ProjectCoefficient(v_fn);
+
+  // Gravity-gravity block: v^T B u = d^2/de dd T(F + e Du + d Dv).
+  {
+    BilinearForm b(&fes_u);
+    b.AddDomainIntegrator(new ReferentialGravityIntegrator(phi, g0, 1.0, &ir));
+    b.Assemble();
+    b.Finalize();
+    Vector Bu(fes_u.GetVSize());
+    b.SpMat().Mult(u, Bu);
+    const double assembled = Bu * v;
+
+    const double h = 1e-4;
+    auto T = [&](double e, double d) {
+      return GravityFunctional(mesh, phi, g0, &u, &v, e, d, nullptr, 0.0,
+                               rule_order);
+    };
+    const double fd =
+        (T(h, h) - T(h, -h) - T(-h, h) + T(-h, -h)) / (4.0 * h * h);
+    EXPECT_NEAR(assembled, fd, 1e-5 * std::abs(fd) + 1e-9);
+
+    // Symmetry of the assembled block.
+    std::unique_ptr<SparseMatrix> Bt(Transpose(b.SpMat()));
+    EXPECT_LT(::MaxDiff(b.SpMat(), *Bt), 1e-12 * b.SpMat().MaxNorm());
+  }
+
+  // Coupling block: u^T C zeta1 = d^2/de dd of T(F + e Du, g0 + d grad z)/2.
+  {
+    FunctionCoefficient z_fn([dim](const Vector& x) {
+      double s = 0.7;
+      for (int i = 0; i < dim; i++) {
+        s += std::sin(0.8 * x(i) + 0.1 * i);
+      }
+      return s;
+    });
+    GridFunction zeta1(&fes_p);
+    zeta1.ProjectCoefficient(z_fn);
+
+    MixedBilinearForm c(&fes_p, &fes_u);
+    c.AddDomainIntegrator(
+        new ReferentialGravityCouplingIntegrator(phi, g0, 1.0, &ir));
+    c.Assemble();
+    c.Finalize();
+    Vector Cz(fes_u.GetVSize());
+    c.SpMat().Mult(zeta1, Cz);
+    const double assembled = Cz * u;
+
+    const double h = 1e-4;
+    auto T = [&](double e, double d) {
+      return 0.5 * GravityFunctional(mesh, phi, g0, &u, nullptr, e, 0.0,
+                                     &zeta1, d, rule_order);
+    };
+    const double fd =
+        (T(h, h) - T(h, -h) - T(-h, h) + T(-h, -h)) / (4.0 * h * h);
+    EXPECT_NEAR(assembled, fd, 1e-5 * std::abs(fd) + 1e-9);
+  }
+}
+
 INSTANTIATE_TEST_SUITE_P(DimOrderType, GeneralisedStiffnessTest,
                          ::testing::Values(std::make_tuple(2, 1, 0),
                                            std::make_tuple(2, 2, 1),

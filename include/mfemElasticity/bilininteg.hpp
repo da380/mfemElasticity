@@ -1223,6 +1223,90 @@ class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
+ * @brief The gravity–gravity displacement block of the linearised
+ * referential system (doc/gravitating_elasticity.md §3.1):
+ * @f[
+ *   (u, v) \mapsto s \int_B \langle a''(u,v)\,\mathbf{g}_0,
+ *   \mathbf{g}_0\rangle\,dV,
+ * @f]
+ * with @f$a(F) = J F^{-1}F^{-T}@f$ evaluated on the equilibrium mapping,
+ * @f$a''@f$ its second derivative in the directions @f$Du, Dv@f$, and
+ * @f$\mathbf{g}_0 = \nabla\zeta^0@f$ the referential gradient of the
+ * background potential. The problem layer passes the scale
+ * @f$s = 1/8\pi G@f$. Assembled through the rank-one structure of
+ * @f$H = F_e^{-1}Du@f$ per basis function — no fourth-order coefficient
+ * is formed.
+ */
+class ReferentialGravityIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  Diffeomorphism* map_;
+  mfem::VectorCoefficient* g0_;
+  mfem::real_t scale_;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape_, gshape_, F_, a_, M_, P_, ag_;
+  mfem::Vector g0v_, w_, beta_, gamma_;
+#endif
+
+ public:
+  ReferentialGravityIntegrator(Diffeomorphism& phi_e,
+                               mfem::VectorCoefficient& grad_zeta0,
+                               mfem::real_t scale = 1.0,
+                               const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir),
+        map_(&phi_e),
+        g0_(&grad_zeta0),
+        scale_(scale) {}
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+};
+
+/**
+ * @brief The displacement–potential coupling of the linearised
+ * referential system (doc/gravitating_elasticity.md §3.1):
+ * @f[
+ *   (\zeta^1, v)\ \text{or}\ (u, \chi) \mapsto
+ *   s \int_B \langle a'(u)\,\mathbf{g}_0, \nabla\chi\rangle\,dV,
+ *   \qquad a'(u) = (\mathrm{tr}H)a_e - H a_e - a_e H^T,\
+ *   H = F_e^{-1}Du,
+ * @f]
+ * as a MixedBilinearForm integrator with the *scalar* potential space as
+ * trial and the *vector* displacement space as test (the layout of the
+ * existing coupling machinery; the transpose serves the other row). The
+ * problem layer passes @f$s = 1/4\pi G@f$.
+ */
+class ReferentialGravityCouplingIntegrator
+    : public mfem::BilinearFormIntegrator {
+ private:
+  Diffeomorphism* map_;
+  mfem::VectorCoefficient* g0_;
+  mfem::real_t scale_;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::DenseMatrix dshape_u_, gshape_u_, dshape_p_, gshape_p_, F_, a_, M_,
+      agp_;
+  mfem::Vector g0v_, w_, beta_, gamma_, fw_;
+#endif
+
+ public:
+  ReferentialGravityCouplingIntegrator(
+      Diffeomorphism& phi_e, mfem::VectorCoefficient& grad_zeta0,
+      mfem::real_t scale = 1.0, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir),
+        map_(&phi_e),
+        g0_(&grad_zeta0),
+        scale_(scale) {}
+
+  /** @brief Rows: vector test dofs; columns: scalar trial dofs. */
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+};
+
+/**
  * @brief BilinearFormIntegrator for the transformed Laplace integrator.
  *
  * The bilinear form acts on a pair of scalar fields through

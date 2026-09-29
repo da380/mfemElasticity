@@ -222,6 +222,81 @@ displacement anywhere, and is indifferent to secular motion. Since the
 general implementation is being built afresh, this implicit approximation
 of the traditional theory is retired along with the others.
 
+### 3.1 The linearised referential system
+
+Write the static part of the action (Maitra & Al-Attar 2024, eq. 21) as
+
+```
+V[φ, ζ] = ∫_B W(x, F) dV + ∫_B ρ ζ dV + (1/8πG) ∫_{ℝ³} ⟨a(F) ∇ζ, ∇ζ⟩ dV,
+a(F) = J F⁻¹F⁻ᵀ,
+```
+
+with the motion extended diffeomorphically to ℝ³ (§3's taper). Stationarity
+in ζ is the referential Poisson equation; stationarity in φ the momentum
+equation. Perturb `φ = φ_e + u`, `ζ = ζ⁰ + ζ¹` and expand to second
+order. With `H_u = F_e⁻¹ Du` (all indices referential; for a vector basis
+function `u = φ_a e_k`, `H` is rank-one), the derivatives of `a` are
+
+```
+a′(u)   = (tr H_u) a_e − H_u a_e − a_e H_uᵀ,
+a″(u,v) = [tr H_u tr H_v − tr(H_u H_v)] a_e
+          − tr H_u (H_v a_e + a_e H_vᵀ) − tr H_v (H_u a_e + a_e H_uᵀ)
+          + (H_u H_v + H_v H_u) a_e + a_e (H_uᵀH_vᵀ + H_vᵀH_uᵀ)
+          + H_u a_e H_vᵀ + H_v a_e H_uᵀ,
+```
+
+symmetric in `u ↔ v` as it must be. The `∫ρζ` term is linear in `ζ` and
+contributes only to the background equations; `ρ` is never differentiated
+anywhere. The linearised system in `(u, ζ¹)`, test functions `(v, χ)`,
+with `g₀ = ∇ζ⁰` and the **referential gravity flux** `w = a_e g₀`
+(the Nanson-transported background gravity):
+
+```
+u-row:  ∫_B ⟨A·Du, Dv⟩ dV                         [material + geometric, §2]
+        + (1/8πG) ∫ ⟨a″(u,v) g₀, g₀⟩ dV            [gravity–gravity]
+        + (1/4πG) ∫ ⟨a′(v) g₀, ∇ζ¹⟩ dV             [coupling, transpose]
+        = ℓ_u(v)
+
+ζ-row:  (1/4πG) ∫ ⟨a_e ∇ζ¹, ∇χ⟩ dV                 [mapped Laplace + DtN]
+        + (1/4πG) ∫ ⟨a′(u) g₀, ∇χ⟩ dV              [coupling]
+        = ℓ_ζ(χ)
+```
+
+The coupling expands to
+`⟨a′(u) g₀, ∇χ⟩ = (tr H_u)(w·∇χ) − (H_u w)·∇χ − (H_uᵀ g₀)·(a_e ∇χ)`,
+and the gravity–gravity term reduces to products of per-dof scalars:
+for the basis function `u = φ_a e_k`, `H` is rank-one and every
+contraction in `⟨a″ g₀, g₀⟩` is built from `m_a = F_e⁻ᵀ∇φ_a`,
+`∇φ_a·w`, `F_e⁻ᵀg₀` and `F_e⁻¹w` — O(d) work per dof pair, no
+fourth-order coefficient ever formed (the assembly pattern of the mapped
+elastic recipe).
+
+Structural remarks:
+
+- **At `φ_e = id`, hydrostatic**: `H = Du`, `a_e = 1`, `w = g₀ = ∇Φ₀`,
+  and the coupling reduces to
+  `⟨[(div u)1 − Du − Duᵀ]∇Φ₀, ∇χ⟩/4πG`. The system is related to the
+  Eulerian one of the current implementation by the invertible change of
+  variables `ζ¹ = φ¹ + u·∇Φ₀`: congruent, not identical — the tier-(i)
+  verification maps solutions across, it does not compare operators
+  entry-wise.
+- **No gravity interface or surface terms.** `ρ` is a fixed referential
+  field, so no `[∇φ¹·n̂ + 4πGρ u·n̂]`-type jump conditions arise: the
+  natural flux continuity of `a∇ζ` carries all of it, boundary motion
+  living inside `a(F)`. Second derivatives of `Φ₀` never appear either.
+- **Saddle structure as before**: symmetric, elastic-positive in `u`,
+  Laplace-type in `ζ¹`; the block solvers and projectors carry over.
+- **Rigid modes have no potential partners.** The referential potential
+  `ζ = φ∘φ` is *invariant* under rigid motions of the body (the spatial
+  potential co-moves), so the null pairs are `(t, 0)` for translations
+  (`Du = 0`: every term vanishes identically) and `(Wφ_e, 0)` for
+  rotations (`Du = W F_e`, so `sym(F_eᵀ D u) = sym(F_eᵀ W F_e) = 0`
+  identically; the geometric and gravity terms cancel by the rotational
+  invariance of the equilibrium energy). Contrast the Eulerian
+  formulation's coupled near-null pairs `(u_r, −u_r·∇Φ₀)`: the projector
+  machinery simplifies, and rigid near-nullity is not degraded by secular
+  drift (§3's bare-displacement point).
+
 **The gravitational stress tensor** (Maitra & Al-Attar 2024 write
 gravity as a stress `N` alongside `T`, giving momentum-equation terms
 `⟨N, Dw⟩ + ∫_∂B ⟨N n̂, w⟩`): equivalent after integration by parts to the
