@@ -199,21 +199,68 @@ leaves a mesh-asymmetry rigid translation (~1e-5 on the test meshes) that
 uniform refinement does not remove, and which dominates e.g. a Lamé
 comparison at the 0.5% level (`TestFluidGauge`).
 
-## 5. The sliding interface, for the record
+## 5. The sliding interface
 
 When a genuine tangential discontinuity is needed (two-parameter fluids,
-the non-linear slip map), the MFEM construction is: two displacement
-fields on two SubMeshes of the same parent (solid and fluid), whose
-interface boundary elements pair one-to-one through the parent's faces —
-the same pairing the SubMesh coupling machinery (`submesh.hpp`) already
-exploits. On that paired interface enforce normal continuity weakly,
-either by a Lagrange multiplier (mortar) space on the interface trace —
-a contact-type saddle system, Wohlmuth (2001) — or by a penalty/Nitsche
-term `(1/eta) int_Sigma (m.[u])^2 dS` assembled with the
-`BoundaryNormal*` integrators on both sides. Nodal (strong) coupling of
-normal components is not an option: the discrete normal is ill-defined at
-vertices of a faceted interface. Since the linear barotropic problem does
-not need any of this (§2), it is left for the non-linear work.
+the non-linear slip map), the construction is: two displacement fields on
+two SubMeshes of the same parent (solid and fluid), with normal continuity
+enforced weakly on the paired interface. Nodal (strong) coupling of normal
+components is not an option — the discrete normal is ill-defined at
+vertices of a faceted interface — but the *identification* of the two
+trace spaces is nodal and exact:
+
+**The pairing.** Each space has a signed dof injection `Pi` into the
+parent space (`SubMeshDofInjection`), and the interface dofs are exactly
+the dofs whose parent images coincide. So
+
+```
+J = Pi_s^T Pi_f          (solid dofs x fluid dofs, entries +-1)
+```
+
+identifies the fluid trace with the solid trace nodally, with all
+orientation bookkeeping inherited from the injections
+(`NewSubMeshPairingMatrix`; in parallel `NewSubMeshPairingTrueDofMatrix`,
+a hypre product of the true-dof injections, which handles the two sides of
+an interface dof living on *different ranks* for free). Because the two
+trace spaces share the parent's face geometry and nodal basis, every
+interface bilinear form assembles **once**, on the solid side's boundary
+elements: with `B` the normal-normal form there, the penalty on the
+normal jump is the block matrix
+
+```
+theta [ B, -B J; -J^T B, J^T B J ].
+```
+
+**Constraint without a stiff penalty.** Exactness at moderate `theta`
+comes from augmented-Lagrangian iterations, the same iterate-and-refine
+pattern as the gauge, and the two interleave in one loop:
+
+```
+(A + eps Q + theta P) U_{k+1} = f - w_k + eps Q u_{f,k}
+w_{k+1} = w_k + theta P U_{k+1}
+```
+
+whose fixed point satisfies the physical system with `P U = 0` and no
+`eps` in the observables. The normal jump contracts to a floor set by the
+interleaved gauge source (theta-independent relative to the trace; ~6e-5
+of the normal trace on the coarse test disc), while the tangential jump
+stays free — the slip the continuous space cannot represent.
+
+**Status.** The pairing and the penalty/AL machinery are implemented and
+verified on the gravity-free cavity (`TestSlidingInterface`,
+`TestSlidingInterfacePar`): in the barotropic setting the sliding solution
+matches the condensed rank-one reference (and hence the continuous-space
+gauge of §2) on the solid, the normal jump vanishes and the tangential
+jump does not. The null space is larger than the welded one — a
+frictionless spherical interface transmits no torque, so shell and core
+rotate *independently* — and all such modes are projected. Still open for
+the self-gravitating case: the three-block `[u_s; u_f; phi]` solver, and
+the interface gravity terms of the energy when the slip is physical (a
+stratified fluid transports its boundary values along the interface),
+whose derivation from the referential energy with the linearised slip map
+needs checking before implementation. The mortar (Lagrange multiplier)
+route — a contact-type saddle system, Wohlmuth (2001) — remains the
+cross-check and the non-linear path.
 
 ## 6. Verification
 

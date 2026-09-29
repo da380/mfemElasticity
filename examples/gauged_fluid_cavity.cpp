@@ -35,6 +35,10 @@
 // free of a floating solid inner core, which without gravity has no
 // restoring force).
 //
+// With -vis (the default, needs a running GLVis server) the displacement
+// and the fluid pressure are shown: the pressure window is the instructive
+// one — flat in the fluid, however the (gauge) displacement there looks.
+//
 // Sample runs (with mpirun -np N in front in a parallel build):
 //    ./gauged_fluid_cavity
 //    ./gauged_fluid_cavity -eps 1e-3 -nref 5
@@ -79,6 +83,20 @@ bool Root() { return true; }
 double GlobalSum(double v) { return v; }
 double GlobalMax(double v) { return v; }
 #endif
+
+// Send a field to GLVis.
+void Show(Mesh& mesh, const GridFunction& f, const char* title) {
+  char vishost[] = "localhost";
+  socketstream sock(vishost, 19916);
+  sock.precision(8);
+#ifdef MFEM_USE_MPI
+  sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank() << "\n";
+#endif
+  sock << "solution\n"
+       << mesh << f << "window_title '" << title << "'"
+       << (mesh.Dimension() == 2 ? "\nkeys Rjlbc\n" : "\nkeys RRRilc\n")
+       << std::flush;
+}
 
 // Non-dimensional material and load of the example.
 constexpr double kKappaSolid = 2.0;
@@ -147,7 +165,7 @@ int main(int argc, char* argv[]) {
   int order = 2;
   double eps = 1.0e-2;
   int nref = 3;
-  bool paraview = false;
+  bool visualization = true;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use.");
@@ -159,8 +177,10 @@ int main(int argc, char* argv[]) {
   args.AddOption(&P2, "-P2", "--pressure-degree2",
                  "Degree-2 external pressure pattern (0 keeps the exact "
                  "Lame comparison).");
-  args.AddOption(&paraview, "-pv", "--paraview", "-no-pv", "--no-paraview",
-                 "Save the displacement and fluid pressure for ParaView.");
+  args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                 "--no-visualization",
+                 "GLVis visualisation of the displacement and the fluid "
+                 "pressure.");
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
@@ -290,15 +310,16 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  if (paraview) {
-    // p = -kappa div u on an L2 space, zero outside the fluid.
+  if (visualization) {
+    Show(body, u, "Displacement");
+    // p = -kappa div u on an L2 space, zero outside the fluid: uniform in
+    // the continuum, and gauge-invariant where the displacement is not.
     L2_FECollection pfec(order - 1, dim);
     SpaceType pfes(&body, &pfec);
     FieldType p_gf(&pfes);
     DivergenceGridFunctionCoefficient div_u(&u);
     ProductCoefficient minus_kappa_div(-kKappaFluid, div_u);
     p_gf.ProjectCoefficient(minus_kappa_div);
-    // Zero the solid elements: only the fluid values are a pressure.
     Array<int> dofs;
     for (int i = 0; i < body.GetNE(); i++) {
       if (!fluid[body.GetAttribute(i) - 1]) {
@@ -306,15 +327,7 @@ int main(int argc, char* argv[]) {
         p_gf.SetSubVector(dofs, 0.0);
       }
     }
-    ParaViewDataCollection dc("gauged_fluid_cavity", &body);
-    dc.SetHighOrderOutput(true);
-    dc.SetLevelsOfDetail(order);
-    dc.RegisterField("displacement", const_cast<GridFunction*>(&u));
-    dc.RegisterField("fluid_pressure", &p_gf);
-    dc.Save();
-    if (Root()) {
-      std::cout << "ParaView data in gauged_fluid_cavity/\n";
-    }
+    Show(body, p_gf, "Fluid pressure");
   }
 
   return 0;

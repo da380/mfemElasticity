@@ -251,6 +251,43 @@ std::unique_ptr<mfem::HypreParMatrix> SubMeshDofInjection::NewTrueDofMatrix()
 }
 #endif
 
+std::unique_ptr<mfem::SparseMatrix> NewSubMeshPairingMatrix(
+    const SubMeshDofInjection& a, const SubMeshDofInjection& b) {
+  using namespace mfem;
+  MFEM_VERIFY(&a.ParentSpace() == &b.ParentSpace(),
+              "NewSubMeshPairingMatrix: the two injections must target the "
+              "same parent space.");
+  // parent vdof -> a vdof; the injection is one-to-one into the parent.
+  Array<int> to_a(a.ParentVSize());
+  to_a = -1;
+  for (int i = 0; i < a.SubVSize(); i++) {
+    to_a[a.ParentVDofs()[i]] = i;
+  }
+  auto J = std::make_unique<SparseMatrix>(a.SubVSize(), b.SubVSize());
+  for (int j = 0; j < b.SubVSize(); j++) {
+    const int i = to_a[b.ParentVDofs()[j]];
+    if (i >= 0) {
+      J->Set(i, j, a.Signs()[i] * b.Signs()[j]);
+    }
+  }
+  J->Finalize();
+  return J;
+}
+
+#ifdef MFEM_USE_MPI
+std::unique_ptr<mfem::HypreParMatrix> NewSubMeshPairingTrueDofMatrix(
+    const SubMeshDofInjection& a, const SubMeshDofInjection& b) {
+  using namespace mfem;
+  MFEM_VERIFY(&a.ParentSpace() == &b.ParentSpace(),
+              "NewSubMeshPairingTrueDofMatrix: the two injections must "
+              "target the same parent space.");
+  auto Pi_a = a.NewTrueDofMatrix();
+  auto Pi_b = b.NewTrueDofMatrix();
+  std::unique_ptr<HypreParMatrix> Pi_a_t(Pi_a->Transpose());
+  return std::unique_ptr<HypreParMatrix>(ParMult(Pi_a_t.get(), Pi_b.get()));
+}
+#endif
+
 namespace {
 
 // True if `mesh` is a (Par)SubMesh whose parent is exactly `parent`.
