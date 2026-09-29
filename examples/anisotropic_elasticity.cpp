@@ -11,7 +11,12 @@
 // compared with one assembled by mfem::ElasticityIntegrator; the two agree
 // to solver tolerance.
 //
-// Sample runs:
+// One source serves the serial and the parallel build; the only genuine
+// differences are the mesh partitioning, the preconditioner (Gauss-Seidel
+// serially, BoomerAMG in parallel) and the global reductions on the
+// printed norms.
+//
+// Sample runs (with mpirun -np N in front in a parallel build):
 //    ./anisotropic_elasticity -m ../data/star.mesh -o 2
 //    ./anisotropic_elasticity -m ../data/beam-tet.mesh -o 1 -iso
 //    ./anisotropic_elasticity -m ../data/ball.msh -o 1 -A 3.0 -C 2.6 -F 1.0
@@ -26,7 +31,38 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
+namespace {
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SpaceType = ParFiniteElementSpace;
+using FieldType = ParGridFunction;
+using FormType = ParBilinearForm;
+using LFType = ParLinearForm;
+bool Root() { return Mpi::Root(); }
+double GlobalMax(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  return g;
+}
+#else
+using MeshType = Mesh;
+using SpaceType = FiniteElementSpace;
+using FieldType = GridFunction;
+using FormType = BilinearForm;
+using LFType = LinearForm;
+bool Root() { return true; }
+double GlobalMax(double v) { return v; }
+#endif
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   const char* mesh_file = "../data/star.mesh";
   int order = 1;
   int ref_levels = 0;
@@ -51,20 +87,39 @@ int main(int argc, char* argv[]) {
                  "--no-visualization", "GLVis visualisation.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (Root()) {
+      args.PrintUsage(cout);
+    }
     return 1;
   }
-  args.PrintOptions(cout);
-
-  Mesh mesh(mesh_file, 1, 1);
-  const int dim = mesh.Dimension();
-  for (int l = 0; l < ref_levels; l++) {
-    mesh.UniformRefinement();
+  if (Root()) {
+    args.PrintOptions(cout);
   }
 
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  for (int l = 0; l < ref_levels; l++) {
+    smesh.UniformRefinement();
+  }
+#ifdef MFEM_USE_MPI
+  MeshType mesh(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType& mesh = smesh;
+#endif
+
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes(&mesh, &fec, dim);
-  cout << "Displacement unknowns: " << fes.GetTrueVSize() << "\n";
+  SpaceType fes(&mesh, &fec, dim);
+  // GlobalTrueVSize is collective on first call: every rank calls it,
+  // the root prints.
+#ifdef MFEM_USE_MPI
+  const auto n_u = fes.GlobalTrueVSize();
+#else
+  const auto n_u = fes.GetTrueVSize();
+#endif
+  if (Root()) {
+    cout << "Displacement unknowns: " << n_u << "\n";
+  }
 
   // Material: TI with the radial axis about the mesh centre.
   const real_t lambda = 1.0, mu = 1.0;
@@ -96,21 +151,29 @@ int main(int argc, char* argv[]) {
   g[dim - 1] = -0.1;
   VectorConstantCoefficient body(g);
 
-  auto solve = [&](BilinearFormIntegrator* integ, GridFunction& u) {
-    LinearForm b(&fes);
+  auto solve = [&](BilinearFormIntegrator* integ, FieldType& u) {
+    LFType b(&fes);
     b.AddDomainIntegrator(new VectorDomainLFIntegrator(body));
     b.Assemble();
-    BilinearForm a(&fes);
+    FormType a(&fes);
     a.AddDomainIntegrator(integ);
     a.Assemble();
     u = 0.0;
-    SparseMatrix Amat;
+    OperatorPtr Amat;
     Vector X, B;
     a.FormLinearSystem(ess_tdof_list, u, b, Amat, X, B);
-    GSSmoother prec(Amat);
+    // The one solver difference: Gauss-Seidel serially, AMG in parallel.
+#ifdef MFEM_USE_MPI
+    HypreBoomerAMG prec(*Amat.As<HypreParMatrix>());
+    prec.SetPrintLevel(0);
+    prec.SetSystemsOptions(dim);
+    CGSolver cg(MPI_COMM_WORLD);
+#else
+    GSSmoother prec(*Amat.As<SparseMatrix>());
     CGSolver cg;
+#endif
     cg.SetPreconditioner(prec);
-    cg.SetOperator(Amat);
+    cg.SetOperator(*Amat);
     cg.SetRelTol(1e-12);
     cg.SetMaxIter(10000);
     cg.SetPrintLevel(IterativeSolver::PrintLevel().Summary());
@@ -118,20 +181,26 @@ int main(int argc, char* argv[]) {
     a.RecoverFEMSolution(X, b, u);
   };
 
-  GridFunction u(&fes);
+  FieldType u(&fes);
   solve(new ElasticTensorIntegrator(tensor), u);
   Vector zero(dim);
   zero = 0.0;
   VectorConstantCoefficient z(zero);
-  cout << "||u||_L2 (anisotropic integrator) = " << u.ComputeL2Error(z) << "\n";
+  const double norm = u.ComputeL2Error(z);  // global through FieldType
+  if (Root()) {
+    cout << "||u||_L2 (anisotropic integrator) = " << norm << "\n";
+  }
 
   if (isotropic) {
     ConstantCoefficient lam(lambda), m(mu);
-    GridFunction u_ref(&fes);
+    FieldType u_ref(&fes);
     solve(new ElasticityIntegrator(lam, m), u_ref);
     u_ref -= u;
-    cout << "||u - u_ref||_inf / ||u||_inf = "
-         << u_ref.Normlinf() / u.Normlinf() << "\n";
+    // Normlinf is rank-local: reduce explicitly.
+    const double diff = GlobalMax(u_ref.Normlinf()) / GlobalMax(u.Normlinf());
+    if (Root()) {
+      cout << "||u - u_ref||_inf / ||u||_inf = " << diff << "\n";
+    }
     u_ref += u;
   }
 
@@ -140,6 +209,10 @@ int main(int argc, char* argv[]) {
     int visport = 19916;
     socketstream sol_sock(vishost, visport);
     sol_sock.precision(8);
+#ifdef MFEM_USE_MPI
+    sol_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
+             << "\n";
+#endif
     sol_sock << "solution\n" << mesh << u << flush;
     sol_sock << (dim == 2 ? "keys Rjlmvvv\n" : "keys RRRilc\n") << std::flush;
   }

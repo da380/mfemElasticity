@@ -16,7 +16,11 @@
 // L2 norms of the displacement and of the potential perturbation and the
 // radial surface displacement under the load's maximum (theta = 0).
 //
-// Sample runs:
+// One source serves the serial and the parallel build; the genuine
+// differences are the mesh partitioning and the pole observation point,
+// which in parallel lives on one rank and is reduced globally.
+//
+// Sample runs (with mpirun -np N in front in a parallel build):
 //    ./self_gravitating_relaxation -o 2 -n 20 -tf 5
 //    ./self_gravitating_relaxation -m ../data/elastogravity_three_layer_2d.msh
 //    -o 2
@@ -30,6 +34,7 @@
 #include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <memory>
 
 #include "layered_model.hpp"
@@ -39,7 +44,34 @@ using namespace mfem;
 using namespace mfemElasticity;
 using namespace layered;
 
+namespace {
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SubMeshType = ParSubMesh;
+using SpaceType = ParFiniteElementSpace;
+bool Root() { return Mpi::Root(); }
+double GlobalMax(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  return g;
+}
+#else
+using MeshType = Mesh;
+using SubMeshType = SubMesh;
+using SpaceType = FiniteElementSpace;
+bool Root() { return true; }
+double GlobalMax(double v) { return v; }
+#endif
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
   int order = 1;
   int dtn_degree = 16;
@@ -66,22 +98,34 @@ int main(int argc, char* argv[]) {
                  "Write a ParaView data collection.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(std::cout);
+    if (Root()) {
+      args.PrintUsage(std::cout);
+    }
     return 1;
   }
-  args.PrintOptions(std::cout);
+  if (Root()) {
+    args.PrintOptions(std::cout);
+  }
 
-  Mesh parent(mesh_file, 1, 1);
-  const int dim = parent.Dimension();
-  if (!SetModel(parent) || uniform) {
-    std::cerr << "Expected a two-layer (3 attributes) or three-layer "
-                 "(4 attributes) mesh.\n";
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  if (!SetModel(smesh) || uniform) {
+    if (Root()) {
+      std::cerr << "Expected a two-layer (3 attributes) or three-layer "
+                   "(4 attributes) mesh.\n";
+    }
     return 1;
   }
+#ifdef MFEM_USE_MPI
+  MeshType parent(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType& parent = smesh;
+#endif
   Array<int> solid_attrs = SolidAttributes();
-  SubMesh solid(SubMesh::CreateFromDomain(parent, solid_attrs));
+  auto solid = SubMeshType::CreateFromDomain(parent, solid_attrs);
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes_u(&solid, &fec, dim), fes_phi(&parent, &fec);
+  SpaceType fes_u(&solid, &fec, dim), fes_phi(&parent, &fec);
 
   // Material. The Maxwell time of the mantle from its mean shear modulus
   // (the moduli vary with radius, so tau varies too; the reported time unit
@@ -126,9 +170,12 @@ int main(int argc, char* argv[]) {
     problem.AddRegionRotations(Array<int>({InnerCoreAttribute()}));
   }
   problem.SetRelTol(rel_tol);
-  std::cout << (inner_core ? "Three-layer" : "Two-layer") << " model, " << dim
-            << "-D; mantle Maxwell time " << tau_dim / (365.25 * 86400.0)
-            << " yr (" << tau_nd << " time units)\n";
+  if (Root()) {
+    std::cout << (inner_core ? "Three-layer" : "Two-layer") << " model, "
+              << dim << "-D; mantle Maxwell time "
+              << tau_dim / (365.25 * 86400.0) << " yr (" << tau_nd
+              << " time units)\n";
+  }
 
   ViscoelasticOperator visco(problem);
   ExponentialTrapezoidSolver ode;
@@ -140,23 +187,29 @@ int main(int argc, char* argv[]) {
   }
 
   // Observation point: the surface vertex nearest to the pole (theta = 0).
+  // In parallel the pole lives on one rank (possibly shared): every rank
+  // finds its local best, the global pole is the reduced maximum, and the
+  // observed value is reduced with a -inf sentinel from the other ranks.
   int pole = -1;
-  {
-    real_t best = -1.0;
-    for (int v = 0; v < solid.GetNV(); v++) {
-      const real_t* x = solid.GetVertex(v);
-      const real_t z = x[dim - 1];
-      if (z > best) {
-        best = z;
-        pole = v;
-      }
+  real_t pole_z = -std::numeric_limits<real_t>::infinity();
+  for (int v = 0; v < solid.GetNV(); v++) {
+    const real_t* x = solid.GetVertex(v);
+    const real_t z = x[dim - 1];
+    if (z > pole_z) {
+      pole_z = z;
+      pole = v;
     }
   }
+  const real_t pole_z_global = GlobalMax(pole_z);
   auto radial_at_pole = [&]() {
     // Order-1 vertex dof = vertex index; for higher orders too, since the
     // vertex dofs come first in H1 spaces.
-    const GridFunction& u = problem.Displacement();
-    return u[fes_u.DofToVDof(pole, dim - 1)] * ND.Length();
+    real_t v = -std::numeric_limits<real_t>::infinity();
+    if (pole >= 0 && pole_z == pole_z_global) {
+      const GridFunction& u = problem.Displacement();
+      v = u[fes_u.DofToVDof(pole, dim - 1)] * ND.Length();
+    }
+    return GlobalMax(v);
   };
 
   ParaViewDataCollection dc("self_gravitating_relaxation", &solid);
@@ -175,17 +228,24 @@ int main(int argc, char* argv[]) {
 
   // The elastic response at t = 0+.
   if (!visco.SolveElastic(m, t)) {
-    std::cerr << "Elastic solve failed.\n";
+    if (Root()) {
+      std::cerr << "Elastic solve failed.\n";
+    }
     return 2;
   }
   std::cout.precision(6);
-  std::cout << "t/tau        ||u||        ||phi||   u_r(pole) [m]\n";
+  if (Root()) {
+    std::cout << "t/tau        ||u||        ||phi||   u_r(pole) [m]\n";
+  }
   auto report = [&](int cycle) {
     visco.SyncFields(m);
-    std::cout << std::setw(6) << t / tau_nd << std::setw(14)
-              << L2Norm(problem.Displacement()) << std::setw(14)
-              << L2Norm(problem.Potential()) << std::setw(14)
-              << radial_at_pole() << "\n";
+    const double un = L2Norm(problem.Displacement());
+    const double pn = L2Norm(problem.Potential());
+    const double ur = radial_at_pole();
+    if (Root()) {
+      std::cout << std::setw(6) << t / tau_nd << std::setw(14) << un
+                << std::setw(14) << pn << std::setw(14) << ur << "\n";
+    }
     if (paraview) {
       dc.SetCycle(cycle);
       dc.SetTime(t / tau_nd);
@@ -201,20 +261,24 @@ int main(int argc, char* argv[]) {
       ode.Step(m, t, dt);
     }
     if (!visco.SolveElastic(m, t)) {
-      std::cerr << "Elastic solve failed at t = " << t << "\n";
+      if (Root()) {
+        std::cerr << "Elastic solve failed at t = " << t << "\n";
+      }
       return 2;
     }
     report(step);
   }
   const auto w1 = std::chrono::steady_clock::now();
-  std::cout << "Solves " << problem.NumSolves() << ", assemblies "
-            << problem.NumAssemblies() << ", preconditioner setups "
-            << problem.NumPreconditionerSetups() << ", "
-            << std::chrono::duration<double>(w1 - w0).count() << " s";
-  if (rtol > 0.0) {
-    std::cout << "; adaptive steps " << adaptive.NumAcceptedSteps()
-              << " accepted, " << adaptive.NumRejectedSteps() << " rejected";
+  if (Root()) {
+    std::cout << "Solves " << problem.NumSolves() << ", assemblies "
+              << problem.NumAssemblies() << ", preconditioner setups "
+              << problem.NumPreconditionerSetups() << ", "
+              << std::chrono::duration<double>(w1 - w0).count() << " s";
+    if (rtol > 0.0) {
+      std::cout << "; adaptive steps " << adaptive.NumAcceptedSteps()
+                << " accepted, " << adaptive.NumRejectedSteps() << " rejected";
+    }
+    std::cout << "\n";
   }
-  std::cout << "\n";
   return 0;
 }

@@ -1,10 +1,10 @@
-# The examples. transformed_diffusion and elastogravity_layered are one source
-# for both builds: parallel programs when MFEM has MPI, serial ones otherwise.
-# The examples that differ in parallel have a counterpart (suffix _p), added
-# below when USE_MPI is on. The examples read their meshes from <build>/data,
-# which the top-level CMakeLists.txt fills (CopyData and the meshes/ scripts).
+# The examples: one source per example, for both builds — a parallel
+# program when MFEM has MPI, a serial one otherwise, with the genuine
+# serial/parallel differences marked by #ifdef MFEM_USE_MPI blocks in the
+# sources. The examples read their meshes from <build>/data, which the
+# top-level CMakeLists.txt fills (CopyData and the meshes/ scripts).
 
-set(SERIAL_EXAMPLES
+set(EXAMPLES
     poisson_dtn                 # Poisson on the whole space: Neumann / DtN / multipole
     transformed_diffusion       # pull-back Laplacian on a mapped domain
     submesh_injection           # tour of SubMeshDofInjection
@@ -24,21 +24,8 @@ set(SERIAL_EXAMPLES
     anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
 )
 
-set(PARALLEL_EXAMPLES
-    poisson_dtn_p
-    submesh_injection_p
-    coupled_poisson_p
-)
-
-foreach(ex IN LISTS SERIAL_EXAMPLES)
+foreach(ex IN LISTS EXAMPLES)
     add_executable(${ex} ${ex}.cpp)
     target_link_libraries(${ex} mfemElasticity)
 endforeach()
-
-if(USE_MPI)
-    foreach(ex IN LISTS PARALLEL_EXAMPLES)
-        add_executable(${ex} ${ex}.cpp)
-        target_link_libraries(${ex} mfemElasticity)
-    endforeach()
-endif()
 

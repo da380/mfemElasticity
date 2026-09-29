@@ -29,7 +29,12 @@
 // as the asthenosphere relaxes, and recover towards zero once the load is
 // removed.
 //
-// Sample runs:
+// One source serves the serial and the parallel build; the genuine
+// differences are the mesh partitioning (layer attributes are assigned
+// on the serial mesh first, so the layering is identical) and the
+// observation point, which lives on one rank and is reduced globally.
+//
+// Sample runs (with mpirun -np N in front in a parallel build):
 //    ./viscoelastic_loading
 //    ./viscoelastic_loading -rtol 1e-3
 //    ./viscoelastic_loading -d 3 -nx 12 -ny 4 -o 1 -n 10
@@ -48,7 +53,38 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
+namespace {
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SpaceType = ParFiniteElementSpace;
+bool Root() { return Mpi::Root(); }
+double GlobalMin(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+  return g;
+}
+double GlobalMax(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  return g;
+}
+#else
+using MeshType = Mesh;
+using SpaceType = FiniteElementSpace;
+bool Root() { return true; }
+double GlobalMin(double v) { return v; }
+double GlobalMax(double v) { return v; }
+#endif
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   // Set the default options.
   int dim = 2;
   int order = 2;
@@ -96,15 +132,19 @@ int main(int argc, char* argv[]) {
                  "Save time slices to a ParaView data collection.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (Root()) {
+      args.PrintUsage(cout);
+    }
     return 1;
   }
-  args.PrintOptions(cout);
+  if (Root()) {
+    args.PrintOptions(cout);
+  }
   MFEM_VERIFY(dim == 2 || dim == 3, "Dimension must be 2 or 3.");
 
   // Build the box mesh: a rectangle in 2-D, a square-based box in 3-D so
   // that the load patch can be centred at (W/2, W/2) on the top face.
-  Mesh mesh = dim == 2
+  Mesh smesh = dim == 2
                  ? Mesh::MakeCartesian2D(nx, ny, Element::QUADRILATERAL,
                                         false, W, H)
                  : Mesh::MakeCartesian3D(nx, nx, ny, Element::HEXAHEDRON, W,
@@ -118,9 +158,11 @@ int main(int argc, char* argv[]) {
 
   // Assign the three layers by element-centre depth: lithosphere (top 10%
   // of H, elastic), asthenosphere (next 15%), mantle (remaining 75%).
+  // (On the serial mesh, before partitioning: the layering is then
+  // identical in both builds.)
   Vector center(dim);
-  for (int e = 0; e < mesh.GetNE(); e++) {
-    mesh.GetElementCenter(e, center);
+  for (int e = 0; e < smesh.GetNE(); e++) {
+    smesh.GetElementCenter(e, center);
     const real_t frac = center(dim - 1) / H;
     int attr;
     if (frac >= 0.9) {
@@ -130,9 +172,15 @@ int main(int argc, char* argv[]) {
     } else {
       attr = 1;  // mantle
     }
-    mesh.SetAttribute(e, attr);
+    smesh.SetAttribute(e, attr);
   }
-  mesh.SetAttributes();
+  smesh.SetAttributes();
+#ifdef MFEM_USE_MPI
+  MeshType mesh(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType& mesh = smesh;
+#endif
 
   // Material: uniform bulk and (unrelaxed branch) shear modulus, a
   // piecewise-constant Maxwell relaxation time by attribute (mantle,
@@ -149,7 +197,7 @@ int main(int argc, char* argv[]) {
 
   // Displacement space.
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes(&mesh, &fec, dim);
+  SpaceType fes(&mesh, &fec, dim);
 
   // Bottom clamped; downward traction on the top over the load patch,
   // switched off at t_load (rebound). In 3-D the patch is a square,
@@ -204,7 +252,16 @@ int main(int argc, char* argv[]) {
       vbest = v;
     }
   }
-  const int obs_vdof = fes.DofToVDof(vbest, dim - 1);
+  // In parallel the observation vertex lives on one rank (possibly
+  // shared, with equal values): reduce with a -inf sentinel elsewhere.
+  const real_t dmin_global = GlobalMin(dmin);
+  const bool observer = dmin == dmin_global;
+  const int obs_vdof = observer ? fes.DofToVDof(vbest, dim - 1) : -1;
+  auto observe = [&]() {
+    const real_t v = observer ? problem.Displacement()(obs_vdof)
+                              : -numeric_limits<real_t>::infinity();
+    return GlobalMax(v);
+  };
 
   // Optional ParaView output.
   ParaViewDataCollection dc("viscoelastic_loading", &mesh);
@@ -233,19 +290,28 @@ int main(int argc, char* argv[]) {
   Vector m(visco.Height());
   m = 0.0;
 
-  cout << "\n  step          t     u_z(load centre)\n"
-       << "  ----  ---------  --------------------\n";
+  if (Root()) {
+    cout << "\n  step          t     u_z(load centre)\n"
+         << "  ----  ---------  --------------------\n";
+  }
 
   // Initial state: relaxed internal variable, elastic response at t = 0
   // (the load is already active there since t_load > 0).
   if (!visco.SolveElastic(m, t)) {
-    cerr << "Elastic solve failed at t = " << t << "\n";
+    if (Root()) {
+      cerr << "Elastic solve failed at t = " << t << "\n";
+    }
     return 2;
   }
   visco.SyncFields(m);
   cout.precision(6);
-  cout << "  " << 0 << "  " << fixed << setw(9) << t << "  " << setw(20)
-       << scientific << problem.Displacement()(obs_vdof) << "\n";
+  {
+    const real_t uz = observe();
+    if (Root()) {
+      cout << "  " << 0 << "  " << fixed << setw(9) << t << "  " << setw(20)
+           << scientific << uz << "\n";
+    }
+  }
   if (paraview) {
     dc.SetCycle(0);
     dc.SetTime(t);
@@ -261,13 +327,18 @@ int main(int argc, char* argv[]) {
     }
 
     if (!visco.SolveElastic(m, t)) {
-      cerr << "Elastic solve failed at t = " << t << "\n";
+      if (Root()) {
+        cerr << "Elastic solve failed at t = " << t << "\n";
+      }
       return 2;
     }
     visco.SyncFields(m);
 
-    cout << "  " << step << "  " << fixed << setw(9) << t << "  " << setw(20)
-         << scientific << problem.Displacement()(obs_vdof) << "\n";
+    const real_t uz = observe();
+    if (Root()) {
+      cout << "  " << step << "  " << fixed << setw(9) << t << "  "
+           << setw(20) << scientific << uz << "\n";
+    }
 
     if (paraview) {
       dc.SetCycle(step);
@@ -276,10 +347,12 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  cout << "\nSolves:                 " << problem.NumSolves()
-       << "\nAssemblies:              " << problem.NumAssemblies()
-       << "\nPreconditioner setups:   " << problem.NumPreconditionerSetups()
-       << "\n";
+  if (Root()) {
+    cout << "\nSolves:                 " << problem.NumSolves()
+         << "\nAssemblies:              " << problem.NumAssemblies()
+         << "\nPreconditioner setups:   " << problem.NumPreconditionerSetups()
+         << "\n";
+  }
 
   return 0;
 }

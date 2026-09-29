@@ -37,7 +37,12 @@
 // The largest coefficient of the solution at any other (l', m') is printed
 // as a measure of the mesh's departure from spherical symmetry.
 //
-// Sample runs:
+// One source serves the serial and the parallel build; the harmonic
+// analysis layer is parallel-aware by itself, so the genuine differences
+// are only the mesh partitioning, the total-mass reduction and the
+// guarded printing.
+//
+// Sample runs (with mpirun -np N in front in a parallel build):
 //    ./love_numbers -o 2 -lmax 6
 //    ./love_numbers -m ../data/coupled_poisson.msh -o 2 -lmax 4 -kappa 100
 // ============================================================================
@@ -54,7 +59,42 @@ using namespace mfemElasticity;
 
 namespace {
 
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SubMeshType = ParSubMesh;
+using SpaceType = ParFiniteElementSpace;
+bool Root() { return Mpi::Root(); }
+#else
+using MeshType = Mesh;
+using SubMeshType = SubMesh;
+using SpaceType = FiniteElementSpace;
+bool Root() { return true; }
+#endif
+
 constexpr real_t kPi = std::numbers::pi_v<real_t>;
+
+// Sum of a linear functional over the whole mesh: through the true-dof
+// vector (shared dofs counted once), then reduced over the ranks that
+// own the pieces.
+real_t TrueSum(FiniteElementSpace& fes, LinearForm& lf) {
+  const Operator* P = fes.GetProlongationMatrix();
+  real_t local = 0.0;
+  if (!P) {
+    local = lf.Sum();
+  } else {
+    Vector T(fes.GetTrueVSize());
+    P->MultTranspose(lf, T);
+    local = T.Sum();
+  }
+#ifdef MFEM_USE_MPI
+  real_t global = 0.0;
+  MPI_Allreduce(&local, &global, 1, MPITypeMap<real_t>::mpi_type, MPI_SUM,
+                MPI_COMM_WORLD);
+  return global;
+#else
+  return local;
+#endif
+}
 
 struct Analytic {
   real_t h, k, h_load, k_load;
@@ -83,6 +123,11 @@ real_t Spurious(const Vector& c, int main) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   const char* mesh_file = "../data/elastogravity_2d.msh";
   int order = 2;
   int dtn_degree = 12;
@@ -106,23 +151,33 @@ int main(int argc, char* argv[]) {
                  "Compare with the incompressible homogeneous sphere (3-D).");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(std::cout);
+    if (Root()) {
+      args.PrintUsage(std::cout);
+    }
     return 1;
   }
-  args.PrintOptions(std::cout);
+  if (Root()) {
+    args.PrintOptions(std::cout);
+  }
 
-  Mesh parent(mesh_file, 1, 1);
-  const int dim = parent.Dimension();
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+#ifdef MFEM_USE_MPI
+  MeshType parent(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType& parent = smesh;
+#endif
   Array<int> body_marker(parent.attributes.Max());
   body_marker = 0;
   body_marker[0] = 1;
-  SubMesh body(SubMesh::CreateFromDomain(parent, body_marker));
+  auto body = SubMeshType::CreateFromDomain(parent, body_marker);
   Array<int> surface(body.bdr_attributes.Max());
   surface = 0;
   surface[body.bdr_attributes.Max() - 1] = 1;
 
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes_u(&body, &fec, dim), fes_phi(&parent, &fec);
+  SpaceType fes_u(&body, &fec, dim), fes_phi(&parent, &fec);
   ConstantCoefficient kappa_c(kappa), mu_c(mu), rho_c(rho);
   IsotropicElasticRheology rheology(dim, kappa_c, mu_c);
   LinearQuasiStaticSelfGravitatingProblem problem(&fes_u, &fes_phi, rheology,
@@ -137,17 +192,19 @@ int main(int argc, char* argv[]) {
   const auto& basis = radial.Basis();
   const real_t a = radial.Radius();
 
-  // Surface gravity g = 4 pi G M / |S|.
-  FiniteElementSpace fes_s(&body, &fec);
+  // Surface gravity g = 4 pi G M / |S| (mass reduced over ranks).
+  SpaceType fes_s(&body, &fec);
   LinearForm mass(&fes_s);
   mass.AddDomainIntegrator(new DomainLFIntegrator(rho_c));
   mass.Assemble();
-  const real_t M = mass.Sum();
+  const real_t M = TrueSum(fes_s, mass);
   const real_t area = dim == 2 ? 2.0 * kPi * a : 4.0 * kPi * a * a;
   const real_t g = 4.0 * kPi * G * M / area;
-  std::cout << dim << "-D body: radius " << a << ", mass " << M
-            << ", surface gravity " << g << ", rho g a / mu = "
-            << rho * g * a / mu << "\n";
+  if (Root()) {
+    std::cout << dim << "-D body: radius " << a << ", mass " << M
+              << ", surface gravity " << g << ", rho g a / mu = "
+              << rho * g * a / mu << "\n";
+  }
 
   // One load and one tidal potential, with coefficients switched per degree.
   Vector zero(basis.Size());
@@ -164,7 +221,7 @@ int main(int argc, char* argv[]) {
     sigma->SetCoefficients(load ? c : zero);
     psi->SetCoefficients(load ? zero : c);
     problem.AssembleForce(0.0);
-    if (!problem.Solve()) {
+    if (!problem.Solve() && Root()) {
       std::cerr << "Solve failed at coefficient " << i << "\n";
     }
     Vector cu, cphi;
@@ -174,14 +231,18 @@ int main(int argc, char* argv[]) {
   };
 
   const bool compare = analytic && dim == 3;
-  std::cout << std::setprecision(6);
-  GridFunction phi_direct(&problem.PotentialSpaceOnBody());
-  std::cout << "\n  l         h'          k'           h           k"
-            << "   spurious   phi_s";
-  if (compare) {
-    std::cout << "   |  incompressible sphere: h' k' h k";
+  if (Root()) {
+    std::cout << std::setprecision(6);
   }
-  std::cout << "\n";
+  GridFunction phi_direct(&problem.PotentialSpaceOnBody());
+  if (Root()) {
+    std::cout << "\n  l         h'          k'           h           k"
+              << "   spurious   phi_s";
+    if (compare) {
+      std::cout << "   |  incompressible sphere: h' k' h k";
+    }
+    std::cout << "\n";
+  }
   for (int l = std::max(lmin, dim == 2 ? 1 : 0); l <= lmax; l++) {
     const int i = basis.Index(l, dim == 2 ? l : 0);
     real_t h_load = NAN, k_load = NAN, h = NAN, k = NAN, spurious = 0.0,
@@ -205,21 +266,23 @@ int main(int argc, char* argv[]) {
       k = cphi[i];
       spurious = std::max({spurious, Spurious(cu, i), Spurious(cphi, i)});
     }
-    std::cout << std::setw(3) << l << std::setw(12) << h_load << std::setw(12)
-              << k_load << std::setw(12) << h << std::setw(12) << k
-              << std::setw(11) << std::setprecision(2) << spurious
-              << std::setw(8) << std::setprecision(4) << phi_ratio
-              << std::setprecision(6);
-    if (compare && l >= 2) {
-      const auto ref = IncompressibleSphere(l, mu, rho, g, a);
-      std::cout << "   | " << std::setw(10) << ref.h_load << std::setw(10)
-                << ref.k_load << std::setw(10) << ref.h << std::setw(10)
-                << ref.k;
+    if (Root()) {
+      std::cout << std::setw(3) << l << std::setw(12) << h_load
+                << std::setw(12) << k_load << std::setw(12) << h
+                << std::setw(12) << k << std::setw(11)
+                << std::setprecision(2) << spurious << std::setw(8)
+                << std::setprecision(4) << phi_ratio << std::setprecision(6);
+      if (compare && l >= 2) {
+        const auto ref = IncompressibleSphere(l, mu, rho, g, a);
+        std::cout << "   | " << std::setw(10) << ref.h_load << std::setw(10)
+                  << ref.k_load << std::setw(10) << ref.h << std::setw(10)
+                  << ref.k;
+      }
+      if (l == 1) {
+        std::cout << "   (degree 1: gauge dependent)";
+      }
+      std::cout << "\n";
     }
-    if (l == 1) {
-      std::cout << "   (degree 1: gauge dependent)";
-    }
-    std::cout << "\n";
   }
   return 0;
 }

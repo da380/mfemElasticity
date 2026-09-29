@@ -67,6 +67,12 @@
 // the best fixed-step choice and the adaptive trapezoid the best at tight
 // tolerances after a transient; the exponential trapezoid keeps its edge
 // only where the strain is close to linear over a step.
+//
+// One source serves the serial and the parallel build; the genuine
+// differences are the mesh partitioning and the global reductions on the
+// error metrics (the state vectors are distributed, so max-norms and
+// finiteness checks reduce over ranks — every rank must agree on the
+// halving decisions). Run with mpirun -np N in a parallel build.
 // ============================================================================
 
 #include <chrono>
@@ -85,6 +91,28 @@ using namespace mfemElasticity;
 
 namespace {
 
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SpaceType = ParFiniteElementSpace;
+bool Root() { return Mpi::Root(); }
+double GlobalMax(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  return g;
+}
+double GlobalMin(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+  return g;
+}
+#else
+using MeshType = Mesh;
+using SpaceType = FiniteElementSpace;
+bool Root() { return true; }
+double GlobalMax(double v) { return v; }
+double GlobalMin(double v) { return v; }
+#endif
+
 struct Cost {
   int solves = 0, assemblies = 0, setups = 0;
   long its = 0;
@@ -101,24 +129,33 @@ struct Counters {
         its(p.TotalIterations()) {}
 };
 
+// Global over ranks: the vectors are distributed, and every rank must
+// reach the same verdict.
 bool IsFinite(const Vector& v) {
+  bool ok = true;
   for (int i = 0; i < v.Size(); i++) {
     if (!std::isfinite(v[i])) {
-      return false;
+      ok = false;
+      break;
     }
   }
-  return true;
+  return GlobalMin(ok ? 1.0 : 0.0) > 0.5;
 }
 
 double RelMaxDiff(const Vector& a, const Vector& b) {
   Vector d(a);
   d -= b;
-  return d.Normlinf() / (b.Normlinf() + 1e-300);
+  return GlobalMax(d.Normlinf()) / (GlobalMax(b.Normlinf()) + 1e-300);
 }
 
 }  // namespace
 
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   const char* mesh_file = "../data/beam-quad.mesh";
   int order = 2;
   int ref_levels = 1;
@@ -159,20 +196,30 @@ int main(int argc, char* argv[]) {
                  "Give up on a target beyond this many steps per tau.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (Root()) {
+      args.PrintUsage(cout);
+    }
     return 1;
   }
-  args.PrintOptions(cout);
-
-  Mesh mesh(mesh_file, 1, 1);
-  const int dim = mesh.Dimension();
-  for (int l = 0; l < ref_levels; l++) {
-    mesh.UniformRefinement();
+  if (Root()) {
+    args.PrintOptions(cout);
   }
+
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  for (int l = 0; l < ref_levels; l++) {
+    smesh.UniformRefinement();
+  }
+#ifdef MFEM_USE_MPI
+  MeshType mesh(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType& mesh = smesh;
+#endif
   MFEM_VERIFY(mesh.bdr_attributes.Max() >= 2,
               "The mesh needs boundary attributes 1 (clamped) and 2 (pulled).");
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes(&mesh, &fec, dim);
+  SpaceType fes(&mesh, &fec, dim);
 
   // Material: kappa such that lambda = mu = 1 in the unrelaxed state.
   const bool stiff = tau_ratio > 1.0;
@@ -202,10 +249,21 @@ int main(int argc, char* argv[]) {
   marker = 0;
   marker[1] = 1;
 
-  cout << "Mesh: " << mesh.GetNE() << " elements, " << fes.GetTrueVSize()
-       << " displacement unknowns, rheology "
-       << (rheology.IsLinear() ? "linear" : "power law (gamma = ")
-       << (rheology.IsLinear() ? "" : std::to_string(gamma0) + ")") << "\n";
+  // Collective calls on every rank, root prints.
+#ifdef MFEM_USE_MPI
+  const auto n_el = mesh.GetGlobalNE();
+  const auto n_u = fes.GlobalTrueVSize();
+#else
+  const auto n_el = mesh.GetNE();
+  const auto n_u = fes.GetTrueVSize();
+#endif
+  if (Root()) {
+    cout << "Mesh: " << n_el << " elements, " << n_u
+         << " displacement unknowns, rheology "
+         << (rheology.IsLinear() ? "linear" : "power law (gamma = ")
+         << (rheology.IsLinear() ? "" : std::to_string(gamma0) + ")")
+         << "\n";
+  }
 
   // One problem per run, so that the counters and warm starts are clean.
   auto run = [&](const std::string& name, ODESolver& ode, int n_steps,
@@ -261,9 +319,11 @@ int main(int argc, char* argv[]) {
                                   100.0 * t_final * tau0 / tau_min)));
     }
     run("reference", rk4, n_ref, false, 0.0, m_ref, u_ref, c, n);
-    cout << "Reference: RK4, " << n_ref << " steps, " << c.solves
-         << " solves, " << std::fixed << std::setprecision(2) << c.seconds
-         << " s\n\n";
+    if (Root()) {
+      cout << "Reference: RK4, " << n_ref << " steps, " << c.solves
+           << " solves, " << std::fixed << std::setprecision(2) << c.seconds
+           << " s\n\n";
+    }
   }
 
   auto parse_list = [](const char* arg) {
@@ -288,17 +348,27 @@ int main(int argc, char* argv[]) {
   }
   const std::vector<double> targets = parse_list(targets_arg);
 
-  cout << std::left << std::setw(14) << "scheme" << std::right << std::setw(8)
-       << "dt/tau" << std::setw(11) << "error" << std::setw(11) << "u-error"
-       << std::setw(8) << "solves" << std::setw(6) << "asm" << std::setw(5)
-       << "pc" << std::setw(8) << "its" << std::setw(9) << "time\n";
+  if (Root()) {
+    cout << std::left << std::setw(14) << "scheme" << std::right
+         << std::setw(8) << "dt/tau" << std::setw(11) << "error"
+         << std::setw(11) << "u-error" << std::setw(8) << "solves"
+         << std::setw(6) << "asm" << std::setw(5) << "pc" << std::setw(8)
+         << "its" << std::setw(9) << "time\n";
+  }
   auto report = [&](const std::string& name, const std::string& dt_label,
                     const Vector& m, const Vector& u, const Cost& c) {
+    // The metrics reduce over ranks; every rank calls them, root prints.
+    const bool finite = m.Size() > 1 && IsFinite(m);
+    const double e_m = finite ? RelMaxDiff(m, m_ref) : 0.0;
+    const double e_u = finite ? RelMaxDiff(u, u_ref) : 0.0;
+    if (!Root()) {
+      return;
+    }
     cout << std::left << std::setw(14) << name << std::right << std::setw(8)
          << dt_label;
-    if (m.Size() > 1 && IsFinite(m)) {
-      cout << std::setw(11) << std::scientific << std::setprecision(2)
-           << RelMaxDiff(m, m_ref) << std::setw(11) << RelMaxDiff(u, u_ref);
+    if (finite) {
+      cout << std::setw(11) << std::scientific << std::setprecision(2) << e_m
+           << std::setw(11) << e_u;
     } else {
       cout << std::setw(11) << "unstable" << std::setw(11) << "-";
     }
@@ -328,9 +398,11 @@ int main(int argc, char* argv[]) {
       const int n_steps = static_cast<int>(std::round(t_final * k));
       const real_t dt = t_final * tau0 / n_steps;
       if (sc.explicit_scheme && dt > 2.8 * tau_min) {
-        cout << std::left << std::setw(14) << sc.name << std::right
-             << std::setw(8) << ("1/" + std::to_string(k))
-             << "   skipped: dt > 2.8 tau_min (unstable)\n";
+        if (Root()) {
+          cout << std::left << std::setw(14) << sc.name << std::right
+               << std::setw(8) << ("1/" + std::to_string(k))
+               << "   skipped: dt > 2.8 tau_min (unstable)\n";
+        }
         continue;
       }
       auto ode = sc.make();
@@ -352,13 +424,16 @@ int main(int argc, char* argv[]) {
     report("Adaptive " + std::to_string(rtol).substr(0, 6), label.str(), m, u,
            c);
   }
-  cout << "\nThe reference is RK4 at dt = tau/" << n_ref / t_final
-       << "; the adaptive rows' dt column is the number of accepted steps at "
-          "the given rtol.\n";
+  if (Root()) {
+    cout << "\nThe reference is RK4 at dt = tau/" << n_ref / t_final
+         << "; the adaptive rows' dt column is the number of accepted steps "
+            "at the given rtol.\n";
+  }
 
   // --- Cost to reach a target accuracy ------------------------------------
   if (!targets.empty()) {
-    cout << "\nCost to reach a target relative error of the final "
+    if (Root())
+      cout << "\nCost to reach a target relative error of the final "
             "displacement (coarsest step, or loosest rtol, that meets it):\n"
          << std::left << std::setw(14) << "scheme" << std::right
          << std::setw(9) << "target" << std::setw(9) << "dt/tau"
@@ -367,6 +442,9 @@ int main(int argc, char* argv[]) {
          << "its" << std::setw(9) << "time\n";
     auto row = [&](const std::string& name, double target,
                    const std::string& dt_label, double err, const Cost& c) {
+      if (!Root()) {
+        return;
+      }
       cout << std::left << std::setw(14) << name << std::right << std::setw(9)
            << std::scientific << std::setprecision(0) << target
            << std::setw(9) << dt_label;
@@ -432,7 +510,9 @@ int main(int argc, char* argv[]) {
           row("Adaptive", target, "-", -1.0, Cost());
         }
       }
-      cout << "\n";
+      if (Root()) {
+        cout << "\n";
+      }
     }
   }
   return 0;

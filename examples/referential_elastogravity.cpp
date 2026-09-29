@@ -31,9 +31,15 @@
 // zeta1 = phi1 + u . grad(Phi0) (modulo the constant in 2-D): agreement is
 // at the level of the two discretisations, improving with order.
 //
-// A serial program (the prescribed extension is serial at present).
+// One source serves the serial and the parallel build. The two problems
+// live on two separately-partitioned copies of one mesh; partitioning
+// the same serial mesh twice in one run gives identical partitions, so
+// the field-by-field comparison carries over. The other genuine
+// differences: comparison copies are made with the build's field type
+// (a plain GridFunction on a parallel space would compute rank-local
+// norms), and the 2-D constant gauge is removed with a global mean.
 //
-// Sample runs:
+// Sample runs (with mpirun -np N in front in a parallel build):
 //    ./referential_elastogravity
 //    ./referential_elastogravity -o 3
 //    ./referential_elastogravity -m ../data/coupled_poisson.msh -o 2
@@ -51,6 +57,36 @@ using namespace mfem;
 using namespace mfemElasticity;
 
 namespace {
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SubMeshType = ParSubMesh;
+using SpaceType = ParFiniteElementSpace;
+bool Root() { return Mpi::Root(); }
+double GlobalSum(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  return g;
+}
+#else
+using MeshType = Mesh;
+using SubMeshType = SubMesh;
+using SpaceType = FiniteElementSpace;
+bool Root() { return true; }
+double GlobalSum(double v) { return v; }
+#endif
+
+// A field of the build's type on a space of either type: comparison
+// copies must be ParGridFunctions in parallel or their norms come out
+// rank-local.
+std::unique_ptr<GridFunction> MakeField(FiniteElementSpace& fes) {
+#ifdef MFEM_USE_MPI
+  if (auto* pfes = dynamic_cast<ParFiniteElementSpace*>(&fes)) {
+    return std::make_unique<ParGridFunction>(pfes);
+  }
+#endif
+  return std::make_unique<GridFunction>(&fes);
+}
 
 // Non-dimensional model: unit radius, strong coupling.
 constexpr double kG = 0.05;
@@ -104,6 +140,9 @@ void Show(Mesh& mesh, const GridFunction& f, const char* title) {
   char vishost[] = "localhost";
   socketstream sock(vishost, 19916);
   sock.precision(8);
+#ifdef MFEM_USE_MPI
+  sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank() << "\n";
+#endif
   sock << "solution\n"
        << mesh << f << "window_title '" << title << "'"
        << (mesh.Dimension() == 2 ? "\nkeys Rjlbc\n" : "\nkeys RRRilc\n")
@@ -113,6 +152,11 @@ void Show(Mesh& mesh, const GridFunction& f, const char* title) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   const char* mesh_file = "../data/elastogravity_2d.msh";
   int order = 2;
   bool visualization = true;
@@ -124,17 +168,24 @@ int main(int argc, char* argv[]) {
                  "--no-visualization", "GLVis visualisation.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(std::cout);
+    if (Root()) {
+      args.PrintUsage(std::cout);
+    }
     return 1;
   }
 
-  Mesh parent(mesh_file, 1, 1);
-  const int dim = parent.Dimension();
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+#ifdef MFEM_USE_MPI
+  MeshType parent(MPI_COMM_WORLD, smesh);
+#else
+  MeshType& parent = smesh;
+#endif
   Array<int> body_attr({1}), buffer_attr({2});
-  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+  auto body = SubMeshType::CreateFromDomain(parent, body_attr);
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes_u(&body, &fec, dim);
-  FiniteElementSpace fes_phi(&parent, &fec);
+  SpaceType fes_u(&body, &fec, dim);
+  SpaceType fes_phi(&parent, &fec);
 
   // Surface marker: the body SubMesh's largest boundary attribute.
   Array<int> surface(body.bdr_attributes.Max());
@@ -152,17 +203,27 @@ int main(int argc, char* argv[]) {
   eulerian.SetRelTol(1e-11);
   eulerian.AssembleForce(0.0);
   if (!eulerian.Solve()) {
-    std::cout << "Eulerian solve failed\n";
+    if (Root()) {
+      std::cout << "Eulerian solve failed\n";
+    }
     return 1;
   }
 
   // --- The referential problem: bare moduli, S_e, mapping, extension. -------
-  Mesh parent2(mesh_file, 1, 1);
-  SubMesh body2(SubMesh::CreateFromDomain(parent2, body_attr));
-  SubMesh buffer2(SubMesh::CreateFromDomain(parent2, buffer_attr));
-  FiniteElementSpace fes_u2(&body2, &fec, dim);
-  FiniteElementSpace fes_zeta(&parent2, &fec);
-  FiniteElementSpace fes_buffer(&buffer2, &fec, dim);
+  // A second copy of the mesh (partitioned identically in parallel: same
+  // serial mesh, same partitioner, one run).
+  Mesh smesh2(mesh_file, 1, 1);
+#ifdef MFEM_USE_MPI
+  MeshType parent2(MPI_COMM_WORLD, smesh2);
+  smesh2.Clear();
+#else
+  MeshType& parent2 = smesh2;
+#endif
+  auto body2 = SubMeshType::CreateFromDomain(parent2, body_attr);
+  auto buffer2 = SubMeshType::CreateFromDomain(parent2, buffer_attr);
+  SpaceType fes_u2(&body2, &fec, dim);
+  SpaceType fes_zeta(&parent2, &fec);
+  SpaceType fes_buffer(&buffer2, &fec, dim);
 
   auto phi_e = IdentityMap(dim);
   FunctionCoefficient p0(Pressure);
@@ -192,7 +253,9 @@ int main(int argc, char* argv[]) {
   referential.SetRelTol(1e-11);
   referential.AssembleForce(0.0);
   if (!referential.Solve()) {
-    std::cout << "referential solve failed\n";
+    if (Root()) {
+      std::cout << "referential solve failed\n";
+    }
     return 1;
   }
 
@@ -200,18 +263,26 @@ int main(int argc, char* argv[]) {
   std::cout << std::setprecision(3);
 
   // Rigid null pairs: translations are exact, rotations near-null.
-  std::cout << "\nrigid pair residuals (translations then rotations;\n  near-null under the tapered extension, decreasing with order):\n  ";
-  for (const auto r : referential.RigidPairResiduals()) {
-    std::cout << r << "  ";
+  const auto rigid = referential.RigidPairResiduals();
+  if (Root()) {
+    std::cout << "\nrigid pair residuals (translations then rotations;\n  near-null under the tapered extension, decreasing with order):\n  ";
+    for (const auto r : rigid) {
+      std::cout << r << "  ";
+    }
+    std::cout << "\n";
   }
-  std::cout << "\n";
 
-  // Displacement: same space, same rigid gauge at phi_e = id.
+  // Displacement: same space, same rigid gauge at phi_e = id. Comparison
+  // copies carry the build's field type so their norms are global.
   {
-    GridFunction d(referential.Displacement());
-    d -= eulerian.Displacement();
-    std::cout << "|u_ref - u_eul| / |u_eul|                = "
-              << L2Norm(d) / L2Norm(eulerian.Displacement()) << "\n";
+    auto d = MakeField(fes_u2);
+    *d = referential.Displacement();
+    *d -= eulerian.Displacement();
+    const double rel = L2Norm(*d) / L2Norm(eulerian.Displacement());
+    if (Root()) {
+      std::cout << "|u_ref - u_eul| / |u_eul|                = " << rel
+                << "\n";
+    }
   }
   // Potential through the change of variables zeta1 = phi1 + u . grad Phi0.
   {
@@ -219,22 +290,30 @@ int main(int argc, char* argv[]) {
     InnerProductCoefficient advect(u_c, eulerian.BackgroundGravity());
     GridFunctionCoefficient phi1(&eulerian.PotentialOnBody());
     SumCoefficient zeta_expected(phi1, advect);
-    GridFunction d(referential.PotentialOnBody());
-    GridFunction z(d);
-    z.ProjectCoefficient(zeta_expected);
-    d -= z;
+    auto d = MakeField(referential.PotentialSpaceOnBody());
+    *d = referential.PotentialOnBody();
+    auto z = MakeField(referential.PotentialSpaceOnBody());
+    z->ProjectCoefficient(zeta_expected);
+    *d -= *z;
     if (dim == 2) {
-      d -= d.Sum() / d.Size();  // both potentials are constant-gauged
+      // Both potentials are constant-gauged: remove the global mean.
+      *d -= GlobalSum(d->Sum()) / GlobalSum(d->Size());
     }
-    std::cout << "|zeta1 - (phi1 + u.grad Phi0)| / |zeta1| = "
-              << L2Norm(d) /
-                     std::max(1e-30, L2Norm(referential.PotentialOnBody()))
+    const double rel =
+        L2Norm(*d) /
+        std::max(1e-30, L2Norm(referential.PotentialOnBody()));
+    if (Root()) {
+      std::cout << "|zeta1 - (phi1 + u.grad Phi0)| / |zeta1| = " << rel
+                << "\n";
+    }
+  }
+  if (Root()) {
+    std::cout << "(both at the level of the two discretisations: rerun with "
+                 "-o 3 to watch them fall)\n";
+    std::cout << "iterations: Eulerian " << eulerian.LastOuterIterations()
+              << ", referential " << referential.LastOuterIterations()
               << "\n";
   }
-  std::cout << "(both at the level of the two discretisations: rerun with "
-               "-o 3 to watch them fall)\n";
-  std::cout << "iterations: Eulerian " << eulerian.LastOuterIterations()
-            << ", referential " << referential.LastOuterIterations() << "\n";
 
   if (visualization) {
     Show(body, eulerian.Displacement(), "Displacement (Eulerian)");

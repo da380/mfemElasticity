@@ -6,15 +6,22 @@
 // AddForce / Solve protocol over a sequence of times. See
 // mfemElasticity/quasi_static_problem.hpp for the interface contract.
 //
-// Sample runs:
+// One source serves the serial and the parallel build. The problem
+// classes are serial/parallel in one class, so the genuine differences
+// are only the mesh partitioning, the native-format save (one file per
+// rank in parallel) and the GLVis stream header.
+//
+// Sample runs (with mpirun -np N in front in a parallel build):
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2 -inc
 //    ./quasi_static_elasticity -m ../data/beam-quad.mesh -p 1 -o 2 -r 1
 // ============================================================================
 
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 
 #include "mfemElasticity.hpp"
 
@@ -26,7 +33,37 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
+namespace {
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SpaceType = ParFiniteElementSpace;
+bool Root() { return Mpi::Root(); }
+#else
+using MeshType = Mesh;
+using SpaceType = FiniteElementSpace;
+bool Root() { return true; }
+#endif
+
+// A per-rank filename in parallel, the plain name serially.
+string RankName(const string& base) {
+#ifdef MFEM_USE_MPI
+  ostringstream name;
+  name << base << "." << setfill('0') << setw(6) << Mpi::WorldRank();
+  return name.str();
+#else
+  return base;
+#endif
+}
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   // Set the default options.
   const char* mesh_file = "../data/star.mesh";
   int order = 1;
@@ -61,21 +98,31 @@ int main(int argc, char* argv[]) {
                  "Send the final solution to a running GLVis server.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (Root()) {
+      args.PrintUsage(cout);
+    }
     return 1;
   }
-  args.PrintOptions(cout);
-
-  // Read in the mesh and refine if requested.
-  Mesh mesh(mesh_file, 1, 1);
-  const int dim = mesh.Dimension();
-  for (int l = 0; l < ref_levels; l++) {
-    mesh.UniformRefinement();
+  if (Root()) {
+    args.PrintOptions(cout);
   }
+
+  // Read in the mesh, refine if requested, and partition in parallel.
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  for (int l = 0; l < ref_levels; l++) {
+    smesh.UniformRefinement();
+  }
+#ifdef MFEM_USE_MPI
+  MeshType mesh(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType& mesh = smesh;
+#endif
 
   // Displacement space and material (lambda = mu = 1, so kappa = 1 + 2/d).
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes(&mesh, &fec, dim);
+  SpaceType fes(&mesh, &fec, dim);
   ConstantCoefficient kappa(1.0 + 2.0 / dim), mu(1.0);
   auto rheology = IsotropicElasticRheology(dim, kappa, mu);
 
@@ -94,7 +141,8 @@ int main(int argc, char* argv[]) {
   Array<int> marker(mesh.bdr_attributes.Max()), ess_bdr;
   marker = 0;
 
-  // Construct the requested problem behind the common interface.
+  // Construct the requested problem behind the common interface (the
+  // classes detect the parallel space themselves).
   unique_ptr<LinearQuasiStaticProblem> problem;
   if (problem_type == 0) {
     mesh.MarkExternalBoundaries(marker);
@@ -111,13 +159,23 @@ int main(int argc, char* argv[]) {
     problem = make_unique<LinearQuasiStaticClampedProblem>(
         &fes, rheology, ess_bdr, traction, marker);
   } else {
-    cerr << "Unknown problem type: " << problem_type << "\n";
+    if (Root()) {
+      cerr << "Unknown problem type: " << problem_type << "\n";
+    }
     return 1;
   }
   static_cast<LinearQuasiStaticProblemBase&>(*problem).SetPrintLevel(
       IterativeSolver::PrintLevel().Summary());
-  cout << "Displacement unknowns: "
-       << problem->DisplacementSpace().GetTrueVSize() << "\n";
+  // GlobalTrueVSize is collective on first call: every rank calls it,
+  // the root prints.
+#ifdef MFEM_USE_MPI
+  const auto n_u = fes.GlobalTrueVSize();
+#else
+  const auto n_u = fes.GetTrueVSize();
+#endif
+  if (Root()) {
+    cout << "Displacement unknowns: " << n_u << "\n";
+  }
 
   // Optional demonstration of the AddForce() protocol: any dual vector
   // assembled against DisplacementSpace() may be superposed on the external
@@ -135,7 +193,8 @@ int main(int argc, char* argv[]) {
     extra->Assemble();
   }
 
-  // Time slices are written through the fields the problem registers.
+  // Time slices are written through the fields the problem registers
+  // (ParaViewDataCollection is parallel-aware by itself).
   ParaViewDataCollection dc("quasi_static", &mesh);
   if (paraview) {
     dc.SetPrefixPath("ParaView");
@@ -149,14 +208,18 @@ int main(int argc, char* argv[]) {
   const real_t dt = t_final / n_steps;
   for (int step = 0; step <= n_steps; step++) {
     const real_t t = step * dt;
-    cout << "\nstep " << step << ", t = " << t << "\n";
+    if (Root()) {
+      cout << "\nstep " << step << ", t = " << t << "\n";
+    }
 
     problem->AssembleForce(t);
     if (extra) {
       problem->AddForce(*extra);
     }
     if (!problem->Solve()) {
-      cerr << "Linear solver failed at t = " << t << "\n";
+      if (Root()) {
+        cerr << "Linear solver failed at t = " << t << "\n";
+      }
       return 2;
     }
 
@@ -167,12 +230,13 @@ int main(int argc, char* argv[]) {
     }
   }
 
-  // Save the final state in MFEM's native format.
+  // Save the final state in MFEM's native format (one file per rank in
+  // parallel).
   {
-    ofstream mesh_ofs("refined.mesh");
+    ofstream mesh_ofs(RankName("refined.mesh"));
     mesh_ofs.precision(8);
     mesh.Print(mesh_ofs);
-    ofstream sol_ofs("sol.gf");
+    ofstream sol_ofs(RankName("sol.gf"));
     sol_ofs.precision(8);
     problem->Displacement().Save(sol_ofs);
   }
@@ -183,6 +247,10 @@ int main(int argc, char* argv[]) {
     int visport = 19916;
     socketstream sol_sock(vishost, visport);
     sol_sock.precision(8);
+#ifdef MFEM_USE_MPI
+    sol_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
+             << "\n";
+#endif
     sol_sock << "solution\n";
     mesh.Print(sol_sock);
     problem->Displacement().Save(sol_sock);
