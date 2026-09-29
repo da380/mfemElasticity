@@ -251,6 +251,277 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
   return E;
 }
 
+
+#ifdef MFEM_USE_MPI
+std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
+    ParFiniteElementSpace& body_fes, ParFiniteElementSpace& buffer_fes,
+    real_t r_body, real_t r_outer, real_t taper_power, real_t pullback) {
+  MFEM_VERIFY(body_fes.FEColl() == buffer_fes.FEColl() &&
+                  body_fes.GetVDim() == buffer_fes.GetVDim(),
+              "NewRadialVacuumExtension: the spaces must share a "
+              "collection and vdim.");
+  auto* body_sub = dynamic_cast<ParSubMesh*>(body_fes.GetParMesh());
+  auto* buffer_sub = dynamic_cast<ParSubMesh*>(buffer_fes.GetParMesh());
+  MFEM_VERIFY(body_sub && buffer_sub &&
+                  body_sub->GetParent() == buffer_sub->GetParent(),
+              "NewRadialVacuumExtension: both spaces must live on "
+              "ParSubMeshes of one parent.");
+  MPI_Comm comm = body_fes.GetComm();
+  const int dim = body_sub->Dimension();
+  const int vdim = body_fes.GetVDim();
+
+  ParFiniteElementSpace parent_fes(
+      const_cast<ParMesh*>(static_cast<const ParMesh*>(body_sub->GetParent())),
+      const_cast<FiniteElementCollection*>(body_fes.FEColl()), vdim,
+      body_fes.GetOrdering());
+  SubMeshDofInjection inj_body(body_fes, parent_fes);
+  SubMeshDofInjection inj_buffer(buffer_fes, parent_fes);
+  auto J = NewSubMeshPairingTrueDofMatrix(inj_buffer, inj_body);
+
+  // Paired (trace) rows of the owned buffer true dofs.
+  const int nrows = buffer_fes.GetTrueVSize();
+  std::vector<char> paired(nrows, 0);
+  {
+    SparseMatrix diag, offd;
+    HYPRE_BigInt* cmap = nullptr;
+    J->GetDiag(diag);
+    J->GetOffd(offd, cmap);
+    for (int t = 0; t < nrows; t++) {
+      if (diag.RowSize(t) + offd.RowSize(t) > 0) {
+        paired[t] = 1;
+      }
+    }
+  }
+
+  // Scalar nodal coordinates of the buffer space (local).
+  const int ns_buf = buffer_fes.GetNDofs();
+  DenseMatrix coords(dim, ns_buf);
+  {
+    Array<int> dofs;
+    Vector x(dim);
+    for (int e = 0; e < buffer_sub->GetNE(); e++) {
+      const auto* fe = buffer_fes.GetFE(e);
+      auto* T = buffer_sub->GetElementTransformation(e);
+      buffer_fes.GetElementDofs(e, dofs);
+      const auto& nodes = fe->GetNodes();
+      for (int i = 0; i < dofs.Size(); i++) {
+        T->Transform(nodes.IntPoint(i), x);
+        for (int d = 0; d < dim; d++) {
+          coords(d, dofs[i]) = x(d);
+        }
+      }
+    }
+  }
+
+  // The owned, unpaired scalar nodes with a live taper: the queries.
+  struct Query {
+    int sdof;
+    real_t t, r;
+  };
+  std::vector<Query> queries;
+  for (int sb = 0; sb < ns_buf; sb++) {
+    const int lt0 = buffer_fes.GetLocalTDofNumber(buffer_fes.DofToVDof(sb, 0));
+    if (lt0 < 0 || paired[lt0]) {
+      continue;
+    }
+    real_t r = 0.0;
+    for (int d = 0; d < dim; d++) {
+      r += coords(d, sb) * coords(d, sb);
+    }
+    r = std::sqrt(r);
+    real_t t = (r_outer - r) / (r_outer - r_body);
+    t = std::min(real_t(1), std::max(real_t(0), t));
+    t = std::pow(t, taper_power);
+    if (t == 0.0) {
+      continue;
+    }
+    queries.push_back({sb, t, r});
+  }
+
+  // Interpolation rows, resolved over retry rounds at shrinking radii.
+  const int nsh_max = body_fes.GetTypicalFE()
+                          ? body_fes.GetTypicalFE()->GetDof()
+                          : 64;
+  std::vector<std::vector<HYPRE_BigInt>> row_cols(queries.size());
+  std::vector<std::vector<real_t>> row_vals(queries.size());
+  std::vector<char> resolved(queries.size(), 0);
+  int ranks = 0, rank = 0;
+  MPI_Comm_size(comm, &ranks);
+  MPI_Comm_rank(comm, &rank);
+
+  for (real_t factor : {1.0, 0.99, 0.97, 0.9}) {
+    // Gather the unresolved queries from every rank.
+    std::vector<real_t> my_pts;
+    std::vector<int> my_qid;
+    for (std::size_t q = 0; q < queries.size(); q++) {
+      if (resolved[q]) {
+        continue;
+      }
+      const int sb = queries[q].sdof;
+      const real_t scale = factor * pullback * r_body /
+                           std::max(queries[q].r, real_t(1e-30));
+      for (int d = 0; d < dim; d++) {
+        my_pts.push_back(scale * coords(d, sb));
+      }
+      my_qid.push_back(static_cast<int>(q));
+    }
+    int my_n = static_cast<int>(my_qid.size());
+    std::vector<int> counts(ranks), displs(ranks + 1, 0);
+    MPI_Allgather(&my_n, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+    long long total = 0;
+    for (int p = 0; p < ranks; p++) {
+      displs[p + 1] = displs[p] + counts[p];
+      total += counts[p];
+    }
+    if (total == 0) {
+      break;
+    }
+    std::vector<real_t> all_pts(static_cast<std::size_t>(total) * dim);
+    {
+      std::vector<int> ccnt(ranks), cdis(ranks);
+      for (int p = 0; p < ranks; p++) {
+        ccnt[p] = counts[p] * dim;
+        cdis[p] = displs[p] * dim;
+      }
+      MPI_Allgatherv(my_pts.data(), my_n * dim,
+                     MPITypeMap<real_t>::mpi_type, all_pts.data(),
+                     ccnt.data(), cdis.data(), MPITypeMap<real_t>::mpi_type,
+                     comm);
+    }
+
+    // Locate what this rank's body elements contain.
+    DenseMatrix pts(dim, static_cast<int>(total));
+    for (long long i = 0; i < total; i++) {
+      for (int d = 0; d < dim; d++) {
+        pts(d, static_cast<int>(i)) = all_pts[i * dim + d];
+      }
+    }
+    Array<int> elem;
+    Array<IntegrationPoint> ips;
+    body_sub->Mesh::FindPoints(pts, elem, ips, false);
+
+    // Replies: (global point index, nsh) + global columns + values,
+    // shared with every rank; the owner keeps the first reply per point.
+    std::vector<int> r_meta;
+    std::vector<HYPRE_BigInt> r_cols;
+    std::vector<real_t> r_vals;
+    {
+      Array<int> dofs;
+      Vector shape;
+      for (long long i = 0; i < total; i++) {
+        if (elem[static_cast<int>(i)] < 0) {
+          continue;
+        }
+        const int el = elem[static_cast<int>(i)];
+        const auto* fe = body_fes.GetFE(el);
+        shape.SetSize(fe->GetDof());
+        fe->CalcShape(ips[static_cast<int>(i)], shape);
+        body_fes.GetElementDofs(el, dofs);
+        r_meta.push_back(static_cast<int>(i));
+        r_meta.push_back(dofs.Size());
+        for (int a = 0; a < dofs.Size(); a++) {
+          r_vals.push_back(shape(a));
+          for (int k = 0; k < vdim; k++) {
+            r_cols.push_back(body_fes.GetGlobalTDofNumber(
+                body_fes.DofToVDof(dofs[a], k)));
+          }
+        }
+      }
+    }
+    auto allgather_var = [&](auto& mine, auto mpi_type, auto& all) {
+      int n = static_cast<int>(mine.size());
+      std::vector<int> cnt(ranks), dis(ranks + 1, 0);
+      MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+      for (int p = 0; p < ranks; p++) {
+        dis[p + 1] = dis[p] + cnt[p];
+      }
+      all.resize(dis[ranks]);
+      MPI_Allgatherv(mine.data(), n, mpi_type, all.data(), cnt.data(),
+                     dis.data(), mpi_type, comm);
+    };
+    std::vector<int> all_meta;
+    std::vector<HYPRE_BigInt> all_cols;
+    std::vector<real_t> all_vals;
+    allgather_var(r_meta, MPI_INT, all_meta);
+    static_assert(sizeof(HYPRE_BigInt) == sizeof(long long) ||
+                      sizeof(HYPRE_BigInt) == sizeof(int),
+                  "unexpected HYPRE_BigInt");
+    allgather_var(r_cols,
+                  sizeof(HYPRE_BigInt) == sizeof(long long) ? MPI_LONG_LONG
+                                                            : MPI_INT,
+                  all_cols);
+    allgather_var(r_vals, MPITypeMap<real_t>::mpi_type, all_vals);
+
+    // Walk the replies; keep those for this rank's unresolved queries.
+    std::size_t cpos = 0, vpos = 0;
+    for (std::size_t m = 0; m + 1 < all_meta.size(); m += 2) {
+      const int gpt = all_meta[m];
+      const int nsh = all_meta[m + 1];
+      const std::size_t c0 = cpos, v0 = vpos;
+      cpos += static_cast<std::size_t>(nsh) * vdim;
+      vpos += nsh;
+      if (gpt < displs[rank] || gpt >= displs[rank + 1]) {
+        continue;
+      }
+      const int q = my_qid[gpt - displs[rank]];
+      if (resolved[q]) {
+        continue;  // first reply wins
+      }
+      resolved[q] = 1;
+      row_cols[q].assign(all_cols.begin() + c0,
+                         all_cols.begin() + c0 +
+                             static_cast<std::size_t>(nsh) * vdim);
+      row_vals[q].assign(all_vals.begin() + v0, all_vals.begin() + v0 + nsh);
+    }
+  }
+  for (std::size_t q = 0; q < queries.size(); q++) {
+    MFEM_VERIFY(resolved[q],
+                "NewRadialVacuumExtension: a surface projection was not "
+                "found on any rank.");
+  }
+  (void)nsh_max;
+
+  // Assemble the interior rows (paired rows stay empty; J is added).
+  Array<int> I(nrows + 1);
+  I = 0;
+  std::vector<int> row_query(nrows, -1);
+  std::vector<int> row_comp(nrows, 0);
+  for (std::size_t q = 0; q < queries.size(); q++) {
+    const int sb = queries[q].sdof;
+    for (int k = 0; k < vdim; k++) {
+      const int lt = buffer_fes.GetLocalTDofNumber(buffer_fes.DofToVDof(sb, k));
+      MFEM_VERIFY(lt >= 0, "component ownership mismatch");
+      row_query[lt] = static_cast<int>(q);
+      row_comp[lt] = k;
+      I[lt + 1] = static_cast<int>(row_vals[q].size());
+    }
+  }
+  for (int i = 0; i < nrows; i++) {
+    I[i + 1] += I[i];
+  }
+  const int nnz = I[nrows];
+  Array<HYPRE_BigInt> Jc(std::max(nnz, 1));
+  Vector data(std::max(nnz, 1));
+  for (int i = 0; i < nrows; i++) {
+    const int q = row_query[i];
+    if (q < 0) {
+      continue;
+    }
+    const int k = row_comp[i];
+    const int nsh = static_cast<int>(row_vals[q].size());
+    for (int a = 0; a < nsh; a++) {
+      Jc[I[i] + a] = row_cols[q][static_cast<std::size_t>(a) * vdim + k];
+      data[I[i] + a] = queries[q].t * row_vals[q][a];
+    }
+  }
+  HypreParMatrix E_int(comm, nrows, buffer_fes.GlobalTrueVSize(),
+                       body_fes.GlobalTrueVSize(), I.GetData(), Jc.GetData(),
+                       data.GetData(), buffer_fes.GetTrueDofOffsets(),
+                       body_fes.GetTrueDofOffsets());
+  return std::unique_ptr<HypreParMatrix>(ParAdd(J.get(), &E_int));
+}
+#endif
+
 // ---------------------------------------------------------------------------
 // ReferentialElasticRheology
 
@@ -761,6 +1032,58 @@ void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
   operator_dirty_ = true;
 }
 
+
+#ifdef MFEM_USE_MPI
+void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
+    ParFiniteElementSpace& fes_buffer, const HypreParMatrix& E) {
+  MFEM_VERIFY(!ball_wide_ && ParallelPotential(),
+              "SetPrescribedVacuumExtension(par): parallel SubMesh mode "
+              "only.");
+  MFEM_VERIFY(!pext_EtGE_, "SetPrescribedVacuumExtension: already set.");
+  auto& map = ref_rheology_->EquilibriumMapping();
+  auto* buffer_sub = dynamic_cast<ParSubMesh*>(fes_buffer.GetParMesh());
+  MFEM_VERIFY(buffer_sub &&
+                  buffer_sub->GetParent() == pfes_zeta_->GetParMesh(),
+              "SetPrescribedVacuumExtension: the buffer space must live on "
+              "a ParSubMesh of the ball.");
+
+  auto shadow = SubMeshDofInjection::MakeShadowSpace(*pfes_zeta_, *buffer_sub);
+  shadow_zeta_buffer_ = std::move(shadow);
+  SubMeshDofInjection inj(*shadow_zeta_buffer_, *pfes_zeta_);
+  zeta0_buffer_ = detail::MakeGridFunction(shadow_zeta_buffer_.get());
+  inj.MultTranspose(*zeta0_, *zeta0_buffer_);
+  grad_zeta0_buffer_ =
+      std::make_unique<GradientGridFunctionCoefficient>(zeta0_buffer_.get());
+
+  ParBilinearForm g_form(&fes_buffer);
+  g_form.AddDomainIntegrator(new ReferentialGravityIntegrator(
+      map, *grad_zeta0_buffer_, 1.0 / (2.0 * four_pi_G_)));
+  g_form.Assemble();
+  g_form.Finalize();
+  OperatorHandle Gv(Operator::Hypre_ParCSR);
+  Array<int> empty;
+  g_form.FormSystemMatrix(empty, Gv);
+  pext_EtGE_.reset(
+      mfem::RAP(Gv.As<HypreParMatrix>(), const_cast<HypreParMatrix*>(&E)));
+
+  ParSubMeshMixedBilinearForm c_form(pfes_zeta_, &fes_buffer);
+  c_form.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
+      map, *grad_zeta0_buffer_, 1.0 / four_pi_G_));
+  c_form.Assemble();
+  OperatorHandle Cv(Operator::Hypre_ParCSR);
+  c_form.FormRectangularSystemMatrix(empty, empty, Cv);
+  std::unique_ptr<HypreParMatrix> Et(
+      const_cast<HypreParMatrix&>(E).Transpose());
+  std::unique_ptr<HypreParMatrix> EtCv(
+      ParMult(Et.get(), Cv.As<HypreParMatrix>()));
+  pext_C_total_.reset(ParAdd(C_.As<HypreParMatrix>(), EtCv.get()));
+  pext_Ct_total_.reset(pext_C_total_->Transpose());
+  C_op_ = pext_C_total_.get();
+  Ct_op_ = pext_Ct_total_.get();
+  operator_dirty_ = true;
+}
+#endif
+
 void LinearQuasiStaticReferentialProblem::SetVacuumExtension(
     const Array<int>& buffer_marker, Coefficient& mu_gauge, real_t epsilon,
     int refinements) {
@@ -835,6 +1158,13 @@ void LinearQuasiStaticReferentialProblem::SetupSolver(OperatorHandle& A) {
     A_aug_.Reset(Add(*A.As<SparseMatrix>(), *ext_EtGE_), true);
     A_uu = A_aug_.Ptr();
     SetupDefaultPreconditioner(A_aug_);
+#ifdef MFEM_USE_MPI
+  } else if (pext_EtGE_) {
+    A_aug_.Clear();
+    A_aug_.Reset(ParAdd(A.As<HypreParMatrix>(), pext_EtGE_.get()), true);
+    A_uu = A_aug_.Ptr();
+    SetupDefaultPreconditioner(A_aug_);
+#endif
   } else {
     SetupDefaultPreconditioner(A);
   }

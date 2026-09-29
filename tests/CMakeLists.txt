@@ -87,6 +87,8 @@ if(USE_MPI)
     target_link_libraries(TestSelfGravitatingGaugedPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSlidingInterfacePar TestSlidingInterfacePar.cpp)
     target_link_libraries(TestSlidingInterfacePar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestReferentialProblemPar TestReferentialProblemPar.cpp)
+    target_link_libraries(TestReferentialProblemPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestNullSpacePar TestNullSpacePar.cpp)
     target_link_libraries(TestNullSpacePar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestCompositeRheologyPar TestCompositeRheologyPar.cpp)
@@ -124,6 +126,9 @@ if(USE_MPI)
         add_test(NAME TestSlidingInterfacePar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSlidingInterfacePar>)
+        add_test(NAME TestReferentialProblemPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestReferentialProblemPar>)
         add_test(NAME TestNullSpacePar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestNullSpacePar>)

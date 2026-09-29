@@ -49,6 +49,22 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
     mfem::real_t r_body, mfem::real_t r_outer, mfem::real_t taper_power = 2.0,
     mfem::real_t pullback = 0.999);
 
+#ifdef MFEM_USE_MPI
+/**
+ * @brief Parallel radial vacuum extension on true dofs: trace rows through
+ * NewSubMeshPairingTrueDofMatrix (cross-rank), interior rows through a
+ * query–reply exchange (surface projections gathered to every rank, each
+ * locating what its local body elements contain and replying with
+ * global-column interpolation rows; unresolved points retry at smaller
+ * radii, as in serial). Semantics as the serial overload.
+ */
+std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
+    mfem::ParFiniteElementSpace& body_fes,
+    mfem::ParFiniteElementSpace& buffer_fes, mfem::real_t r_body,
+    mfem::real_t r_outer, mfem::real_t taper_power = 2.0,
+    mfem::real_t pullback = 0.999);
+#endif
+
 /**
  * @brief The constitutive state of the linearised referential problem as a
  * Rheology: the second elastic tensor @f$\hat C@f$ at equilibrium (Mandel,
@@ -209,6 +225,14 @@ class LinearQuasiStaticReferentialProblem
   void SetPrescribedVacuumExtension(mfem::FiniteElementSpace& fes_buffer,
                                     const mfem::SparseMatrix& E);
 
+#ifdef MFEM_USE_MPI
+  /** @brief Parallel overload: @p E on true dofs
+   * (NewRadialVacuumExtension parallel overload); the folds run through
+   * hypre RAP/ParMult. */
+  void SetPrescribedVacuumExtension(mfem::ParFiniteElementSpace& fes_buffer,
+                                    const mfem::HypreParMatrix& E);
+#endif
+
   /** @brief True when the displacement lives on the ball itself. */
   bool BallWide() const { return ball_wide_; }
 
@@ -330,6 +354,10 @@ class LinearQuasiStaticReferentialProblem
   std::unique_ptr<mfem::GridFunction> zeta0_buffer_;
   std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_buffer_;
   std::unique_ptr<mfem::SparseMatrix> ext_EtGE_, ext_C_total_, ext_Ct_total_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pext_EtGE_, pext_C_total_,
+      pext_Ct_total_;
+#endif
   mfem::OperatorHandle A_aug_;
 
   // loads
