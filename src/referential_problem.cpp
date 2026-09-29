@@ -49,34 +49,7 @@ class ReferentialStiffness : public ElasticStiffness {
   Diffeomorphism* map_;
 };
 
-/// The rigid rotation of the mapped positions, W phi_e(x), about axis
-/// `component` (2-D: the single in-plane rotation).
-class MappedRotation : public VectorCoefficient {
- public:
-  MappedRotation(Diffeomorphism& map, int component)
-      : VectorCoefficient(map.GetVDim()), map_(&map), c_(component) {}
-
-  void Eval(Vector& V, ElementTransformation& T,
-            const IntegrationPoint& ip) override {
-    map_->Eval(y_, T, ip);
-    V.SetSize(vdim);
-    if (vdim == 2) {
-      V(0) = -y_(1);
-      V(1) = y_(0);
-    } else {
-      // V = e_c x y: V_a = -y_b, V_b = y_a with (c, a, b) cyclic.
-      const int a = (c_ + 1) % 3, b = (c_ + 2) % 3;
-      V(c_) = 0.0;
-      V(a) = -y_(b);
-      V(b) = y_(a);
-    }
-  }
-
- private:
-  Diffeomorphism* map_;
-  int c_;
-  Vector y_;
-};
+// (MappedRotation now lives in null_space.hpp.)
 
 }  // namespace
 

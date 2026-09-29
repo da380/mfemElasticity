@@ -163,6 +163,156 @@ class RelabelledBackground {
 };
 
 /**
+ * @brief The minimum equilibrium stress field of Al-Attar & Woodhouse
+ * (2010, GJI 181, 567; §3.3): among all symmetric stress fields with
+ * @f$\mathrm{Div}\,\mathbf{T} = \mathbf{f}@f$ in the body and
+ * @f$\mathbf{T}\hat{\mathbf{n}} = 0@f$ on its surface, the one of
+ * smallest norm @f$\int \tfrac{1}{2\mu}\,\mathbf{T}:\mathbf{T}\,dV@f$.
+ * By their eqs. (55)–(57) it has the form @f$\mathbf{T} =
+ * 2\mu\nabla_s\mathbf{u}@f$ with @f$\mathbf{u}@f$ solving the static
+ * elastic problem @f$\mathrm{Div}(2\mu\nabla_s\mathbf{u}) =
+ * \mathbf{f}@f$, traction-free (an elastic material with shear modulus
+ * @f$\mu@f$ and @f$\lambda = 0@f$); the solve happens in the
+ * constructor, projected onto the complement of the rigid modes (the
+ * body force must be self-equilibrated: zero net force and torque —
+ * their eq. 58). The stress is independent of the absolute scale of
+ * @f$\mu@f$; only spatial variations matter (a priori weighting, e.g.
+ * down-weighting lithospheric stress), so @p mu defaults to a constant.
+ *
+ * The object *is* the stress: a MatrixCoefficient usable directly as
+ * the @f$\mathbf{S}_e@f$ of ReferentialElasticRheology, evaluable on
+ * the mesh of @p fes. For @f$\mathbf{f} = \rho\nabla\Phi_0@f$ this is
+ * an equilibrium stress consistent with self-gravity in the sign
+ * convention of the codebase (@f$\mathrm{Div}(-p\mathbf{1}) =
+ * \rho\nabla\Phi_0@f$ hydrostatically). Serial and parallel.
+ *
+ * **Relabelled (mapped) mode**: with a Diffeomorphism @p map, the whole
+ * problem is pulled back to the fixed reference body: the elastic form
+ * becomes @f$\int 2\mu\,\mathrm{sym}(\nabla u F^{-1}) :
+ * \mathrm{sym}(\nabla v F^{-1})\, J\,dx@f$ (the standard relabelling
+ * recipe of the mapped integrators), the rigid kernel becomes
+ * translations plus MappedRotation, @p body_force must then be the
+ * *composed* physical force @f$\mathbf{f}\circ\varphi@f$ (a coefficient
+ * on the reference mesh; the class supplies the Jacobian weight), and
+ * Eval() returns the **second Piola–Kirchhoff pullback**
+ * @f$\mathbf{S} = J F^{-1} (\mathbf{T}\circ\varphi) F^{-T}@f$ — exactly
+ * the @f$\mathbf{S}_e@f$ the referential problem consumes. With
+ * @f$F@f$ explicit in every form, shape derivatives are analytic: the
+ * generator is ready for referential shape optimisation.
+ */
+class MinimumNormEquilibriumStress : public mfem::MatrixCoefficient {
+ public:
+  /**
+   * @param fes Vector H1 space on the body (SubMesh); not owned.
+   * @param body_force @f$\mathbf{f} = \rho\nabla\Phi_0@f$ (in mapped
+   * mode: the composed @f$\mathbf{f}\circ\varphi@f$); not owned, used
+   * only during construction.
+   * @param mu Optional positive weight field; constant when null.
+   * @param map Optional relabelling: solve pulled back on the reference
+   * body (see the class notes); not owned, must outlive the object.
+   */
+  MinimumNormEquilibriumStress(mfem::FiniteElementSpace& fes,
+                               mfem::VectorCoefficient& body_force,
+                               mfem::Coefficient* mu = nullptr,
+                               Diffeomorphism* map = nullptr);
+
+  void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+  /** @brief The Lagrange-multiplier field @f$\mathbf{u}@f$ (a formal
+   * displacement; the stress is its symmetric gradient). */
+  const mfem::GridFunction& Auxiliary() const { return *u_; }
+  int SolverIterations() const { return iterations_; }
+
+ private:
+  mfem::FiniteElementSpace* fes_;
+  mfem::Coefficient* mu_;
+  Diffeomorphism* map_;
+  mfem::ConstantCoefficient half_;
+  std::unique_ptr<mfem::GridFunction> u_;
+  mfem::DenseMatrix G_, F_, Fi_, A_, S_, tmp_;
+  int iterations_ = 0;
+};
+
+/**
+ * @brief The minimum *deviatoric* equilibrium stress field of Al-Attar
+ * & Woodhouse (2010, §3.4): the equilibrium stress whose deviatoric
+ * part has the smallest norm. By their eqs. (70)–(74) it is
+ * @f$\mathbf{T} = -p\mathbf{1} + 2\mu\nabla_s\mathbf{u}@f$ with
+ * @f$(\mathbf{u}, p)@f$ the steady incompressible Stokes problem
+ * @f[
+ *   -\nabla p + \mathrm{Div}(2\mu\nabla_s\mathbf{u}) = \mathbf{f},
+ *   \qquad \mathrm{div}\,\mathbf{u} = 0,
+ *   \qquad [-p\hat{\mathbf{n}} +
+ *     2\mu\hat{\mathbf{n}}\cdot\nabla_s\mathbf{u}] = 0
+ *   \ \text{on}\ \partial B,
+ * @f]
+ * solved here with **Taylor–Hood** elements: the pressure space must be
+ * (at least) one polynomial order below the velocity space, since
+ * equal-order interpolation violates the inf–sup (LBB) condition and
+ * produces spurious pressure modes — the constructor refuses it. With
+ * the traction (all-Neumann) boundary condition the pressure carries
+ * *no* constant ambiguity; the only kernel is the rigid modes of
+ * @f$\mathbf{u}@f$, projected. In regions admitting a hydrostatic
+ * state the field reduces to @f$-p^0\mathbf{1}@f$; on an aspherical
+ * body it quantifies the deviatoric stress that no equilibrium field
+ * can avoid. (Their further claim that this field also minimises
+ * stress-induced anisotropy, eq. 79, rested on Dahlen's pre-stress
+ * decomposition of the elastic tensor, which Maitra & Al-Attar 2021
+ * showed to be incomplete — it is not relied on here.) Serial and
+ * parallel.
+ *
+ * **Relabelled (mapped) mode**, as for MinimumNormEquilibriumStress:
+ * with @p map the Stokes problem is pulled back to the fixed reference
+ * body (mapped elastic block, mapped divergence coupling
+ * @f$\int \mathrm{tr}(\nabla u F^{-1})\, q\, J\,dx@f$, kernel =
+ * translations + MappedRotation; the natural traction condition pulls
+ * back exactly through Nanson), @p body_force is the composed
+ * @f$\mathbf{f}\circ\varphi@f$, and Eval() returns the second
+ * Piola–Kirchhoff pullback @f$J F^{-1}(-p\mathbf{1} +
+ * 2\mu\,\mathrm{sym}(\nabla u F^{-1})) F^{-T}@f$. Taylor–Hood
+ * stability survives the (bi-Lipschitz) relabelling, with the inf–sup
+ * constant degrading with the map's condition number. With @f$F@f$
+ * explicit in the forms, the generator is ready for referential shape
+ * optimisation.
+ */
+class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
+ public:
+  /**
+   * @param fes_u Vector H1 velocity space on the body; not owned.
+   * @param fes_p Scalar H1 pressure space on the same mesh, one order
+   * below @p fes_u (Taylor–Hood); not owned.
+   * @param body_force @f$\mathbf{f} = \rho\nabla\Phi_0@f$
+   * (self-equilibrated; in mapped mode: the composed
+   * @f$\mathbf{f}\circ\varphi@f$); not owned, used during construction.
+   * @param mu Optional positive weight field; constant when null.
+   * @param map Optional relabelling (see the class notes); not owned,
+   * must outlive the object.
+   */
+  MinimumDeviatoricEquilibriumStress(mfem::FiniteElementSpace& fes_u,
+                                     mfem::FiniteElementSpace& fes_p,
+                                     mfem::VectorCoefficient& body_force,
+                                     mfem::Coefficient* mu = nullptr,
+                                     Diffeomorphism* map = nullptr);
+
+  void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+  const mfem::GridFunction& Pressure() const { return *p_; }
+  const mfem::GridFunction& Auxiliary() const { return *u_; }
+  int SolverIterations() const { return iterations_; }
+
+ private:
+  mfem::FiniteElementSpace *fes_u_, *fes_p_;
+  mfem::Coefficient* mu_;
+  Diffeomorphism* map_;
+  mfem::ConstantCoefficient half_;
+  std::unique_ptr<mfem::GridFunction> u_, p_;
+  mfem::DenseMatrix G_, F_, Fi_, A_, S_, tmp_;
+  int iterations_ = 0;
+};
+
+/**
  * @brief The elliptic buffer-taper rule: extend an equilibrium mapping,
  * given (at least) on the body, to the whole ball by a one-off harmonic
  * solve in the buffer (doc/gravitating_elasticity.md §3.1; the

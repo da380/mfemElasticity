@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "mfem.hpp"
+#include "mfemElasticity/mappings.hpp"
 
 namespace mfemElasticity {
 
@@ -119,6 +120,40 @@ class RigidRotation : public mfem::VectorCoefficient {
    */
   void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
             const mfem::IntegrationPoint &ip) override;
+};
+
+/**
+ * @brief The rigid rotation of the *mapped* positions, @f$W\varphi(x)@f$,
+ * about the axis @p component (2-D: the single in-plane rotation, component
+ * 2): the strain-free rotational mode of a problem posed on a fixed
+ * reference body with equilibrium mapping @f$\varphi@f$. Reduces to
+ * RigidRotation at the identity.
+ */
+class MappedRotation : public mfem::VectorCoefficient {
+ public:
+  MappedRotation(Diffeomorphism &map, int component)
+      : mfem::VectorCoefficient(map.GetVDim()), map_(&map), c_(component) {}
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override {
+    map_->Eval(y_, T, ip);
+    V.SetSize(vdim);
+    if (vdim == 2) {
+      V(0) = -y_(1);
+      V(1) = y_(0);
+    } else {
+      // V = e_c x y: V_a = -y_b, V_b = y_a with (c, a, b) cyclic.
+      const int a = (c_ + 1) % 3, b = (c_ + 2) % 3;
+      V(c_) = 0.0;
+      V(a) = -y_(b);
+      V(b) = y_(a);
+    }
+  }
+
+ private:
+  Diffeomorphism *map_;
+  int c_;
+  mfem::Vector y_;
 };
 
 /**

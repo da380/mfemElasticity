@@ -219,6 +219,275 @@ TEST(Background, RelabelledCoefficientsMatchHandRolled) {
   ASSERT_GT(n_body, 0);
 }
 
+namespace {
+
+// Relative weak-form residual of an equilibrium stress: with
+// Div T = f and T n = 0, int T : grad v + int f . v must vanish for
+// every v; testing on an independent higher-order space measures the
+// discretisation error of the generator.
+double WeakEquilibriumResidual(MatrixCoefficient& S, VectorCoefficient& f,
+                               FiniteElementSpace& fes) {
+  LinearForm r(&fes);
+  r.AddDomainIntegrator(new DomainLFDeformationGradientIntegrator(S));
+  r.AddDomainIntegrator(new VectorDomainLFIntegrator(f));
+  r.Assemble();
+  LinearForm fn(&fes);
+  fn.AddDomainIntegrator(new VectorDomainLFIntegrator(f));
+  fn.Assemble();
+  return r.Norml2() / fn.Norml2();
+}
+
+// Quadrature L2 norms of a stress coefficient: full and deviatoric.
+void StressNorms(MatrixCoefficient& S, Mesh& mesh, int order, double& full,
+                 double& dev) {
+  const int dim = mesh.Dimension();
+  DenseMatrix T;
+  double full2 = 0.0, dev2 = 0.0;
+  for (int e = 0; e < mesh.GetNE(); e++) {
+    auto* Tr = mesh.GetElementTransformation(e);
+    const auto& ir = IntRules.Get(mesh.GetElementGeometry(e), 2 * order);
+    for (int q = 0; q < ir.GetNPoints(); q++) {
+      const auto& ip = ir.IntPoint(q);
+      Tr->SetIntPoint(&ip);
+      const double w = ip.weight * Tr->Weight();
+      S.Eval(T, *Tr, ip);
+      double tr = 0.0;
+      for (int i = 0; i < dim; i++) {
+        tr += T(i, i);
+      }
+      for (int i = 0; i < dim; i++) {
+        for (int j = 0; j < dim; j++) {
+          const double d = T(i, j) - (i == j ? tr / dim : 0.0);
+          full2 += w * T(i, j) * T(i, j);
+          dev2 += w * d * d;
+        }
+      }
+    }
+  }
+  full = std::sqrt(full2);
+  dev = std::sqrt(dev2);
+}
+
+// Self-gravity of the uniform disc, f = rho grad Phi0 = 2 pi G rho^2 x.
+void DiscBodyForce(const Vector& x, Vector& f) {
+  f = x;
+  f *= 2.0 * kPi * kG * kRho * kRho;
+}
+
+double UniformDiscPressure(const Vector& x) {
+  return kPi * kG * kRho * kRho * (1.0 - (x * x));
+}
+
+}  // namespace
+
+// AW10 §3.3: the minimum equilibrium stress solves the equilibrium
+// equations weakly, at discretisation level improving with order.
+TEST(Background, MinimumNormEquilibriumSatisfiesWeakForm) {
+  const int dim = 2;
+  Mesh parent(MeshFile(dim).c_str(), 1, 1);
+  Array<int> body_attr({1});
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+  VectorFunctionCoefficient f(dim, DiscBodyForce);
+
+  H1_FECollection fec3(3, dim);
+  FiniteElementSpace fes3(&body, &fec3, dim);
+  std::vector<double> res;
+  for (int order : {1, 2}) {
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes(&body, &fec, dim);
+    MinimumNormEquilibriumStress T(fes, f);
+    res.push_back(WeakEquilibriumResidual(T, f, fes3));
+  }
+  EXPECT_LT(res[1], 0.6 * res[0]);
+  EXPECT_LT(res[1], 5e-2);
+}
+
+// AW10 §3.4 on the uniform disc: the minimum deviatoric equilibrium
+// stress recovers the hydrostatic state, T = -p0 1 with
+// p0 = pi G rho^2 (1 - r^2), essentially free of deviatoric content.
+TEST(Background, MinimumDeviatoricRecoversHydrostatic) {
+  const int dim = 2;
+  Mesh parent(MeshFile(dim).c_str(), 1, 1);
+  Array<int> body_attr({1});
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+  VectorFunctionCoefficient f(dim, DiscBodyForce);
+
+  H1_FECollection fec_u(3, dim), fec_p(2, dim);
+  FiniteElementSpace fes_u(&body, &fec_u, dim), fes_p(&body, &fec_p);
+  MinimumDeviatoricEquilibriumStress T(fes_u, fes_p, f);
+
+  FunctionCoefficient p0(UniformDiscPressure);
+  auto& p = const_cast<GridFunction&>(T.Pressure());
+  ConstantCoefficient zero(0.0);
+  const double p_err = p.ComputeL2Error(p0) / p.ComputeL2Error(zero);
+  EXPECT_LT(p_err, 1e-2);
+
+  double full = 0.0, dev = 0.0;
+  StressNorms(T, body, 3, full, dev);
+  EXPECT_LT(dev, 1e-2 * full);
+
+  H1_FECollection fec4(4, dim);
+  FiniteElementSpace fes4(&body, &fec4, dim);
+  EXPECT_LT(WeakEquilibriumResidual(T, f, fes4), 5e-2);
+}
+
+// The two generators are each optimal in their own functional: the
+// minimum-norm field has the smaller full norm, the minimum-deviatoric
+// field the smaller deviatoric norm (a discretisation-tolerant check of
+// minimality that needs no analytic solution).
+TEST(Background, EquilibriumStressOptimalityOrdering) {
+  const int dim = 2;
+  Mesh parent(MeshFile(dim).c_str(), 1, 1);
+  Array<int> body_attr({1});
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+  VectorFunctionCoefficient f(dim, DiscBodyForce);
+
+  H1_FECollection fec2(2, dim), fec1(1, dim);
+  FiniteElementSpace fes_u(&body, &fec2, dim), fes_p(&body, &fec1);
+  MinimumNormEquilibriumStress T_mn(fes_u, f);
+  MinimumDeviatoricEquilibriumStress T_md(fes_u, fes_p, f);
+
+  double full_mn, dev_mn, full_md, dev_md;
+  StressNorms(T_mn, body, 2, full_mn, dev_mn);
+  StressNorms(T_md, body, 2, full_md, dev_md);
+  EXPECT_LT(full_mn, 1.02 * full_md);
+  EXPECT_LT(dev_md, 1.02 * dev_mn);
+  // And genuinely different fields: the disc's minimum-norm stress is
+  // not hydrostatic.
+  EXPECT_GT(dev_mn, 0.05 * full_mn);
+}
+
+// Love's obstruction, computed: a homogeneous ELLIPSE admits no
+// hydrostatic equilibrium (its self-gravity equipotentials are not
+// parallel to its surface), so even the minimum-deviatoric equilibrium
+// stress carries genuine deviatoric content, of order the ellipticity.
+// The interior attraction of the homogeneous elliptical cylinder is
+// linear: grad Phi = 4 pi G rho / (a + b) * (b x, a y).
+TEST(Background, EllipseNeedsDeviatoricStress) {
+  const int dim = 2;
+  const double a = 1.2, b = 1.0 / 1.2;
+  Mesh parent(MeshFile(dim).c_str(), 1, 1);
+  parent.Transform([](const Vector& x, Vector& y) {
+    y.SetSize(2);
+    y[0] = 1.2 * x[0];
+    y[1] = x[1] / 1.2;
+  });
+  Array<int> body_attr({1});
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+  VectorFunctionCoefficient f(dim, [a, b](const Vector& x, Vector& v) {
+    const double c = 4.0 * kPi * kG * kRho * kRho / (a + b);
+    v.SetSize(2);
+    v[0] = c * b * x[0];
+    v[1] = c * a * x[1];
+  });
+
+  H1_FECollection fec_u(3, dim), fec_p(2, dim);
+  FiniteElementSpace fes_u(&body, &fec_u, dim), fes_p(&body, &fec_p);
+  MinimumDeviatoricEquilibriumStress T(fes_u, fes_p, f);
+
+  double full = 0.0, dev = 0.0;
+  StressNorms(T, body, 3, full, dev);
+  EXPECT_GT(dev, 1e-2 * full);   // unavoidable deviatoric stress
+  EXPECT_LT(dev, 0.5 * full);    // still pressure-dominated
+
+  H1_FECollection fec4(4, dim);
+  FiniteElementSpace fes4(&body, &fec4, dim);
+  EXPECT_LT(WeakEquilibriumResidual(T, f, fes4), 5e-2);
+}
+
+// The relabelled (mapped) generator mode: for the exact linear ellipse
+// map the pulled-back problems on the reference disc are the SAME
+// discrete systems as the unmapped problems on the transformed mesh, so
+// the mapped Eval (the second PK pullback S = J F^{-1} T(phi(x)) F^{-T})
+// must reproduce the hand-computed pullback of the unmapped stress,
+// element by element, to solver tolerance -- the change-of-variables
+// identity that underwrites referential shape optimisation.
+TEST(Background, MappedGeneratorsMatchTransformedMesh) {
+  const int dim = 2;
+  const double a = 1.2, b = 1.0 / 1.2;
+  Mesh parent(MeshFile(dim).c_str(), 1, 1);
+  Array<int> body_attr({1});
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+
+  // The exact linear map and the physical (ellipse) body force.
+  CallableDiffeomorphism phi(
+      dim,
+      [a, b](const Vector& x, Vector& y) {
+        y.SetSize(2);
+        y(0) = a * x(0);
+        y(1) = b * x(1);
+      },
+      [a, b](const Vector&, DenseMatrix& F) {
+        F = 0.0;
+        F(0, 0) = a;
+        F(1, 1) = b;
+      });
+  auto force = [a, b](const Vector& y, Vector& v) {
+    const double c = 4.0 * kPi * kG * kRho * kRho / (a + b);
+    v.SetSize(2);
+    v[0] = c * b * y[0];
+    v[1] = c * a * y[1];
+  };
+  TransformedVectorFunctionCoefficient f_comp(phi, force);
+  VectorFunctionCoefficient f_phys(dim, force);
+
+  // Mapped generators on the reference disc.
+  H1_FECollection fec_u(3, dim), fec_p(2, dim);
+  FiniteElementSpace fes_u(&body, &fec_u, dim), fes_p(&body, &fec_p);
+  MinimumNormEquilibriumStress S_mn(fes_u, f_comp, nullptr, &phi);
+  MinimumDeviatoricEquilibriumStress S_md(fes_u, fes_p, f_comp, nullptr,
+                                          &phi);
+
+  // Unmapped generators on the transformed copy (exact geometry for a
+  // linear map; element indices correspond one to one).
+  Mesh mapped(body);
+  mapped.Transform([](const Vector& x, Vector& y) {
+    y.SetSize(2);
+    y(0) = 1.2 * x(0);
+    y(1) = x(1) / 1.2;
+  });
+  FiniteElementSpace mfes_u(&mapped, &fec_u, dim), mfes_p(&mapped, &fec_p);
+  MinimumNormEquilibriumStress T_mn(mfes_u, f_phys);
+  MinimumDeviatoricEquilibriumStress T_md(mfes_u, mfes_p, f_phys);
+
+  DenseMatrix F(dim), Fi(dim);
+  F = 0.0;
+  F(0, 0) = a;
+  F(1, 1) = b;
+  Fi = 0.0;
+  Fi(0, 0) = 1.0 / a;
+  Fi(1, 1) = 1.0 / b;
+  const double J = 1.0;  // area-preserving
+
+  double max_mn = 0.0, max_md = 0.0, scale_mn = 0.0, scale_md = 0.0;
+  DenseMatrix S1, T1, tmp(dim), E(dim);
+  for (int e = 0; e < body.GetNE(); e++) {
+    auto* Tr = body.GetElementTransformation(e);
+    const auto& ip = Geometries.GetCenter(body.GetElementGeometry(e));
+    Tr->SetIntPoint(&ip);
+    auto* Tm = mapped.GetElementTransformation(e);
+    Tm->SetIntPoint(&ip);
+
+    auto compare = [&](MatrixCoefficient& mapped_gen,
+                       MatrixCoefficient& plain_gen, double& max_d,
+                       double& scale) {
+      mapped_gen.Eval(S1, *Tr, ip);
+      plain_gen.Eval(T1, *Tm, ip);
+      // Expected: S = J F^{-1} T F^{-T}.
+      Mult(Fi, T1, tmp);
+      MultABt(tmp, Fi, E);
+      E *= J;
+      scale = std::max(scale, E.MaxMaxNorm());
+      E -= S1;
+      max_d = std::max(max_d, E.MaxMaxNorm());
+    };
+    compare(S_mn, T_mn, max_mn, scale_mn);
+    compare(S_md, T_md, max_md, scale_md);
+  }
+  EXPECT_LT(max_mn, 1e-7 * scale_mn);
+  EXPECT_LT(max_md, 1e-7 * scale_md);
+}
+
 // The analytic buffer-taper rule: phi = x + t(r)(xi - x) with the cubic
 // smoothstep. Exact equality with xi inside, the exact identity outside,
 // the closed-form blend in between, and an independent differentiation

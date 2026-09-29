@@ -413,13 +413,61 @@ fluid regions. AW10 organise the solution set completely:
   same mathematical object as the Stokes/deviatoric-stress-minimisation
   route to hydrostatic equilibrium figures (research notes Thread A):
   one Stokes solver serves both the figures project and the generation of
-  physically plausible `T⁰` for general models.
+  physically plausible `T⁰` for general models. **Both are implemented**
+  (`background.hpp`: `MinimumNormEquilibriumStress`,
+  `MinimumDeviatoricEquilibriumStress` — the objects *are*
+  MatrixCoefficients, usable directly as `S_e`; serial and parallel).
+  The Stokes solve uses **Taylor–Hood** elements, the pressure one order
+  below the velocity: equal-order interpolation violates the inf–sup
+  (LBB) condition and produces spurious pressure modes, and the
+  constructor refuses it. Measured on the homogeneous ellipse (e = 0.2,
+  exact elliptical-cylinder gravity; `examples/equilibrium_stress.cpp`):
+  the min-deviatoric field carries an unavoidable deviatoric fraction of
+  ≈ 0.18 (Love's obstruction, computed), collapsing to 6×10⁻⁷ on the
+  disc where the pressure reproduces the hydrostatic `p⁰` to 2×10⁻⁶;
+  the two optimality orderings hold discretely (unit-tested without
+  analytic solutions).
+- **The generators admit the relabelling transformations** (mapped
+  mode, optional trailing `Diffeomorphism`): the elastic form pulls back
+  with the standard recipe, the divergence coupling becomes
+  `∫ tr(∇u F⁻¹) q J`, the kernel becomes translations + `MappedRotation`,
+  and `Eval()` returns the second PK pullback `J F⁻¹(T∘φ)F⁻ᵀ` — the
+  `S_e` of the general problem, generated **on the fixed reference
+  body** with `F` explicit in every form. That is the structure
+  referential shape optimisation needs: shape updates are field updates,
+  and shape derivatives are analytic. Verified by the
+  change-of-variables identity (mapped generators on the reference disc
+  ≡ unmapped generators on the exactly-transformed mesh, to 10⁻⁷).
+- **Does the deviatoric pre-stress matter for loading? Measured**
+  (`examples/prestress_loading.cpp`, and the `EllipticalPrestressLoading`
+  test): on the homogeneous ellipse, loading responses computed with the
+  full generated `S_e` versus its pressure part alone (the
+  quasi-hydrostatic approximation of standard practice — not an
+  equilibrium stress off sphericity) differ by
+  `|δu|/|u| ≈ 0.13 e` at `p/μ = 0.31`, scaling like the *product*
+  `e·(p/μ)` (measured ≈2.5× at doubled `G`), with the potential an
+  order down. So: negligible at Earth's non-hydrostatic figure, but
+  1–7 % in displacement across `e = 0.1–0.3` — the fossil-figure /
+  fast-rotator planetary regime — and larger where `p/μ` exceeds the
+  test value. The bare tensor is held fixed in the comparison; letting
+  the *seismological* moduli be the fixed data would add the
+  Maitra & Al-Attar (2021) conversion difference on top. Large
+  ellipticities need taper room: the `elastogravity_2d_wide.msh` mesh
+  (buffer to radius 2) and the parameter-blended ellipse taper
+  `φ = (a(r)x, y/a(r))`, whose exact Jacobian
+  `J = 1 + (a′/ar)(x² − y²)` degrades far more slowly than the
+  displacement blend.
 - Solvability requires the body force and boundary tractions to exert no
   net force or torque (AW10 eq. 58) — the same compatibility our
   projected solvers enforce.
-- The deviatoric part of `T⁰` reads as *stress-induced anisotropy* of the
-  seismological tensor (AW10 eqs. 76–79, the D&T `Υ = Γ + stress terms`
-  split): a further entry in the §2 dictionary.
+- AW10 eqs. 76–79 further read the deviatoric part of `T⁰` as
+  *stress-induced anisotropy* of the seismological tensor (the D&T
+  `Υ = Γ + stress terms` split), making the min-deviatoric field also
+  the minimiser of stress-induced anisotropy. **That reading does not
+  survive**: it rests on Dahlen's pre-stress decomposition of the
+  elastic tensor, which Maitra & Al-Attar (2021) showed to be
+  incomplete. The generators are used here purely as equilibrium-stress
+  constructors; nothing relies on eq. 79.
 
 ### Dahlen's hydrostatic-region argument, and where it stops
 
@@ -478,7 +526,7 @@ exists:
 | `C ε(u):ε(v)`, 21-component bare tensor | `ElasticTensorIntegrator` (Mandel) — exists |
 | PREM → bare conversion `C = C^eff − p⁰(δδ−δδ−δδ)` | small `ElasticTensorCoefficient` decorator — **new**, trivial |
 | initial-stress term `∫ T⁰_AB ∂_A u_k ∂_B v_k` | matrix-coefficient vector diffusion — **new integrator**, small |
-| background state `Φ₀, p⁰, T⁰` | `background.hpp`: `RadialHydrostaticBackground` (hydrostatic `g`/`p⁰` by cumulative quadrature, bare conversion, `S_e = −p⁰1`, identity map, assembled rheology) and `RelabelledBackground` (the transformation-law chains, owned here — drivers never hand-roll); general `S_e` beyond these generators supplied as a coefficient (equilibrium consistency is the modeller's burden) |
+| background state `Φ₀, p⁰, T⁰` | `background.hpp`: `RadialHydrostaticBackground` (hydrostatic `g`/`p⁰` by cumulative quadrature, bare conversion, `S_e = −p⁰1`, identity map, assembled rheology), `RelabelledBackground` (the transformation-law chains, owned here — drivers never hand-roll), and the AW10 generators `MinimumNormEquilibriumStress` (elastic BVP) / `MinimumDeviatoricEquilibriumStress` (Taylor–Hood Stokes) for general aspherical `S_e` (§6); an arbitrary `S_e` may still be supplied as a coefficient (equilibrium consistency is then the modeller's burden) |
 | gravity, mixed Eulerian | exists (`self_gravitating.*`) |
 | gravity, mixed referential | `TransformedDiffusionIntegrator` + linearised-coefficient coupling — mostly exists via mappings |
 | fluid–solid slip, linearised | pairing + penalty/AL machinery exists; the `ϖ⁰ Q/S` equilibrium-geometry terms — **new**, from AC18 eqs. 121/137 |

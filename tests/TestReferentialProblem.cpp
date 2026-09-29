@@ -533,6 +533,136 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
   }
 }
 
+// Pre-stress in loading (the ellipse benchmark of
+// examples/prestress_loading.cpp, in miniature): the loading response
+// with the full minimum-deviatoric equilibrium stress versus the
+// quasi-hydrostatic approximation (its pressure part only) must differ,
+// with the difference growing with ellipticity, and remain a
+// perturbation.
+TEST(ReferentialProblem, EllipticalPrestressLoading) {
+  const int dim = 2, order = 2;
+  const double G = 0.1;
+  std::vector<double> du_rel;
+  for (double e : {0.03, 0.1}) {
+    const double a = 1.0 + e, b = 1.0 / a;
+    Setting s(dim, order);
+    Array<int> buffer_attr({2});
+    SubMesh buffer(SubMesh::CreateFromDomain(*s.parent, buffer_attr));
+    FiniteElementSpace fes_buffer(&buffer, s.fec.get(), dim);
+    Vector bb_min, bb_max;
+    s.parent->GetBoundingBox(bb_min, bb_max);
+    const double r_out = bb_max.Normlinf();
+
+    // The exact linear ellipse map (for the generator) and the
+    // parameter-blended taper phi = (a(r) x, y/a(r)) for the problem.
+    CallableDiffeomorphism lin(
+        dim,
+        [a, b](const Vector& x, Vector& y) {
+          y.SetSize(2);
+          y(0) = a * x(0);
+          y(1) = b * x(1);
+        },
+        [a, b](const Vector&, DenseMatrix& F) {
+          F = 0.0;
+          F(0, 0) = a;
+          F(1, 1) = b;
+        });
+    auto af = [e, r_out](double r, double& av, double& da) {
+      if (r <= 1.0) {
+        av = 1.0 + e;
+        da = 0.0;
+        return;
+      }
+      if (r >= r_out) {
+        av = 1.0;
+        da = 0.0;
+        return;
+      }
+      const double w = r_out - 1.0;
+      const double t = (r - 1.0) / w;
+      av = 1.0 + e * (1.0 - t * t * (3.0 - 2.0 * t));
+      da = -e * 6.0 * t * (1.0 - t) / w;
+    };
+    CallableDiffeomorphism phi_e(
+        dim,
+        [af](const Vector& x, Vector& y) {
+          double av, da;
+          af(x.Norml2(), av, da);
+          y.SetSize(2);
+          y(0) = av * x(0);
+          y(1) = x(1) / av;
+        },
+        [af](const Vector& x, DenseMatrix& F) {
+          const double r = x.Norml2();
+          double av, da;
+          af(r, av, da);
+          F.SetSize(2);
+          F = 0.0;
+          F(0, 0) = av;
+          F(1, 1) = 1.0 / av;
+          if (r > 0.0 && da != 0.0) {
+            F(0, 0) += da * x(0) * x(0) / r;
+            F(0, 1) = da * x(0) * x(1) / r;
+            F(1, 0) = -da * x(0) * x(1) / (av * av * r);
+            F(1, 1) -= da * x(1) * x(1) / (av * av * r);
+          }
+        });
+
+    // The realistic stress (mapped min-deviatoric generator, exact
+    // elliptical-cylinder gravity) and its quasi-hydrostatic truncation.
+    auto force = [a, b, G](const Vector& y, Vector& v) {
+      const double c = 4.0 * std::numbers::pi * G * kRho * kRho / (a + b);
+      v.SetSize(2);
+      v[0] = c * b * y[0];
+      v[1] = c * a * y[1];
+    };
+    TransformedVectorFunctionCoefficient f_comp(lin, force);
+    H1_FECollection fec_gu(order + 1, dim), fec_gp(order, dim);
+    FiniteElementSpace fes_gu(s.body.get(), &fec_gu, dim),
+        fes_gp(s.body.get(), &fec_gp);
+    MinimumDeviatoricEquilibriumStress S_full(fes_gu, fes_gp, f_comp,
+                                              nullptr, &lin);
+    GridFunctionCoefficient p_c(&S_full.Pressure());
+    ProductCoefficient minus_p(-1.0, p_c);
+    PullbackDiffusionCoefficient a_e(lin);
+    ScalarMatrixProductCoefficient S_hydro(minus_p, a_e);
+
+    ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
+    auto C =
+        IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
+    TransformedFunctionCoefficient sigma_comp(
+        lin, [](const Vector& y) {
+          return 0.02 * (1.0 + y(1) * y(1) / (y * y));
+        });
+    NansonAreaCoefficient nu(lin);
+    ProductCoefficient sigma_ref(sigma_comp, nu);
+    auto surface = SurfaceMarker(*s.body);
+
+    auto run = [&](MatrixCoefficient& S, GridFunction& u_out) {
+      ReferentialElasticRheology rheology(dim, C, S, phi_e);
+      LinearQuasiStaticReferentialProblem problem(
+          s.fes_u.get(), s.fes_zeta.get(), rheology, rho, G, kDtNDegree);
+      auto E = NewRadialVacuumExtension(*s.fes_u, fes_buffer, 1.0, r_out);
+      problem.SetPrescribedVacuumExtension(fes_buffer, *E);
+      problem.SetSurfaceLoad(sigma_ref, surface);
+      problem.SetRelTol(1e-10);
+      problem.AssembleForce(0.0);
+      ASSERT_TRUE(problem.Solve());
+      u_out = problem.Displacement();
+    };
+    GridFunction uA(s.fes_u.get()), uB(s.fes_u.get());
+    run(S_full, uA);
+    run(S_hydro, uB);
+    GridFunction du(uA);
+    du -= uB;
+    du_rel.push_back(du.Norml2() / uA.Norml2());
+  }
+  // The deviatoric pre-stress is a genuine, ellipticity-scaled effect.
+  EXPECT_GT(du_rel[0], 1e-4);
+  EXPECT_LT(du_rel[1], 0.2);
+  EXPECT_GT(du_rel[1], 1.5 * du_rel[0]);
+}
+
 // Tier (ii): the same spherical hydrostatic physics described from a
 // relabelled reference (interior-only relabelling: identity on the
 // surface and the buffer). The transformed coefficients (C~, S~, rho~)

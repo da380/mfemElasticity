@@ -192,6 +192,41 @@ void RunHarmonicExtensionCase() {
         "harmonic extension displacement norm");
 }
 
+// Serial-vs-parallel agreement of the AW10 equilibrium-stress
+// generators (the auxiliary fields are rigid-projected, so they compare
+// directly).
+void RunEquilibriumStressCase() {
+  Mesh smesh("../data/elastogravity_2d.msh", 1, 1);
+  const int dim = smesh.Dimension();
+  Array<int> body_attr({1});
+  VectorFunctionCoefficient f(dim, [](const Vector& x, Vector& v) {
+    v = x;
+    v *= 2.0 * kPi * kG * kRho * kRho;
+  });
+
+  double u_ref = 0.0, p_ref = 0.0;
+  {
+    SubMesh body(SubMesh::CreateFromDomain(smesh, body_attr));
+    H1_FECollection fec2(2, dim), fec1(1, dim);
+    FiniteElementSpace fes_u(&body, &fec2, dim), fes_p(&body, &fec1);
+    MinimumNormEquilibriumStress T1(fes_u, f);
+    MinimumDeviatoricEquilibriumStress T2(fes_u, fes_p, f);
+    u_ref = L2Norm(T1.Auxiliary());
+    p_ref = L2Norm(T2.Pressure());
+  }
+
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh body(ParSubMesh::CreateFromDomain(pmesh, body_attr));
+  H1_FECollection fec2(2, dim), fec1(1, dim);
+  ParFiniteElementSpace fes_u(&body, &fec2, dim), fes_p(&body, &fec1);
+  MinimumNormEquilibriumStress T1(fes_u, f);
+  MinimumDeviatoricEquilibriumStress T2(fes_u, fes_p, f);
+  Check(RelErr(L2Norm(T1.Auxiliary()), u_ref), 1e-6,
+        "minimum-norm auxiliary field norm");
+  Check(RelErr(L2Norm(T2.Pressure()), p_ref), 1e-6,
+        "minimum-deviatoric pressure norm");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -201,6 +236,7 @@ int main(int argc, char* argv[]) {
   RunCase(1, "o1");
   RunCase(2, "o2");
   RunHarmonicExtensionCase();
+  RunEquilibriumStressCase();
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

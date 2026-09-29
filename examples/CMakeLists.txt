@@ -13,6 +13,8 @@ set(SERIAL_EXAMPLES
     quasi_static_elasticity     # quasi_static_problem.hpp driver
     gauged_fluid_cavity         # gauged fluid region, purely elastic (SetGaugedFluid)
     sliding_fluid_ellipse       # sliding interface (displacement discontinuity) on an elliptical body
+    equilibrium_stress          # AW10 minimum-norm / minimum-deviatoric equilibrium stress generators
+    prestress_loading           # does the deviatoric pre-stress matter for loading? (ellipse sweep)
     referential_elastogravity   # general referential problem vs the Eulerian one (self-benchmark)
     viscoelasticity             # ViscoelasticOperator driver
     viscoelastic_loading        # GIA-style layered load/rebound driver
