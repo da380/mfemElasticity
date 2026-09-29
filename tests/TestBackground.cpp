@@ -218,3 +218,155 @@ TEST(Background, RelabelledCoefficientsMatchHandRolled) {
   }
   ASSERT_GT(n_body, 0);
 }
+
+// The analytic buffer-taper rule: phi = x + t(r)(xi - x) with the cubic
+// smoothstep. Exact equality with xi inside, the exact identity outside,
+// the closed-form blend in between, and an independent differentiation
+// path (the gradient of the nodal interpolant) agreeing at
+// interpolation level.
+TEST(Background, TaperedDiffeomorphismBlends) {
+  const int dim = 2;
+  Mesh mesh(MeshFile(dim).c_str(), 1, 1);
+
+  const double c = 0.08;
+  auto f = [c](double r) { return 1.0 + c * std::exp(-r * r); };
+  auto df = [c](double r) { return -2.0 * r * c * std::exp(-r * r); };
+  RadialDiffeomorphism xi(dim, f, df);
+  const double r0 = 0.9, r1 = 1.15;
+  TaperedDiffeomorphism phi(xi, r0, r1);
+
+  int n_in = 0, n_mid = 0, n_out = 0;
+  Vector x(dim), v, xiv(dim);
+  DenseMatrix F, E(dim);
+  for (int e = 0; e < mesh.GetNE(); e++) {
+    auto* T = mesh.GetElementTransformation(e);
+    const auto& ip = Geometries.GetCenter(mesh.GetElementGeometry(e));
+    T->SetIntPoint(&ip);
+    T->Transform(ip, x);
+    const double r = x.Norml2();
+
+    phi.Eval(v, *T, ip);
+    phi.EvalGradient(F, *T, ip);
+    EXPECT_GT(F.Det(), 0.0);
+
+    // The independently coded blend.
+    double t = 1.0, dt = 0.0;
+    if (r >= r1) {
+      t = 0.0;
+    } else if (r > r0) {
+      const double s = (r - r0) / (r1 - r0);
+      t = 1.0 - s * s * (3.0 - 2.0 * s);
+      dt = -6.0 * s * (1.0 - s) / (r1 - r0);
+    }
+    xiv = x;
+    xiv *= f(r);
+    for (int i = 0; i < dim; i++) {
+      EXPECT_NEAR(v(i), x(i) + t * (xiv(i) - x(i)), 1e-13);
+      for (int j = 0; j < dim; j++) {
+        const double Fxi =
+            (i == j ? f(r) : 0.0) + df(r) / r * x(i) * x(j);
+        E(i, j) = (i == j ? 1.0 : 0.0) + t * (Fxi - (i == j ? 1.0 : 0.0)) +
+                  dt / r * (xiv(i) - x(i)) * x(j);
+        EXPECT_NEAR(F(i, j), E(i, j), 1e-13);
+      }
+    }
+    (r < r0 ? n_in : (r > r1 ? n_out : n_mid))++;
+  }
+  ASSERT_GT(n_in, 0);
+  ASSERT_GT(n_mid, 0);
+  ASSERT_GT(n_out, 0);
+
+  // Independent differentiation: the interpolant's discrete gradient.
+  auto gd = Interpolate(phi, mesh);
+  double max_dF = 0.0;
+  for (int e = 0; e < mesh.GetNE(); e++) {
+    auto* T = mesh.GetElementTransformation(e);
+    const auto& ip = Geometries.GetCenter(mesh.GetElementGeometry(e));
+    T->SetIntPoint(&ip);
+    DenseMatrix Fa, Fd;
+    phi.EvalGradient(Fa, *T, ip);
+    gd.EvalGradient(Fd, *T, ip);
+    Fa -= Fd;
+    max_dF = std::max(max_dF, Fa.MaxMaxNorm());
+  }
+  EXPECT_LT(max_dF, 2e-2);
+}
+
+// The elliptic buffer-taper rule: a mapping non-trivial on the physical
+// surface, extended harmonically through the buffer. Body values are the
+// interpolant of xi, the buffer obeys the maximum principle, the
+// displacement dies towards the DtN sphere, and the result is a
+// diffeomorphism.
+TEST(Background, HarmonicExtensionMapping) {
+  const int dim = 2;
+  Mesh mesh(MeshFile(dim).c_str(), 1, 1);
+  Vector bb_min, bb_max;
+  mesh.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+
+  // Non-identity ON the surface r = 1 (|h| = c q(1)^2 there).
+  const double c = 0.05;
+  auto q = [](double r) { return 1.0 - r * r / 1.44; };
+  auto f = [c, q](double r) { return 1.0 + c * q(r) * q(r); };
+  auto df = [c, q](double r) {
+    return c * 2.0 * q(r) * (-2.0 * r / 1.44);
+  };
+  RadialDiffeomorphism xi(dim, f, df);
+  const double trace = c * q(1.0) * q(1.0);  // |h| at r = 1
+
+  Array<int> body_attr({1}), buffer_attr({2});
+  auto phi = NewHarmonicExtensionMapping(mesh, 2, xi, body_attr, buffer_attr);
+  const GridFunction& h = phi.Displacement();
+
+  double body_err = 0.0, buffer_max = 0.0, inner_buffer_max = 0.0;
+  Vector x(dim), hv;
+  for (int e = 0; e < mesh.GetNE(); e++) {
+    auto* T = mesh.GetElementTransformation(e);
+    const auto& ip = Geometries.GetCenter(mesh.GetElementGeometry(e));
+    T->SetIntPoint(&ip);
+    T->Transform(ip, x);
+    const double r = x.Norml2();
+    h.GetVectorValue(*T, ip, hv);
+
+    DenseMatrix F;
+    phi.EvalGradient(F, *T, ip);
+    EXPECT_GT(F.Det(), 0.0);
+
+    if (mesh.GetAttribute(e) == 1) {
+      // h = (f(r) - 1) x on the body, to interpolation error.
+      for (int i = 0; i < dim; i++) {
+        body_err = std::max(body_err,
+                            std::abs(hv(i) - (f(r) - 1.0) * x(i)));
+      }
+    } else {
+      buffer_max = std::max(buffer_max, hv.Norml2());
+      if (r < 0.5 * (1.0 + r_out)) {
+        inner_buffer_max = std::max(inner_buffer_max, hv.Norml2());
+      }
+    }
+  }
+  EXPECT_LT(body_err, 1e-4);
+  EXPECT_LT(buffer_max, 1.05 * trace);   // maximum principle
+  EXPECT_GT(inner_buffer_max, 0.1 * trace);  // non-trivial extension
+
+  // The displacement dies towards the DtN sphere.
+  DenseMatrix pts(dim, 8);
+  for (int i = 0; i < 8; i++) {
+    const double th = 2.0 * kPi * i / 8.0 + 0.05;
+    pts(0, i) = 0.999 * r_out * std::cos(th);
+    pts(1, i) = 0.999 * r_out * std::sin(th);
+  }
+  Array<int> elem;
+  Array<IntegrationPoint> ips;
+  mesh.FindPoints(pts, elem, ips, false);
+  int n_found = 0;
+  for (int i = 0; i < 8; i++) {
+    if (elem[i] < 0) {
+      continue;
+    }
+    n_found++;
+    h.GetVectorValue(elem[i], ips[i], hv);
+    EXPECT_LT(hv.Norml2(), 0.05 * trace);
+  }
+  ASSERT_GT(n_found, 4);
+}

@@ -196,6 +196,50 @@ class RadialDiffeomorphism : public Diffeomorphism {
 };
 
 /**
+ * @brief The radial blend of a mapping to the identity: the buffer-taper
+ * rule for an equilibrium mapping that is non-trivial on the physical
+ * surface (doc/gravitating_elasticity.md §3.1 and §7).
+ *
+ * @f[
+ *   \boldsymbol{\varphi}(\mathbf{x}) = \mathbf{x}
+ *     + t(r)\,\bigl(\boldsymbol{\xi}(\mathbf{x}) - \mathbf{x}\bigr),
+ *   \qquad
+ *   F = I + t\,(F_\xi - I)
+ *     + \frac{t'(r)}{r}\,(\boldsymbol{\xi}-\mathbf{x})\otimes\mathbf{x},
+ * @f]
+ * with the cubic smoothstep @f$t = 1 - s^2(3-2s)@f$,
+ * @f$s = (r - r_{\mathrm{inner}})/(r_{\mathrm{outer}} -
+ * r_{\mathrm{inner}})@f$ clamped to @f$[0,1]@f$: @f$\varphi = \xi@f$
+ * exactly (values and gradient) for @f$r \le r_{\mathrm{inner}}@f$, the
+ * identity exactly for @f$r \ge r_{\mathrm{outer}}@f$, and @f$C^1@f$
+ * across both seams (@f$t' = 0@f$ at both ends), so the DtN-sphere
+ * convention holds with @f$F = I@f$ there as well. The inner mapping
+ * must be evaluable through the taper region and is not owned.
+ * Diffeomorphy of the blend is the caller's responsibility (moderate
+ * displacements; the consumers' @f$J > 0@f$ checks apply).
+ */
+class TaperedDiffeomorphism : public Diffeomorphism {
+ public:
+  TaperedDiffeomorphism(Diffeomorphism& xi, mfem::real_t r_inner,
+                        mfem::real_t r_outer);
+
+  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+  void EvalGradient(mfem::DenseMatrix& F, mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+ private:
+  Diffeomorphism* xi_;
+  mfem::real_t r0_, r1_;
+  mfem::Vector x_, y_;
+  mfem::DenseMatrix Fx_;
+
+  /// t(r) and t'(r) of the clamped smoothstep.
+  void Taper(mfem::real_t r, mfem::real_t& t, mfem::real_t& dt) const;
+};
+
+/**
  * @brief The diffeomorphism @f$\boldsymbol{\xi}(\mathbf{x}) = \mathbf{x} +
  * \mathbf{h}(\mathbf{x})@f$ for a displacement grid function, with
  * @f$F = I + \nabla\mathbf{h}@f$ evaluated through the element

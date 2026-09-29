@@ -162,4 +162,36 @@ class RelabelledBackground {
   ReferentialElasticRheology rheology_;
 };
 
+/**
+ * @brief The elliptic buffer-taper rule: extend an equilibrium mapping,
+ * given (at least) on the body, to the whole ball by a one-off harmonic
+ * solve in the buffer (doc/gravitating_elasticity.md §3.1; the
+ * alternative to the analytic TaperedDiffeomorphism when the mapping is
+ * only known on the body, e.g.\ discrete or planetmodel-supplied).
+ *
+ * The displacement @f$\mathbf{h} = \boldsymbol{\xi} - \mathrm{id}@f$ is
+ * interpolated on the body (nodal, at @p order — the interpolated-F
+ * mode of doc/mappings.md), extended into the buffer by the vector
+ * Laplace equation with Dirichlet data @f$\mathbf{h}@f$ on the shared
+ * body surface and @f$\mathbf{0}@f$ on the outer (DtN) sphere, and
+ * returned as an owning GridFunctionDiffeomorphism on the parent mesh.
+ * The DtN-sphere identity convention holds pointwise (values); by the
+ * maximum principle the extension is bounded by its surface trace.
+ * Diffeomorphy for moderate displacements is the caller's business, as
+ * for every mapping.
+ */
+GridFunctionDiffeomorphism NewHarmonicExtensionMapping(
+    mfem::Mesh& parent, int order, Diffeomorphism& xi,
+    const mfem::Array<int>& body_attributes,
+    const mfem::Array<int>& buffer_attributes);
+
+#ifdef MFEM_USE_MPI
+/** @brief Parallel overload: ParSubMesh transfers and an AMG-CG buffer
+ * solve; semantics as the serial builder. */
+GridFunctionDiffeomorphism NewHarmonicExtensionMapping(
+    mfem::ParMesh& parent, int order, Diffeomorphism& xi,
+    const mfem::Array<int>& body_attributes,
+    const mfem::Array<int>& buffer_attributes);
+#endif
+
 }  // namespace mfemElasticity

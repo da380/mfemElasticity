@@ -12,6 +12,7 @@ set(SERIAL_EXAMPLES
     elastogravity_layered       # LinearQuasiStaticSelfGravitatingProblem: uniform, fluid core (+ inner core)
     quasi_static_elasticity     # quasi_static_problem.hpp driver
     gauged_fluid_cavity         # gauged fluid region, purely elastic (SetGaugedFluid)
+    sliding_fluid_ellipse       # sliding interface (displacement discontinuity) on an elliptical body
     referential_elastogravity   # general referential problem vs the Eulerian one (self-benchmark)
     viscoelasticity             # ViscoelasticOperator driver
     viscoelastic_loading        # GIA-style layered load/rebound driver

@@ -206,9 +206,14 @@ smoothly (and diffeomorphically) to the identity at the buffer's external
 boundary. Any smooth extension is admissible — the extension is gauge —
 but a rule is needed: a radial blending heuristic, or a small elliptic
 (harmonic-extension) solve in the buffer with the surface values and the
-identity as Dirichlet data, done once in pre-processing. The
-background-state layer owns this rule; the analytic benchmark mappings
-already taper by construction. Beyond convenience there is a physical
+identity as Dirichlet data, done once in pre-processing. Both rules are
+in-library: `TaperedDiffeomorphism` (mappings layer) blends any
+ball-wide analytic mapping to the identity through a cubic smoothstep,
+`C¹` at both seams with `F = I` at the DtN sphere, and
+`NewHarmonicExtensionMapping` (background module, serial and parallel)
+interpolates a body-only mapping and extends it by the vector Laplace
+solve, returning a `GridFunctionDiffeomorphism` on the ball. The
+analytic benchmark mappings already taper by construction. Beyond convenience there is a physical
 reason (Maitra & Al-Attar 2024, a small but subtle point): the Eulerian
 form's gravity coupling contains the *bare displacement*, not a strain
 (the `u·∇∇Φ⁰`-type terms sample the reference potential at displaced

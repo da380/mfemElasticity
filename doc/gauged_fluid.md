@@ -252,7 +252,13 @@ stays free — the slip the continuous space cannot represent.
 
 **Status.** The pairing and the penalty/AL machinery are implemented and
 verified on the gravity-free cavity (`TestSlidingInterface`,
-`TestSlidingInterfacePar`): in the barotropic setting the sliding solution
+`TestSlidingInterfacePar`); `examples/sliding_fluid_ellipse.cpp` runs
+them on an *elliptical* body — the geometry where the discontinuity is
+genuinely needed: even the uniform load drives an O(ellipticity)
+tangential slip (impossible on the disc, where the response is
+conformal), and the frictionless interface's independent-rotation null
+modes disappear (an elliptical interface transmits torque through the
+normal forces alone). in the barotropic setting the sliding solution
 matches the condensed rank-one reference (and hence the continuous-space
 gauge of §2) on the solid, the normal jump vanishes and the tangential
 jump does not. The null space is larger than the welded one — a

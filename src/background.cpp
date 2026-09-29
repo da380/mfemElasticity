@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <numbers>
+#include <utility>
 
 namespace mfemElasticity {
 
@@ -118,5 +120,130 @@ RelabelledBackground::RelabelledBackground(RadialHydrostaticBackground& base,
       jac_(xi),
       rho_rel_(rho_xi_, jac_),
       rheology_(base.SpaceDim(), C_rel_, S_rel_, xi) {}
+
+GridFunctionDiffeomorphism NewHarmonicExtensionMapping(
+    Mesh& parent, int order, Diffeomorphism& xi,
+    const Array<int>& body_attributes, const Array<int>& buffer_attributes) {
+  const int dim = parent.SpaceDimension();
+  MFEM_VERIFY(xi.GetVDim() == dim && order >= 1,
+              "NewHarmonicExtensionMapping: dimension mismatch or bad order");
+
+  auto fec = std::make_unique<H1_FECollection>(order, dim);
+  auto fes = std::make_unique<FiniteElementSpace>(&parent, fec.get(), dim);
+  auto h = std::make_unique<GridFunction>(fes.get());
+  *h = 0.0;
+
+  // Body: the nodal interpolant of the displacement xi - id.
+  Array<int> battrs(body_attributes);
+  SubMesh body(SubMesh::CreateFromDomain(parent, battrs));
+  FiniteElementSpace fes_body(&body, fec.get(), dim);
+  GridFunction h_body(&fes_body);
+  VectorFunctionCoefficient pos(dim, [](const Vector& x, Vector& y) { y = x; });
+  VectorSumCoefficient disp(xi, pos, 1.0, -1.0);
+  h_body.ProjectCoefficient(disp);
+  SubMesh::Transfer(h_body, *h);
+
+  // Buffer: harmonic, Dirichlet on every buffer boundary (the body trace
+  // on the shared surface, zero on the outer sphere).
+  Array<int> vattrs(buffer_attributes);
+  SubMesh buffer(SubMesh::CreateFromDomain(parent, vattrs));
+  FiniteElementSpace fes_buffer(&buffer, fec.get(), dim);
+  GridFunction h_buffer(&fes_buffer);
+  h_buffer = 0.0;
+  SubMesh::Transfer(*h, h_buffer);
+
+  Array<int> ess_bdr(buffer.bdr_attributes.Size() ? buffer.bdr_attributes.Max()
+                                                  : 0);
+  ess_bdr = 1;
+  Array<int> ess_tdof;
+  fes_buffer.GetEssentialTrueDofs(ess_bdr, ess_tdof);
+  MFEM_VERIFY(ess_tdof.Size() > 0,
+              "NewHarmonicExtensionMapping: the buffer has no boundary dofs");
+
+  ConstantCoefficient one(1.0);
+  BilinearForm a(&fes_buffer);
+  a.AddDomainIntegrator(new VectorDiffusionIntegrator(one));
+  a.Assemble();
+  LinearForm b(&fes_buffer);
+  b.Assemble();
+  OperatorPtr A;
+  Vector X, B;
+  a.FormLinearSystem(ess_tdof, h_buffer, b, A, X, B);
+  GSSmoother prec(*A.As<SparseMatrix>());
+  CGSolver cg;
+  cg.SetOperator(*A);
+  cg.SetPreconditioner(prec);
+  cg.SetRelTol(1e-12);
+  cg.SetMaxIter(2000);
+  cg.SetPrintLevel(0);
+  cg.Mult(B, X);
+  a.RecoverFEMSolution(X, b, h_buffer);
+  SubMesh::Transfer(h_buffer, *h);
+
+  return GridFunctionDiffeomorphism(std::move(fec), std::move(fes),
+                                    std::move(h));
+}
+
+#ifdef MFEM_USE_MPI
+GridFunctionDiffeomorphism NewHarmonicExtensionMapping(
+    ParMesh& parent, int order, Diffeomorphism& xi,
+    const Array<int>& body_attributes, const Array<int>& buffer_attributes) {
+  const int dim = parent.SpaceDimension();
+  MFEM_VERIFY(xi.GetVDim() == dim && order >= 1,
+              "NewHarmonicExtensionMapping: dimension mismatch or bad order");
+
+  auto fec = std::make_unique<H1_FECollection>(order, dim);
+  auto fes = std::make_unique<ParFiniteElementSpace>(&parent, fec.get(), dim);
+  auto h = std::make_unique<ParGridFunction>(fes.get());
+  *h = 0.0;
+
+  Array<int> battrs(body_attributes);
+  ParSubMesh body(ParSubMesh::CreateFromDomain(parent, battrs));
+  ParFiniteElementSpace fes_body(&body, fec.get(), dim);
+  ParGridFunction h_body(&fes_body);
+  VectorFunctionCoefficient pos(dim, [](const Vector& x, Vector& y) { y = x; });
+  VectorSumCoefficient disp(xi, pos, 1.0, -1.0);
+  h_body.ProjectCoefficient(disp);
+  ParSubMesh::Transfer(h_body, *h);
+
+  Array<int> vattrs(buffer_attributes);
+  ParSubMesh buffer(ParSubMesh::CreateFromDomain(parent, vattrs));
+  ParFiniteElementSpace fes_buffer(&buffer, fec.get(), dim);
+  ParGridFunction h_buffer(&fes_buffer);
+  h_buffer = 0.0;
+  ParSubMesh::Transfer(*h, h_buffer);
+
+  Array<int> ess_bdr(buffer.bdr_attributes.Size() ? buffer.bdr_attributes.Max()
+                                                  : 0);
+  ess_bdr = 1;
+  Array<int> ess_tdof;
+  fes_buffer.GetEssentialTrueDofs(ess_bdr, ess_tdof);
+
+  ConstantCoefficient one(1.0);
+  ParBilinearForm a(&fes_buffer);
+  a.AddDomainIntegrator(new VectorDiffusionIntegrator(one));
+  a.Assemble();
+  ParLinearForm b(&fes_buffer);
+  b.Assemble();
+  OperatorPtr A;
+  Vector X, B;
+  a.FormLinearSystem(ess_tdof, h_buffer, b, A, X, B);
+  HypreBoomerAMG prec(*A.As<HypreParMatrix>());
+  prec.SetPrintLevel(0);
+  prec.SetSystemsOptions(dim);
+  CGSolver cg(parent.GetComm());
+  cg.SetOperator(*A);
+  cg.SetPreconditioner(prec);
+  cg.SetRelTol(1e-12);
+  cg.SetMaxIter(2000);
+  cg.SetPrintLevel(0);
+  cg.Mult(B, X);
+  a.RecoverFEMSolution(X, b, h_buffer);
+  ParSubMesh::Transfer(h_buffer, *h);
+
+  return GridFunctionDiffeomorphism(std::move(fec), std::move(fes),
+                                    std::move(h));
+}
+#endif
 
 }  // namespace mfemElasticity

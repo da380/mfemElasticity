@@ -162,6 +162,36 @@ void RunCase(int order, const std::string& label) {
         label + " potential norm");
 }
 
+// Serial-vs-parallel agreement of the harmonic buffer extension of a
+// mapping that is non-trivial on the physical surface.
+void RunHarmonicExtensionCase() {
+  const char* mesh_file = "../data/elastogravity_2d.msh";
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+
+  const double c = 0.05;
+  auto q = [](double r) { return 1.0 - r * r / 1.44; };
+  auto f = [c, q](double r) { return 1.0 + c * q(r) * q(r); };
+  auto df = [c, q](double r) {
+    return c * 2.0 * q(r) * (-2.0 * r / 1.44);
+  };
+  Array<int> body_attr({1}), buffer_attr({2});
+
+  double ref = 0.0;
+  {
+    RadialDiffeomorphism xi(dim, f, df);
+    auto phi =
+        NewHarmonicExtensionMapping(smesh, 2, xi, body_attr, buffer_attr);
+    ref = L2Norm(phi.Displacement());
+  }
+
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  RadialDiffeomorphism xi(dim, f, df);
+  auto phi = NewHarmonicExtensionMapping(pmesh, 2, xi, body_attr, buffer_attr);
+  Check(RelErr(L2Norm(phi.Displacement()), ref), 1e-8,
+        "harmonic extension displacement norm");
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -170,6 +200,7 @@ int main(int argc, char* argv[]) {
 
   RunCase(1, "o1");
   RunCase(2, "o2");
+  RunHarmonicExtensionCase();
 
   if (Mpi::Root()) {
     if (num_fails == 0) {

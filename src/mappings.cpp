@@ -134,6 +134,85 @@ void RadialDiffeomorphism::EvalGradient(DenseMatrix& F,
   }
 }
 
+TaperedDiffeomorphism::TaperedDiffeomorphism(Diffeomorphism& xi,
+                                             real_t r_inner, real_t r_outer)
+    : Diffeomorphism(xi.GetVDim()),
+      xi_(&xi),
+      r0_(r_inner),
+      r1_(r_outer),
+      x_(vdim),
+      y_(vdim) {
+  MFEM_VERIFY(r_outer > r_inner && r_inner >= 0.0,
+              "TaperedDiffeomorphism: need 0 <= r_inner < r_outer.");
+}
+
+void TaperedDiffeomorphism::Taper(real_t r, real_t& t, real_t& dt) const {
+  if (r <= r0_) {
+    t = 1.0;
+    dt = 0.0;
+    return;
+  }
+  if (r >= r1_) {
+    t = 0.0;
+    dt = 0.0;
+    return;
+  }
+  const real_t w = r1_ - r0_;
+  const real_t s = (r - r0_) / w;
+  t = 1.0 - s * s * (3.0 - 2.0 * s);
+  dt = -6.0 * s * (1.0 - s) / w;
+}
+
+void TaperedDiffeomorphism::Eval(Vector& V, ElementTransformation& T,
+                                 const IntegrationPoint& ip) {
+  T.Transform(ip, x_);
+  const real_t r = x_.Norml2();
+  if (r >= r1_) {
+    V = x_;
+    return;
+  }
+  xi_->Eval(V, T, ip);
+  if (r <= r0_) {
+    return;
+  }
+  real_t t, dt;
+  Taper(r, t, dt);
+  // V = x + t (xi - x)
+  V -= x_;
+  V *= t;
+  V += x_;
+}
+
+void TaperedDiffeomorphism::EvalGradient(DenseMatrix& F,
+                                         ElementTransformation& T,
+                                         const IntegrationPoint& ip) {
+  T.Transform(ip, x_);
+  const real_t r = x_.Norml2();
+  F.SetSize(vdim);
+  if (r >= r1_) {
+    F = 0.0;
+    for (int i = 0; i < vdim; i++) {
+      F(i, i) = 1.0;
+    }
+    return;
+  }
+  xi_->EvalGradient(F, T, ip);
+  if (r <= r0_) {
+    return;
+  }
+  real_t t, dt;
+  Taper(r, t, dt);
+  xi_->Eval(y_, T, ip);
+  y_ -= x_;  // the displacement xi - x
+  // F = I + t (F_xi - I) + (dt / r) (xi - x) (x)^T
+  for (int i = 0; i < vdim; i++) {
+    for (int A = 0; A < vdim; A++) {
+      F(i, A) = t * F(i, A) + dt / r * y_(i) * x_(A);
+    }
+    F(i, i) += 1.0 - t;
+  }
+}
+
 GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const GridFunction& h)
     : Diffeomorphism(h.VectorDim()), h_(&h), x_(h.VectorDim()) {
   MFEM_VERIFY(
