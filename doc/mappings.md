@@ -190,9 +190,29 @@ Free functions (serial, with parallel overloads under `MFEM_USE_MPI`):
 Helper coefficients: `JacobianCoefficient` (J),
 `PullbackDiffusionCoefficient` (J C⁻¹, feeding the Poisson pieces),
 `PullbackGradientCoefficient` (F⁻ᵀ v for referential gradients such as
-∇Φ₀). The pull-back `TransformedFunctionCoefficient` also lives here (a
-mapping-layer coefficient, per the file-layout rule). The Nanson factor
-joins them with the boundary integrators.
+∇Φ₀). The pull-backs `TransformedFunctionCoefficient` and
+`TransformedVectorFunctionCoefficient` also live here (mapping-layer
+coefficients, per the file-layout rule).
+
+**Boundary (Nanson) machinery.** `Diffeomorphism::MapNormal` returns
+ν = cof(F)·n for a reference unit normal n (adjugate-based, no inversion
+of F); on a boundary transformation of a `GridFunctionDiffeomorphism`
+the gradient comes from the adjacent volume element
+(`GridFunction::GetVectorGradient` does this), which is what makes the
+discrete identity hold on boundary terms — the mapped mesh's boundary
+geometry is the trace of its volume geometry. Built on it:
+`NansonAreaCoefficient` (|ν| = dS̃/dS, composing physical surface loads
+onto the stock boundary linear-form integrators, as `JacobianCoefficient`
+does for volume densities) and `MappedBoundaryNormalDotCoefficient`
+(m̃·V = (ν·V)/|ν|, the mapped counterpart of
+`BoundaryNormalDotCoefficient` for the m̃·∇̃Φ̃₀ factor of the interface
+terms). The boundary integrators own exactly the normals of their own
+formulas plus the measure: `BoundaryNormalScalarIntegrator` maps
+(m·v) dS → (ν·v) dS (Nanson exactly — the |ν| factors cancel), and
+`BoundaryNormalNormalIntegrator` maps (m·u)(m·u′) dS →
+(ν·u)(ν·u′)/|ν| dS (two unit normals, one measure); each has a mapped
+constructor and referential coefficients, and the problem layer remains
+the only composer of coefficient and integrator.
 
 **Consumers.** The existing generalised integrators
 (`DomainVectorScalarIntegrator`, `DomainVectorGradScalarIntegrator`,
@@ -256,8 +276,10 @@ and the whole follows.
    the mapped mesh; a mapped Poisson solve converging to a mapped exact
    solution (2b).
 3. `ElasticTensorIntegrator` with the optional mapping; identity test.
-4. The remaining domain integrators of `A`, then the Nanson boundary
-   terms; identity tests for each.
+4. The remaining domain integrators of `A` (`TestMappedDomainIntegrators`),
+   then the Nanson boundary terms (`TestMappedBoundaryIntegrators`: the
+   F3 and composed-F2 identities and both load compositions); identity
+   tests for each.
 5. The relabelled elasto-gravity benchmark beside `love_numbers/`:
    variant 2a (machine precision), then 2b against pyslfp through the
    mapping. The `meshes/aspherical_body.py` family provides

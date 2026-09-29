@@ -72,8 +72,25 @@ class Diffeomorphism : public mfem::VectorCoefficient {
   mfem::real_t Jacobian(mfem::ElementTransformation& T,
                         const mfem::IntegrationPoint& ip);
 
+  /**
+   * @brief Nanson's relation at an integration point: for a reference
+   * unit normal @f$\mathbf{n}@f$ returns @f$\nu = \mathrm{cof}(F)\,
+   * \mathbf{n} = J F^{-T}\mathbf{n}@f$, so that the physical surface
+   * element and unit normal are @f$d\tilde S = |\nu|\,dS@f$ and
+   * @f$\tilde{\mathbf{m}} = \nu/|\nu|@f$. Formed through the adjugate,
+   * with no inversion of F.
+   *
+   * On a boundary-element transformation of a GridFunctionDiffeomorphism
+   * the gradient is evaluated in the adjacent volume element (via
+   * mfem::GridFunction::GetVectorGradient), which is what makes the
+   * discrete change-of-variables identity hold on boundary terms: the
+   * mapped mesh's boundary geometry is the trace of its volume geometry.
+   */
+  void MapNormal(const mfem::Vector& n, mfem::ElementTransformation& T,
+                 const mfem::IntegrationPoint& ip, mfem::Vector& nu);
+
  private:
-  mfem::DenseMatrix F_;
+  mfem::DenseMatrix F_, adj_;
 };
 
 /**
@@ -298,6 +315,59 @@ class PullbackGradientCoefficient : public mfem::VectorCoefficient {
   mfem::VectorCoefficient* v_;
   mfem::Vector w_;
   mfem::DenseMatrix F_;
+};
+
+/**
+ * @brief The Nanson area factor @f$|\nu| = |\mathrm{cof}(F)\,\mathbf{n}|
+ * = d\tilde S/dS@f$ of a mapping (not owned) on boundary elements: the
+ * factor that turns a physical surface density into its referential
+ * expression for the stock boundary linear-form integrators (multiply
+ * the referential load coefficient by it, as JacobianCoefficient does
+ * for volume densities).
+ *
+ * Only defined on boundary-element transformations; evaluation on any
+ * other transformation aborts. Returns zero where the boundary element
+ * is degenerate.
+ */
+class NansonAreaCoefficient : public mfem::Coefficient {
+ public:
+  explicit NansonAreaCoefficient(Diffeomorphism& xi) : xi_(&xi) {}
+
+  mfem::real_t Eval(mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+ private:
+  Diffeomorphism* xi_;
+  mfem::Vector n_, nu_;
+};
+
+/**
+ * @brief The mapped counterpart of BoundaryNormalDotCoefficient:
+ * @f$\tilde{\mathbf{m}}\cdot\mathbf{V} = (\nu\cdot\mathbf{V})/|\nu|@f$
+ * on boundary elements, with @f$\tilde{\mathbf{m}}@f$ the *physical*
+ * unit normal of the mapped surface and @f$\mathbf{V}@f$ the physical
+ * vector field expressed referentially (neither owned; for a field that
+ * is physically a gradient, compose with PullbackGradientCoefficient).
+ *
+ * With @f$\mathbf{V} = F^{-T}\nabla\Phi_0@f$ this gives the
+ * @f$\tilde{\mathbf{m}}\cdot\tilde\nabla\tilde\Phi_0@f$ factor of the
+ * fluid–solid interface term on a mapped interface. Only defined on
+ * boundary-element transformations; aborts otherwise. Returns zero where
+ * the boundary element or the mapped normal is degenerate.
+ */
+class MappedBoundaryNormalDotCoefficient : public mfem::Coefficient {
+ public:
+  MappedBoundaryNormalDotCoefficient(mfem::VectorCoefficient& V,
+                                     Diffeomorphism& xi)
+      : V_(&V), xi_(&xi) {}
+
+  mfem::real_t Eval(mfem::ElementTransformation& T,
+                    const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::VectorCoefficient* V_;
+  Diffeomorphism* xi_;
+  mfem::Vector n_, nu_, v_;
 };
 
 /**

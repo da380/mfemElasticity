@@ -1,6 +1,7 @@
 #include "mfemElasticity/bilininteg.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <numbers>
 
@@ -955,6 +956,7 @@ void BoundaryNormalNormalIntegrator::AssembleElementMatrix(
 
 #ifdef MFEM_THREAD_SAFE
   Vector shape, normal, nshape;
+  Vector nu_;
 #endif
   shape.SetSize(dof);
   nshape.SetSize(dim * dof);
@@ -967,6 +969,16 @@ void BoundaryNormalNormalIntegrator::AssembleElementMatrix(
     Trans.SetIntPoint(&ip);
     if (!BoundaryUnitNormal(Trans, normal)) {
       continue;
+    }
+    if (map_) {
+      // Two unit normals, one measure: (nu.u)(nu.u')/|nu| dS.
+      map_->MapNormal(normal, Trans, ip, nu_);
+      const auto s = nu_.Norml2();
+      if (s <= 0.0) {
+        continue;
+      }
+      normal = nu_;
+      normal /= std::sqrt(s);
     }
     el.CalcShape(ip, shape);
     for (auto d = 0; d < dim; d++) {
@@ -999,6 +1011,7 @@ void BoundaryNormalScalarIntegrator::AssembleElementMatrix2(
 
 #ifdef MFEM_THREAD_SAFE
   Vector trial_shape, test_shape, normal, nshape;
+  Vector nu_;
 #endif
   trial_shape.SetSize(trial_dof);
   test_shape.SetSize(test_dof);
@@ -1012,6 +1025,11 @@ void BoundaryNormalScalarIntegrator::AssembleElementMatrix2(
     Trans.SetIntPoint(&ip);
     if (!BoundaryUnitNormal(Trans, normal)) {
       continue;
+    }
+    if (map_) {
+      // Nanson exactly: m dS -> nu dS, no norm factor.
+      map_->MapNormal(normal, Trans, ip, nu_);
+      normal = nu_;
     }
     trial_fe.CalcShape(ip, trial_shape);
     test_fe.CalcShape(ip, test_shape);

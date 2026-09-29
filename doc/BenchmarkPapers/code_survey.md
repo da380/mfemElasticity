@@ -78,7 +78,10 @@ needing a second 3-D code.
   incompressible inviscid fluid via CMB condition. No SLE in the 2005
   paper (added later via the Mitrovica–Milne theory); rotation added
   later; recently extended to transient rheology (Lau et al. 2026,
-  JGR — search-snippet level only).
+  JGR — search-snippet level only). Modern versions are understood to
+  use Bailey's exponential explicit time-stepper in place of forward
+  Euler, easing the Δt ≤ Maxwell-time constraint (D. Al-Attar, private
+  communication from J. Mitrovica; not in the 2005 paper).
 - Status: after two decades of collaboration-only access, the code was
   deposited publicly in May 2026 at the Brown Digital Repository
   (doi 10.26300/y2ct-jp25, CC BY-NC): a ~100 GB snapshot configured for
@@ -149,8 +152,14 @@ needing a second 3-D code.
   only), no rotation yet, Maxwell (transient implementable), explicit
   RK2 stepping with Δt ~ half the minimum Maxwell time — hence viscosity
   floored at 2×10¹⁹ Pa s, and ~TB-scale storage of forward fields for
-  kernels. Degree-64 truncation limits resolvable structure. Not
-  released.
+  kernels. The degree-64 truncation of the paper is not intrinsic:
+  forward runs go fine at degree ~256 on a decent server; 64 reflects
+  the adjoint runs' need to store forward fields for kernel
+  construction, where a better job could be done but has not been
+  (D. Al-Attar).
+- Status: revived in 2026 and public on David's GitHub as **sl3d** (two
+  versions, 1-D and 3-D); runs locally, needs a server for production
+  work. Crawford has left the field and the code had been dormant.
 
 ### SPECFEMX (Gharti; not a GIA code yet, but adjacent)
 - Spectral-infinite-element method: spectral elements on unstructured
@@ -207,7 +216,10 @@ Setting mfemElasticity's design choices against the field:
    potential inside a stratified fluid core (the ρ′ term). The submesh
    fluid machinery here has no counterpart in the field, and David's
    reservations about the degree-0 fluid treatment (Dahlen's
-   formulation) touch physics none of these codes even represents.
+   formulation) touch physics none of these codes even represents. On
+   the campaign's list: implement the Latychev-style approximate CMB
+   condition here as an option and compare against the meshed core, to
+   quantify whether the universal approximation matters.
 3. **Boundary and interface topography.** No surveyed code handles
    aspherical internal boundaries: grids and spectral expansions honour
    spherical PREM interfaces (Seakon's unstructured grid could in
@@ -223,10 +235,11 @@ Setting mfemElasticity's design choices against the field:
    reference with machine-precision (variant 2a) and
    convergence-certified (variant 2b) content.
 5. **Time stepping.** The explicit-Euler Δt ≤ Maxwell-time constraint
-   recurs across the field (Martinec lineage, Seakon, Lloyd et al.) and
-   is what forces viscosity floors; CitcomSVE and A13 use slightly
-   better trapezoid stepping. Relevant when our viscoelastic layer meets
-   3-D models.
+   recurs across the field (Martinec lineage, the published Seakon,
+   Lloyd et al.) and is what forces viscosity floors; CitcomSVE and A13
+   use slightly better trapezoid stepping, and modern Seakon reportedly
+   an exponential (Bailey-type) explicit integrator (see above).
+   Relevant when our viscoelastic layer meets 3-D models.
 6. **Adjoints.** Only the Cambridge line has published GIA sensitivity
    kernels; G-ADOPT has automatic adjoints without gravity. A
    mapping-aware form with F explicit — analytic shape derivatives —

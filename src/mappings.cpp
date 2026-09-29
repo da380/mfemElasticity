@@ -15,6 +15,61 @@ real_t Diffeomorphism::Jacobian(ElementTransformation& T,
   return F_.Det();
 }
 
+void Diffeomorphism::MapNormal(const Vector& n, ElementTransformation& T,
+                               const IntegrationPoint& ip, Vector& nu) {
+  EvalGradient(F_, T, ip);
+  adj_.SetSize(vdim);
+  CalcAdjugate(F_, adj_);
+  nu.SetSize(vdim);
+  adj_.MultTranspose(n, nu);
+}
+
+namespace {
+
+// Unit normal of a boundary element at the integration point (CalcOrtho
+// of the Jacobian, normalised); false if degenerate. Aborts on non
+// boundary-element transformations.
+bool ReferenceUnitNormal(ElementTransformation& T, const IntegrationPoint& ip,
+                         Vector& n) {
+  MFEM_VERIFY(T.ElementType == ElementTransformation::BDR_ELEMENT,
+              "mappings: Nanson coefficients are only defined on boundary "
+              "elements.");
+  T.SetIntPoint(&ip);
+  n.SetSize(T.GetSpaceDim());
+  CalcOrtho(T.Jacobian(), n);
+  const real_t nrm = n.Norml2();
+  if (nrm <= 0.0) {
+    return false;
+  }
+  n /= nrm;
+  return true;
+}
+
+}  // namespace
+
+real_t NansonAreaCoefficient::Eval(ElementTransformation& T,
+                                   const IntegrationPoint& ip) {
+  if (!ReferenceUnitNormal(T, ip, n_)) {
+    return 0.0;
+  }
+  xi_->MapNormal(n_, T, ip, nu_);
+  return nu_.Norml2();
+}
+
+real_t MappedBoundaryNormalDotCoefficient::Eval(ElementTransformation& T,
+                                                const IntegrationPoint& ip) {
+  if (!ReferenceUnitNormal(T, ip, n_)) {
+    return 0.0;
+  }
+  xi_->MapNormal(n_, T, ip, nu_);
+  const real_t s = nu_.Norml2();
+  if (s <= 0.0) {
+    return 0.0;
+  }
+  V_->Eval(v_, T, ip);
+  return (nu_ * v_) / s;
+}
+
 CallableDiffeomorphism::CallableDiffeomorphism(int dim, MapFunc xi,
                                                GradientFunc F)
     : Diffeomorphism(dim), xi_(std::move(xi)), grad_(std::move(F)), x_(dim) {}

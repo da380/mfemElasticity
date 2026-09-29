@@ -1470,9 +1470,11 @@ class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
 class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q = nullptr; /**< Pointer to the coefficient \f$q\f$. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector shape, normal, nshape; /**< Internal buffers. */
+  mfem::Vector nu_;                   /**< Mapping buffer. */
 #endif
 
  public:
@@ -1487,6 +1489,23 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
   explicit BoundaryNormalNormalIntegrator(
       mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /**
+   * @brief Pull-back of the form through a mapping (doc/mappings.md):
+   * with \f$\nu = \mathrm{cof}(F)\mathbf{n}\f$, the integrand
+   * \f$q\,(\mathbf{m}\cdot\mathbf{u})(\mathbf{m}\cdot\mathbf{u}')\,dS\f$
+   * becomes \f$q\,(\nu\cdot\mathbf{u})(\nu\cdot\mathbf{u}')/|\nu|\,dS\f$
+   * (two unit normals, one measure). The coefficient stays referential;
+   * a \f$\tilde{\mathbf{m}}\cdot\tilde\nabla\tilde\Phi_0\f$ factor
+   * belongs in it via MappedBoundaryNormalDotCoefficient.
+   */
+  explicit BoundaryNormalNormalIntegrator(
+      Diffeomorphism& map, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), map_{&map} {}
+
+  BoundaryNormalNormalIntegrator(mfem::Coefficient& q, Diffeomorphism& map,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q}, map_{&map} {}
 
   /** @brief Default rule: order 2 el.GetOrder() + Trans.OrderW(). */
   static const mfem::IntegrationRule& GetRule(
@@ -1516,9 +1535,11 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
 class BoundaryNormalScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q = nullptr; /**< Pointer to the coefficient \f$q\f$. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector trial_shape, test_shape, normal, nshape; /**< Buffers. */
+  mfem::Vector nu_;                                     /**< Mapping buffer. */
 #endif
 
  public:
@@ -1529,6 +1550,21 @@ class BoundaryNormalScalarIntegrator : public mfem::BilinearFormIntegrator {
   explicit BoundaryNormalScalarIntegrator(
       mfem::Coefficient& q, const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /**
+   * @brief Pull-back of the form through a mapping (doc/mappings.md):
+   * Nanson's relation exactly, \f$q\,p\,(\mathbf{m}\cdot\mathbf{v})\,dS
+   * \to q\,p\,(\nu\cdot\mathbf{v})\,dS\f$ with \f$\nu =
+   * \mathrm{cof}(F)\mathbf{n}\f$ — the measure and normalisation factors
+   * cancel. The coefficient stays referential.
+   */
+  explicit BoundaryNormalScalarIntegrator(
+      Diffeomorphism& map, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), map_{&map} {}
+
+  BoundaryNormalScalarIntegrator(mfem::Coefficient& q, Diffeomorphism& map,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q}, map_{&map} {}
 
   /** @brief Default rule: order trial + test + Trans.OrderW(). */
   static const mfem::IntegrationRule& GetRule(
