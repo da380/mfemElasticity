@@ -309,8 +309,17 @@ Structural remarks:
   sphere, a pairing the structured buffer meshes can supply — with the
   buffer blocks folded through `E` by sparse triple products: exact
   (any `E` is a gauge choice), no extra unknowns, no near-kernel, no ε.
-  **The route of choice for the linear problem.** Different `E`s agreeing
-  in observables is a built-in gauge-invariance test. (c) hybrid Eulerian
+  **The route of choice for the linear problem — implemented and
+  verified**: with the radial-taper `E` (`NewRadialVacuumExtension`, exact
+  on the trace through the SubMesh dof pairing, gradient-free at the DtN
+  sphere) folded through sparse products
+  (`SetPrescribedVacuumExtension`), the tier-(i) hydrostatic cross-check
+  passes: displacement and potential map onto the Eulerian class's
+  solution at the discretisation level, improving with order, and two
+  different tapers agree in observables (the built-in gauge-invariance
+  test). Note the 2-D comparison must respect the constant gauge: `ζ¹`
+  and `φ¹` are both projected orthogonal to constants, but
+  `φ¹ + u·∇Φ₀` is not. (c) hybrid Eulerian
   variables outside the body: not pursued. The ball-wide field (a)
   returns in the non-linear problem, where the whole motion is a genuine
   unknown and the buffer carries real mesh-motion energy.

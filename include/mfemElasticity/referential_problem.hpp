@@ -24,6 +24,32 @@
 namespace mfemElasticity {
 
 /**
+ * @brief A prescribed radial vacuum-extension operator @f$E@f$: buffer
+ * displacement vdofs from body displacement vdofs
+ * (doc/gravitating_elasticity.md §3.1, option (b)).
+ *
+ * Buffer dofs shared with the body (the @f$\partial B@f$ trace) copy their
+ * body values exactly (through the SubMesh dof pairing), so
+ * @f$u_{\mathrm{ext}}|_{\partial B} = u|_{\partial B}@f$ holds to
+ * round-off. Interior buffer nodes at radius @f$r@f$ take the tapered
+ * radial interpolation @f$t(r)\,u(x_s)@f$ with
+ * @f$t = ((r_{\mathrm{out}} - r)/(r_{\mathrm{out}} - r_b))^2@f$ — so both
+ * @f$t@f$ and @f$t'@f$ vanish at the outer (DtN) sphere, keeping
+ * @f$a = 1@f$ there — and @f$x_s@f$ the radial projection onto the body
+ * surface (pulled inside by @p pullback for robust point location; the
+ * interior rule is a gauge choice, so the pull-back is harmless). Any
+ * other smooth extension is an equally valid gauge: agreement of
+ * observables between two @f$E@f$s is a gauge-invariance test.
+ *
+ * Both spaces must share the body space's FiniteElementCollection object
+ * and live on SubMeshes of one parent. Serial.
+ */
+std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
+    mfem::FiniteElementSpace& body_fes, mfem::FiniteElementSpace& buffer_fes,
+    mfem::real_t r_body, mfem::real_t r_outer, mfem::real_t taper_power = 2.0,
+    mfem::real_t pullback = 0.999);
+
+/**
  * @brief The constitutive state of the linearised referential problem as a
  * Rheology: the second elastic tensor @f$\hat C@f$ at equilibrium (Mandel,
  * classical symmetries), the second Piola–Kirchhoff equilibrium stress
@@ -168,6 +194,21 @@ class LinearQuasiStaticReferentialProblem
                           mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
                           int refinements = 3);
 
+  /**
+   * @brief SubMesh mode: supply the buffer's gravity terms through a
+   * *prescribed* extension @f$u_{\mathrm{ext}} = E\,u@f$ on a buffer
+   * displacement space (option (b) of doc/gravitating_elasticity.md
+   * §3.1, the accurate route): the buffer's gravity-gravity block and
+   * coupling are assembled on @p fes_buffer and folded through @f$E@f$
+   * by sparse products. Exact for any smooth extension (the choice is
+   * gauge); no extra unknowns and no penalty. @p fes_buffer must live on
+   * a (Sub)Mesh of the ball sharing this space's collection; @p E maps
+   * body vdofs to buffer vdofs (NewRadialVacuumExtension). Serial. Call
+   * once, before the first Solve().
+   */
+  void SetPrescribedVacuumExtension(mfem::FiniteElementSpace& fes_buffer,
+                                    const mfem::SparseMatrix& E);
+
   /** @brief True when the displacement lives on the ball itself. */
   bool BallWide() const { return ball_wide_; }
 
@@ -283,6 +324,13 @@ class LinearQuasiStaticReferentialProblem
   std::unique_ptr<mfem::Operator> Ct_owned_;
   const mfem::Operator* C_op_ = nullptr;
   const mfem::Operator* Ct_op_ = nullptr;
+
+  // prescribed vacuum extension (SubMesh mode, serial)
+  std::unique_ptr<mfem::FiniteElementSpace> shadow_zeta_buffer_;
+  std::unique_ptr<mfem::GridFunction> zeta0_buffer_;
+  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_buffer_;
+  std::unique_ptr<mfem::SparseMatrix> ext_EtGE_, ext_C_total_, ext_Ct_total_;
+  mfem::OperatorHandle A_aug_;
 
   // loads
   std::unique_ptr<mfem::LinearForm> b_zeta_;

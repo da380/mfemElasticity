@@ -195,14 +195,51 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
     });
     ReferentialElasticRheology r_rheology(dim, C, S, phi);
     Setting s2(dim, order);
+
+    // The buffer space and the prescribed radial extension (option (b)).
+    Array<int> buffer_attr({2});
+    SubMesh buffer(SubMesh::CreateFromDomain(*s2.parent, buffer_attr));
+    FiniteElementSpace fes_buffer(&buffer, s2.fec.get(), dim);
+    Vector bb_min, bb_max;
+    s2.parent->GetBoundingBox(bb_min, bb_max);
+    const double r_out = bb_max.Normlinf();
+
     LinearQuasiStaticReferentialProblem referential(
         s2.fes_u.get(), s2.fes_zeta.get(), r_rheology, rho, kG, kDtNDegree);
+    auto E = NewRadialVacuumExtension(*s2.fes_u, fes_buffer, 1.0, r_out);
+    referential.SetPrescribedVacuumExtension(fes_buffer, *E);
     FunctionCoefficient sigma2(SurfaceLoad);
     auto surface2 = SurfaceMarker(*s2.body);
     referential.SetSurfaceLoad(sigma2, surface2);
     referential.SetRelTol(1e-11);
     referential.AssembleForce(0.0);
     ASSERT_TRUE(referential.Solve());
+
+    // A second, different extension (steeper taper): a gauge choice, so
+    // the body observables must agree at the discretisation level or
+    // better.
+    if (order == 2) {
+      Setting s3(dim, order);
+      SubMesh buffer3(SubMesh::CreateFromDomain(*s3.parent, buffer_attr));
+      FiniteElementSpace fes_buffer3(&buffer3, s3.fec.get(), dim);
+      LinearQuasiStaticReferentialProblem ref3(
+          s3.fes_u.get(), s3.fes_zeta.get(), r_rheology, rho, kG,
+          kDtNDegree);
+      auto E3 =
+          NewRadialVacuumExtension(*s3.fes_u, fes_buffer3, 1.0, r_out, 3.0);
+      ref3.SetPrescribedVacuumExtension(fes_buffer3, *E3);
+      FunctionCoefficient sigma3(SurfaceLoad);
+      auto surface3 = SurfaceMarker(*s3.body);
+      ref3.SetSurfaceLoad(sigma3, surface3);
+      ref3.SetRelTol(1e-11);
+      ref3.AssembleForce(0.0);
+      ASSERT_TRUE(ref3.Solve());
+      GridFunction du(referential.Displacement());
+      du -= ref3.Displacement();
+      const double e_gauge =
+          L2Norm(du) / L2Norm(referential.Displacement());
+      EXPECT_LT(e_gauge, 2e-2);
+    }
 
     // u agrees directly (same spaces, same rigid gauge at phi_e = id).
     {
@@ -220,21 +257,19 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
       GridFunction z(d);
       z.ProjectCoefficient(zeta_expected);
       d -= z;
+      // Both potentials carry the 2-D constant gauge, but phi1 + u.g does
+      // not: compare modulo the constant.
+      d -= d.Sum() / d.Size();
       z_diff.push_back(L2Norm(d) /
                        std::max(1e-30, L2Norm(referential.PotentialOnBody())));
     }
   }
-  // KNOWN GAP (doc/gravitating_elasticity.md §3.1): both comparisons
-  // fail at O(1) because the current class truncates the second-variation
-  // gravity terms at the body boundary — the linearised motion needs a
-  // buffer extension, exactly as the equilibrium map needs its taper. The
-  // change-of-variables load mapping is likewise buffer-dependent. The
-  // commented assertions are the intended behaviour, to be enabled once
-  // the extension is implemented (formulation choice pending review):
-  //   EXPECT_LT(u_diff[1], 5e-2);   EXPECT_LT(u_diff[1], 0.5 * u_diff[0]);
-  //   EXPECT_LT(z_diff[1], 5e-2);   EXPECT_LT(z_diff[1], 0.5 * z_diff[0]);
-  EXPECT_GT(u_diff[1] + z_diff[1], 0.1);  // the gap is present; remove
-                                          // with the fix
+  // With the prescribed vacuum extension the tier-(i) cross-check holds:
+  // agreement at the discretisation level, improving with order.
+  EXPECT_LT(u_diff[1], 5e-2);
+  EXPECT_LT(u_diff[1], 0.6 * u_diff[0]);
+  EXPECT_LT(z_diff[1], 5e-2);
+  EXPECT_LT(z_diff[1], 0.6 * z_diff[0]);
 }
 
 namespace {

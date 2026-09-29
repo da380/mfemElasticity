@@ -80,6 +80,143 @@ class MappedRotation : public VectorCoefficient {
 
 }  // namespace
 
+
+std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
+    FiniteElementSpace& body_fes, FiniteElementSpace& buffer_fes,
+    real_t r_body, real_t r_outer, real_t taper_power, real_t pullback) {
+  MFEM_VERIFY(body_fes.FEColl() == buffer_fes.FEColl() &&
+                  body_fes.GetVDim() == buffer_fes.GetVDim(),
+              "NewRadialVacuumExtension: the spaces must share a "
+              "collection and vdim.");
+  Mesh* body = body_fes.GetMesh();
+  Mesh* buffer = buffer_fes.GetMesh();
+  const int dim = body->Dimension();
+
+  // The shared parent and the trace pairing.
+  auto* body_sub = dynamic_cast<SubMesh*>(body);
+  auto* buffer_sub = dynamic_cast<SubMesh*>(buffer);
+  MFEM_VERIFY(body_sub && buffer_sub &&
+                  body_sub->GetParent() == buffer_sub->GetParent(),
+              "NewRadialVacuumExtension: both spaces must live on SubMeshes "
+              "of one parent.");
+  FiniteElementSpace parent_fes(
+      const_cast<Mesh*>(static_cast<const Mesh*>(body_sub->GetParent())),
+      const_cast<FiniteElementCollection*>(body_fes.FEColl()),
+      body_fes.GetVDim(), body_fes.GetOrdering());
+  SubMeshDofInjection inj_body(body_fes, parent_fes);
+  SubMeshDofInjection inj_buffer(buffer_fes, parent_fes);
+  auto J = NewSubMeshPairingMatrix(inj_buffer, inj_body);  // buffer x body
+
+  // Scalar nodal coordinates of the buffer space.
+  const int ns_buf = buffer_fes.GetNDofs();
+  DenseMatrix coords(dim, ns_buf);
+  {
+    Array<int> dofs;
+    Vector x(dim);
+    for (int e = 0; e < buffer->GetNE(); e++) {
+      const auto* fe = buffer_fes.GetFE(e);
+      auto* T = buffer->GetElementTransformation(e);
+      buffer_fes.GetElementDofs(e, dofs);
+      const auto& nodes = fe->GetNodes();
+      for (int i = 0; i < dofs.Size(); i++) {
+        T->Transform(nodes.IntPoint(i), x);
+        for (int d = 0; d < dim; d++) {
+          coords(d, dofs[i]) = x(d);
+        }
+      }
+    }
+  }
+
+  // Which buffer scalar dofs are paired (the trace): from the vdof
+  // pairing's rows (component 0 suffices for byNODES ordering).
+  std::vector<char> paired(ns_buf, 0);
+  for (int sb = 0; sb < ns_buf; sb++) {
+    if (J->RowSize(buffer_fes.DofToVDof(sb, 0)) > 0) {
+      paired[sb] = 1;
+    }
+  }
+
+  // Locate the interior nodes' surface projections in the body mesh.
+  std::vector<int> interior;
+  for (int sb = 0; sb < ns_buf; sb++) {
+    if (!paired[sb]) {
+      interior.push_back(sb);
+    }
+  }
+  DenseMatrix pts(dim, static_cast<int>(interior.size()));
+  for (std::size_t i = 0; i < interior.size(); i++) {
+    real_t r = 0.0;
+    for (int d = 0; d < dim; d++) {
+      r += coords(d, interior[i]) * coords(d, interior[i]);
+    }
+    r = std::sqrt(r);
+    const real_t scale = pullback * r_body / std::max(r, real_t(1e-30));
+    for (int d = 0; d < dim; d++) {
+      pts(d, i) = scale * coords(d, interior[i]);
+    }
+  }
+  Array<int> elem;
+  Array<IntegrationPoint> ips;
+  if (pts.Width() > 0) {
+    body->FindPoints(pts, elem, ips);
+  }
+
+  auto E = std::make_unique<SparseMatrix>(buffer_fes.GetVSize(),
+                                          body_fes.GetVSize());
+  const int vdim = body_fes.GetVDim();
+  // Trace rows: copy the body values exactly.
+  {
+    Array<int> cols;
+    Vector vals;
+    for (int sb = 0; sb < ns_buf; sb++) {
+      if (!paired[sb]) {
+        continue;
+      }
+      for (int k = 0; k < vdim; k++) {
+        const int row = buffer_fes.DofToVDof(sb, k);
+        J->GetRow(row, cols, vals);
+        for (int j = 0; j < cols.Size(); j++) {
+          E->Set(row, cols[j], vals[j]);
+        }
+      }
+    }
+  }
+  // Interior rows: tapered radial interpolation.
+  {
+    Array<int> dofs;
+    Vector shape;
+    for (std::size_t i = 0; i < interior.size(); i++) {
+      const int sb = interior[i];
+      MFEM_VERIFY(elem[i] >= 0,
+                  "NewRadialVacuumExtension: surface projection not found "
+                  "in the body mesh; reduce `pullback`.");
+      real_t r = 0.0;
+      for (int d = 0; d < dim; d++) {
+        r += coords(d, sb) * coords(d, sb);
+      }
+      r = std::sqrt(r);
+      real_t t = (r_outer - r) / (r_outer - r_body);
+      t = std::min(real_t(1), std::max(real_t(0), t));
+      t = std::pow(t, taper_power);
+      if (t == 0.0) {
+        continue;
+      }
+      const auto* fe = body_fes.GetFE(elem[i]);
+      shape.SetSize(fe->GetDof());
+      fe->CalcShape(ips[i], shape);
+      body_fes.GetElementDofs(elem[i], dofs);
+      for (int k = 0; k < vdim; k++) {
+        const int row = buffer_fes.DofToVDof(sb, k);
+        for (int a = 0; a < dofs.Size(); a++) {
+          E->Set(row, body_fes.DofToVDof(dofs[a], k), t * shape(a));
+        }
+      }
+    }
+  }
+  E->Finalize();
+  return E;
+}
+
 // ---------------------------------------------------------------------------
 // ReferentialElasticRheology
 
@@ -538,6 +675,58 @@ void LinearQuasiStaticReferentialProblem::SetSurfaceLoad(
   load_coefs_.push_back(std::move(minus_sigma));
 }
 
+
+void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
+    FiniteElementSpace& fes_buffer, const SparseMatrix& E) {
+  MFEM_VERIFY(!ball_wide_,
+              "SetPrescribedVacuumExtension: for the SubMesh mode (the "
+              "ball-wide mode carries its own extension field).");
+  MFEM_VERIFY(!ParallelPotential(),
+              "SetPrescribedVacuumExtension: serial only at present.");
+  MFEM_VERIFY(E.Height() == fes_buffer.GetVSize() &&
+                  E.Width() == fes_->GetVSize(),
+              "SetPrescribedVacuumExtension: E must map body vdofs to "
+              "buffer vdofs.");
+  MFEM_VERIFY(!ext_EtGE_, "SetPrescribedVacuumExtension: already set.");
+
+  auto& map = ref_rheology_->EquilibriumMapping();
+  auto* buffer_sub = dynamic_cast<SubMesh*>(fes_buffer.GetMesh());
+  MFEM_VERIFY(buffer_sub && buffer_sub->GetParent() == fes_zeta_->GetMesh(),
+              "SetPrescribedVacuumExtension: the buffer space must live on "
+              "a SubMesh of the ball.");
+
+  // zeta0 and its gradient on the buffer.
+  shadow_zeta_buffer_ =
+      SubMeshDofInjection::MakeShadowSpace(*fes_zeta_, *buffer_sub);
+  SubMeshDofInjection inj(*shadow_zeta_buffer_, *fes_zeta_);
+  zeta0_buffer_ = detail::MakeGridFunction(shadow_zeta_buffer_.get());
+  inj.MultTranspose(*zeta0_, *zeta0_buffer_);
+  grad_zeta0_buffer_ =
+      std::make_unique<GradientGridFunctionCoefficient>(zeta0_buffer_.get());
+
+  // The buffer's gravity-gravity block, folded: E^T G_V E.
+  BilinearForm g_form(&fes_buffer);
+  g_form.AddDomainIntegrator(new ReferentialGravityIntegrator(
+      map, *grad_zeta0_buffer_, 1.0 / (2.0 * four_pi_G_)));
+  g_form.Assemble();
+  g_form.Finalize();
+  std::unique_ptr<SparseMatrix> Et(Transpose(E));
+  std::unique_ptr<SparseMatrix> GE(mfem::Mult(g_form.SpMat(), E));
+  ext_EtGE_.reset(mfem::Mult(*Et, *GE));
+
+  // The buffer's coupling, folded onto the body rows: C_total = C + E^T C_V.
+  SubMeshMixedBilinearForm c_form(fes_zeta_, &fes_buffer);
+  c_form.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
+      map, *grad_zeta0_buffer_, 1.0 / four_pi_G_));
+  c_form.Assemble();
+  std::unique_ptr<SparseMatrix> EtCv(mfem::Mult(*Et, c_form.SpMat()));
+  ext_C_total_.reset(Add(*C_.As<SparseMatrix>(), *EtCv));
+  ext_Ct_total_.reset(Transpose(*ext_C_total_));
+  C_op_ = ext_C_total_.get();
+  Ct_op_ = ext_Ct_total_.get();
+  operator_dirty_ = true;
+}
+
 void LinearQuasiStaticReferentialProblem::SetVacuumExtension(
     const Array<int>& buffer_marker, Coefficient& mu_gauge, real_t epsilon,
     int refinements) {
@@ -606,10 +795,18 @@ void LinearQuasiStaticReferentialProblem::RegisterFields(DataCollection& dc) {
 // Solver
 
 void LinearQuasiStaticReferentialProblem::SetupSolver(OperatorHandle& A) {
-  SetupDefaultPreconditioner(A);
+  Operator* A_uu = A.Ptr();
+  if (ext_EtGE_) {
+    A_aug_.Clear();
+    A_aug_.Reset(Add(*A.As<SparseMatrix>(), *ext_EtGE_), true);
+    A_uu = A_aug_.Ptr();
+    SetupDefaultPreconditioner(A_aug_);
+  } else {
+    SetupDefaultPreconditioner(A);
+  }
 
   block_op_ = std::make_unique<BlockOperator>(offsets_);
-  block_op_->SetBlock(0, 0, A.Ptr());
+  block_op_->SetBlock(0, 0, A_uu);
   block_op_->SetBlock(0, 1, const_cast<Operator*>(C_op_));
   block_op_->SetBlock(1, 0, const_cast<Operator*>(Ct_op_));
   block_op_->SetBlock(1, 1, const_cast<Operator*>(A_zeta_));
