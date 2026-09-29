@@ -159,6 +159,40 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
   Array<IntegrationPoint> ips;
   if (pts.Width() > 0) {
     body->FindPoints(pts, elem, ips);
+    // Retry unfound projections deeper inside the body (the curved
+    // discrete boundary can dip below the nominal radius); the interior
+    // rule is a gauge choice, so the retreat costs nothing.
+    for (real_t factor : {0.99, 0.97, 0.9}) {
+      int missing = 0;
+      for (int i = 0; i < elem.Size(); i++) {
+        if (elem[i] < 0) {
+          missing++;
+        }
+      }
+      if (missing == 0) {
+        break;
+      }
+      DenseMatrix retry(dim, missing);
+      std::vector<int> which;
+      for (int i = 0; i < elem.Size(); i++) {
+        if (elem[i] < 0) {
+          for (int d = 0; d < dim; d++) {
+            retry(d, static_cast<int>(which.size())) =
+                pts(d, i) * factor / pullback;
+          }
+          which.push_back(i);
+        }
+      }
+      Array<int> elem2;
+      Array<IntegrationPoint> ips2;
+      body->FindPoints(retry, elem2, ips2);
+      for (std::size_t j = 0; j < which.size(); j++) {
+        if (elem2[j] >= 0) {
+          elem[which[j]] = elem2[j];
+          ips[which[j]] = ips2[j];
+        }
+      }
+    }
   }
 
   auto E = std::make_unique<SparseMatrix>(buffer_fes.GetVSize(),

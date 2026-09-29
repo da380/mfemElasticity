@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "mfem.hpp"
+#include "mfemElasticity/mappings.hpp"
 #include "mfemElasticity/index.hpp"
 
 namespace mfemElasticity {
@@ -91,6 +92,11 @@ struct SymmetricTensorBasis {
   /// eps'^ = Q eps^ (orthogonal).
   static void RotationMatrix(int dim, const mfem::DenseMatrix& R,
                              mfem::DenseMatrix& Q);
+
+  /// Mandel matrix of the congruence eps -> F^T eps F for a general
+  /// invertible F (RotationMatrix is the orthogonal case with R = F^T).
+  static void CongruenceMatrix(int dim, const mfem::DenseMatrix& F,
+                               mfem::DenseMatrix& Q);
 };
 
 /**
@@ -264,6 +270,34 @@ class DeviatoricProjectionElasticTensorCoefficient
  * The conversion is three-dimensional physics; the 2-D variant applies
  * the same Mandel formula and is formal.
  */
+/**
+ * @brief The relabelling transformation of the second elastic tensor
+ * (doc/gravitating_elasticity.md §1; the (C, S_e) form of AC18 eq. 136):
+ * @f[
+ *   \hat{\tilde C}(\tilde x) = J_\xi\, Q_{\xi}^{-T}\,
+ *   \hat C(\xi(\tilde x))\, Q_{\xi}^{-1},
+ * @f]
+ * with @f$Q_\xi@f$ the Mandel congruence by @f$F_\xi@f$
+ * (SymmetricTensorBasis::CongruenceMatrix). The inner coefficient must
+ * already be the *referential expression* @f$\hat C\circ\xi@f$ (compose
+ * analytic data with TransformedMatrixFunctionCoefficient or evaluate
+ * constants directly); this class supplies the algebra only.
+ */
+class RelabelledElasticTensorCoefficient : public ElasticTensorCoefficient {
+ public:
+  RelabelledElasticTensorCoefficient(int dim,
+                                     mfem::MatrixCoefficient& C_composed,
+                                     Diffeomorphism& xi);
+
+  void Eval(mfem::DenseMatrix& K, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::MatrixCoefficient* C_;
+  Diffeomorphism* xi_;
+  mfem::DenseMatrix F_, Qi_, Cq_, tmp_;
+};
+
 class BareElasticTensorCoefficient : public ElasticTensorCoefficient {
  public:
   /**

@@ -415,3 +415,255 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
   EXPECT_LT(u_diff[1], 1.0);
   EXPECT_GT(u_diff[1] + z_diff[1], 5e-2);  // the bias is present
 }
+
+namespace {
+
+// An interior relabelling: xi = x (1 + c h(r)) with h = (r(1-r))^2 for
+// r < 1 and zero beyond -- the identity on the body surface and the whole
+// buffer, C^1 at r = 1, so the physical problem is untouched while every
+// volume integrator sees F_e != 1.
+CallableDiffeomorphism InteriorMap(int dim, double c) {
+  auto h = [](double r) {
+    if (r >= 1.0) {
+      return 0.0;
+    }
+    const double q = r * (1.0 - r);
+    return q * q;
+  };
+  auto dh_over_r = [](double r) {
+    if (r >= 1.0) {
+      return 0.0;
+    }
+    return 2.0 * (1.0 - r) * (1.0 - 2.0 * r) * r;  // h'(r) = 2r(1-r)(1-2r)
+  };
+  return CallableDiffeomorphism(
+      dim,
+      [c, h](const Vector& x, Vector& y) {
+        y = x;
+        y *= 1.0 + c * h(x.Norml2());
+      },
+      [c, h, dh_over_r](const Vector& x, DenseMatrix& F) {
+        const int dim = x.Size();
+        const double r = x.Norml2();
+        F = 0.0;
+        const double f = 1.0 + c * h(r);
+        for (int i = 0; i < dim; i++) {
+          F(i, i) = f;
+        }
+        if (r > 0.0) {
+          const double df = c * dh_over_r(r) / (r * r);  // h'(r)/r
+          for (int i = 0; i < dim; i++) {
+            for (int j = 0; j < dim; j++) {
+              F(i, j) += df * x(i) * x(j);
+            }
+          }
+        }
+      });
+}
+
+// Evaluate a grid function at a physical point of its mesh.
+bool EvalAt(const GridFunction& g, Mesh& m, const Vector& x, Vector& out) {
+  DenseMatrix pt(x.Size(), 1);
+  for (int d = 0; d < x.Size(); d++) {
+    pt(d, 0) = x(d);
+  }
+  Array<int> elem;
+  Array<IntegrationPoint> ips;
+  if (m.FindPoints(pt, elem, ips, false) != 1 || elem[0] < 0) {
+    return false;
+  }
+  const int vdim = g.FESpace()->GetVDim();
+  out.SetSize(vdim);
+  if (vdim == 1) {
+    out(0) = g.GetValue(elem[0], ips[0]);
+  } else {
+    g.GetVectorValue(elem[0], ips[0], out);
+  }
+  return true;
+}
+
+}  // namespace
+
+// Unit checks of the relabelling transformation coefficients.
+TEST(ReferentialProblem, TransformationLawCoefficients) {
+  const int dim = 2;
+  Setting s(dim, 2);
+  auto* T = s.body->GetElementTransformation(0);
+  const auto& ip = Geometries.GetCenter(s.body->GetElementGeometry(0));
+  T->SetIntPoint(&ip);
+
+  // CongruenceMatrix at an orthogonal F equals RotationMatrix(F^T).
+  {
+    const double th = 0.7;
+    DenseMatrix R(dim);
+    R(0, 0) = std::cos(th);
+    R(0, 1) = -std::sin(th);
+    R(1, 0) = std::sin(th);
+    R(1, 1) = std::cos(th);
+    DenseMatrix Q1, Q2, Rt(dim);
+    Rt.Transpose(R);
+    SymmetricTensorBasis::CongruenceMatrix(dim, Rt, Q1);
+    SymmetricTensorBasis::RotationMatrix(dim, R, Q2);
+    DenseMatrix D(Q1);
+    D -= Q2;
+    EXPECT_LT(D.MaxMaxNorm(), 1e-14);
+  }
+
+  // PullbackStressCoefficient of -p 1 equals -p J C^{-1} (the pull-back
+  // diffusion tensor scaled by the pressure).
+  {
+    auto xi = TaperedMap(dim, 0.08);
+    ConstantCoefficient p(0.37);
+    MatrixFunctionCoefficient S(dim, [](const Vector& x, DenseMatrix& S) {
+      S.SetSize(x.Size());
+      S = 0.0;
+      for (int i = 0; i < x.Size(); i++) {
+        S(i, i) = -0.37;
+      }
+    });
+    PullbackStressCoefficient S_rel(dim, S, xi);
+    PullbackDiffusionCoefficient a(xi);
+    DenseMatrix S1, A;
+    S_rel.Eval(S1, *T, ip);
+    a.Eval(A, *T, ip);
+    A *= -0.37;
+    DenseMatrix D(S1);
+    D -= A;
+    EXPECT_LT(D.MaxMaxNorm(), 1e-13);
+  }
+}
+
+// Tier (ii): the same spherical hydrostatic physics described from a
+// relabelled reference (interior-only relabelling: identity on the
+// surface and the buffer). The transformed coefficients (C~, S~, rho~)
+// with phi_e = xi must reproduce the phi_e = id solution under
+// composition, u~(x) = u(xi(x)), zeta~ = zeta o xi (modulo the 2-D
+// constant), at the discretisation level and improving with order.
+TEST(ReferentialProblem, RelabelledEquilibrium2D) {
+  const int dim = 2;
+  std::vector<double> u_err, z_err;
+  for (int order : {1, 2}) {
+    ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
+    FunctionCoefficient p0(UniformDiscPressure);
+    auto C_eff =
+        IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa, mu);
+    Array<int> buffer_attr({2});
+
+    // Reference: phi_e = id.
+    Setting s(dim, order);
+    auto id = IdentityMap(dim);
+    BareElasticTensorCoefficient C_id(dim, C_eff, p0);
+    MatrixFunctionCoefficient S_id(dim, [](const Vector& x, DenseMatrix& S) {
+      S.SetSize(x.Size());
+      S = 0.0;
+      const double p = std::max(0.0, UniformDiscPressure(x));
+      for (int i = 0; i < x.Size(); i++) {
+        S(i, i) = -p;
+      }
+    });
+    ReferentialElasticRheology rheo_id(dim, C_id, S_id, id);
+    SubMesh buffer(SubMesh::CreateFromDomain(*s.parent, buffer_attr));
+    FiniteElementSpace fes_buffer(&buffer, s.fec.get(), dim);
+    Vector bb_min, bb_max;
+    s.parent->GetBoundingBox(bb_min, bb_max);
+    const double r_out = bb_max.Normlinf();
+    LinearQuasiStaticReferentialProblem ref(s.fes_u.get(), s.fes_zeta.get(),
+                                            rheo_id, rho, kG, kDtNDegree);
+    auto E = NewRadialVacuumExtension(*s.fes_u, fes_buffer, 1.0, r_out);
+    ref.SetPrescribedVacuumExtension(fes_buffer, *E);
+    FunctionCoefficient sigma(SurfaceLoad);
+    auto surface = SurfaceMarker(*s.body);
+    ref.SetSurfaceLoad(sigma, surface);
+    ref.SetRelTol(1e-11);
+    ref.AssembleForce(0.0);
+    ASSERT_TRUE(ref.Solve());
+
+    // Relabelled: phi_e = xi, coefficients through the transformation
+    // laws.
+    Setting s2(dim, order);
+    auto xi = InteriorMap(dim, 0.3);
+    TransformedFunctionCoefficient p0_xi(xi, UniformDiscPressure);
+    BareElasticTensorCoefficient C_comp(dim, C_eff, p0_xi);
+    RelabelledElasticTensorCoefficient C_rel(dim, C_comp, xi);
+    TransformedMatrixFunctionCoefficient S_comp(
+        dim, xi, [](const Vector& y, DenseMatrix& S) {
+          S.SetSize(y.Size());
+          S = 0.0;
+          const double p = std::max(0.0, UniformDiscPressure(y));
+          for (int i = 0; i < y.Size(); i++) {
+            S(i, i) = -p;
+          }
+        });
+    PullbackStressCoefficient S_rel(dim, S_comp, xi);
+    JacobianCoefficient jac(xi);
+    ProductCoefficient rho_rel(kRho, jac);
+    ReferentialElasticRheology rheo_rel(dim, C_rel, S_rel, xi);
+    SubMesh buffer2(SubMesh::CreateFromDomain(*s2.parent, buffer_attr));
+    FiniteElementSpace fes_buffer2(&buffer2, s2.fec.get(), dim);
+    LinearQuasiStaticReferentialProblem rel(s2.fes_u.get(),
+                                            s2.fes_zeta.get(), rheo_rel,
+                                            rho_rel, kG, kDtNDegree);
+    auto E2 = NewRadialVacuumExtension(*s2.fes_u, fes_buffer2, 1.0, r_out);
+    rel.SetPrescribedVacuumExtension(fes_buffer2, *E2);
+    FunctionCoefficient sigma2(SurfaceLoad);
+    auto surface2 = SurfaceMarker(*s2.body);
+    rel.SetSurfaceLoad(sigma2, surface2);
+    rel.SetRelTol(1e-11);
+    rel.AssembleForce(0.0);
+    ASSERT_TRUE(rel.Solve());
+
+    // Compare at sample points: u~(x) = u(xi(x)), zeta~ = zeta o xi
+    // (modulo the constant).
+    double du2 = 0.0, un2 = 0.0;
+    std::vector<double> dz;
+    double zn2 = 0.0;
+    Vector x(dim), y(dim), a, b;
+    int n_pts = 0;
+    for (int i = 0; i < 40; i++) {
+      const double r = 0.15 + 0.75 * (i % 8) / 7.0;
+      const double th = 2.0 * std::numbers::pi * i / 40.0 + 0.1;
+      x(0) = r * std::cos(th);
+      x(1) = r * std::sin(th);
+      {  // y = xi(x), the same formula as InteriorMap(dim, 0.3)
+        const double q = r * (1.0 - r);
+        y = x;
+        y *= 1.0 + 0.3 * q * q;
+      }
+      Vector ur, zr, urel, zrel;
+      if (!EvalAt(rel.Displacement(), *s2.body, x, urel) ||
+          !EvalAt(ref.Displacement(), *s.body, y, ur) ||
+          !EvalAt(rel.Potential(), *s2.parent, x, zrel) ||
+          !EvalAt(ref.Potential(), *s.parent, y, zr)) {
+        continue;
+      }
+      n_pts++;
+      for (int d = 0; d < dim; d++) {
+        du2 += (urel(d) - ur(d)) * (urel(d) - ur(d));
+        un2 += ur(d) * ur(d);
+      }
+      dz.push_back(zrel(0) - zr(0));
+      zn2 += zr(0) * zr(0);
+    }
+    ASSERT_GT(n_pts, 30);
+    double dz_mean = 0.0;
+    for (double v : dz) {
+      dz_mean += v;
+    }
+    dz_mean /= dz.size();
+    double dz2 = 0.0;
+    for (double v : dz) {
+      dz2 += (v - dz_mean) * (v - dz_mean);
+    }
+    u_err.push_back(std::sqrt(du2 / un2));
+    z_err.push_back(std::sqrt(dz2 / zn2));
+  }
+  // Agreement at the half-percent level at both orders. The error does
+  // not fall with the FIELD order because the mesh geometry is fixed at
+  // order 2 and the exact analytic map carries the geometric
+  // interpolation error (the exact-F-versus-interpolated-F effect of
+  // doc/mappings.md): the floor is the mesh's, not the fields'.
+  EXPECT_LT(u_err[0], 1.5e-2);
+  EXPECT_LT(u_err[1], 1.5e-2);
+  EXPECT_LT(z_err[0], 1.5e-2);
+  EXPECT_LT(z_err[1], 1.5e-2);
+}

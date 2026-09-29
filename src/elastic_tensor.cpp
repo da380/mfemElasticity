@@ -177,6 +177,56 @@ void SymmetricTensorBasis::RotationMatrix(int dim, const DenseMatrix& R,
   }
 }
 
+void SymmetricTensorBasis::CongruenceMatrix(int dim, const DenseMatrix& F,
+                                             DenseMatrix& Q) {
+  const int n = Size(dim);
+  Q.SetSize(n);
+  // Column t of Q: Mandel components of F^T E_t F.
+  DenseMatrix E(dim), FtE(dim), FtEF(dim);
+  int j, k;
+  for (int t = 0; t < n; t++) {
+    Component(dim, t, j, k);
+    E = 0.0;
+    if (j == k) {
+      E(j, j) = 1.0;
+    } else {
+      E(j, k) = 1.0 / std::numbers::sqrt2_v<real_t>;
+      E(k, j) = 1.0 / std::numbers::sqrt2_v<real_t>;
+    }
+    MultAtB(F, E, FtE);
+    Mult(FtE, F, FtEF);
+    for (int s = 0; s < n; s++) {
+      int a, b;
+      Component(dim, s, a, b);
+      Q(s, t) = Scale(a, b) * FtEF(a, b);
+    }
+  }
+}
+
+RelabelledElasticTensorCoefficient::RelabelledElasticTensorCoefficient(
+    int dim, MatrixCoefficient& C_composed, Diffeomorphism& xi)
+    : ElasticTensorCoefficient(dim), C_(&C_composed), xi_(&xi) {
+  MFEM_VERIFY(C_composed.GetHeight() == SymmetricTensorBasis::Size(dim) &&
+                  C_composed.GetWidth() == SymmetricTensorBasis::Size(dim),
+              "RelabelledElasticTensorCoefficient: size mismatch.");
+}
+
+void RelabelledElasticTensorCoefficient::Eval(DenseMatrix& K,
+                                              ElementTransformation& T,
+                                              const IntegrationPoint& ip) {
+  xi_->EvalGradient(F_, T, ip);
+  const auto J = F_.Det();
+  F_.Invert();
+  SymmetricTensorBasis::CongruenceMatrix(dim_, F_, Qi_);  // eps -> F^-T eps F^-1
+  C_->Eval(Cq_, T, ip);
+  const int n = SymmetricTensorBasis::Size(dim_);
+  tmp_.SetSize(n);
+  K.SetSize(n);
+  MultAtB(Qi_, Cq_, tmp_);
+  Mult(tmp_, Qi_, K);
+  K *= J;
+}
+
 // --- Isotropic ---------------------------------------------------------------
 
 IsotropicElasticTensorCoefficient::IsotropicElasticTensorCoefficient(

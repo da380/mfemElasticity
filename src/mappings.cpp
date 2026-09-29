@@ -194,6 +194,21 @@ void TransformedMatrixFunctionCoefficient::Eval(DenseMatrix& M,
   f_(y_, M);
 }
 
+void PullbackStressCoefficient::Eval(DenseMatrix& M,
+                                     ElementTransformation& T,
+                                     const IntegrationPoint& ip) {
+  xi_->EvalGradient(F_, T, ip);
+  const auto J = F_.Det();
+  F_.Invert();
+  S_->Eval(Sq_, T, ip);
+  const int d = height;
+  tmp_.SetSize(d);
+  M.SetSize(d);
+  Mult(F_, Sq_, tmp_);
+  MultABt(tmp_, F_, M);
+  M *= J;
+}
+
 real_t JacobianCoefficient::Eval(ElementTransformation& T,
                                  const IntegrationPoint& ip) {
   return xi_->Jacobian(T, ip);

@@ -284,6 +284,30 @@ class TransformedMatrixFunctionCoefficient : public mfem::MatrixCoefficient {
 };
 
 /**
+ * @brief The relabelling (Piola) transformation of a symmetric referential
+ * stress: @f$\tilde S = J_\xi F_\xi^{-1} (S\circ\xi) F_\xi^{-T}@f$ — the
+ * second Piola–Kirchhoff equilibrium stress seen from a relabelled
+ * reference (doc/gravitating_elasticity.md §1). The inner coefficient
+ * must already be the referential expression @f$S\circ\xi@f$. For
+ * @f$S = -p\mathbf{1}@f$ this is @f$-p\,J C^{-1}@f$, the pull-back
+ * diffusion tensor scaled by the pressure.
+ */
+class PullbackStressCoefficient : public mfem::MatrixCoefficient {
+ public:
+  PullbackStressCoefficient(int dim, mfem::MatrixCoefficient& S_composed,
+                            Diffeomorphism& xi)
+      : mfem::MatrixCoefficient(dim), S_(&S_composed), xi_(&xi) {}
+
+  void Eval(mfem::DenseMatrix& M, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::MatrixCoefficient* S_;
+  Diffeomorphism* xi_;
+  mfem::DenseMatrix F_, Sq_, tmp_;
+};
+
+/**
  * @brief The Jacobian @f$J = \det F@f$ of a mapping (not owned) as a
  * scalar coefficient: the factor of every pulled-back volume term.
  */
