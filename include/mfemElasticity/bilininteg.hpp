@@ -13,6 +13,7 @@
 
 #include "mfem.hpp"
 #include "mfemElasticity/index.hpp"
+#include "mfemElasticity/mappings.hpp"
 
 namespace mfemElasticity {
 
@@ -27,11 +28,16 @@ namespace mfemElasticity {
  *
  * It is assumed that the vector field is defined on a finite element space
  * formed from the product of a scalar nodal space.
+ *
+ * With a `Diffeomorphism` the integrator assembles the pull-back of the
+ * form through the mapping (doc/mappings.md): the volume element gains
+ * the Jacobian, while coefficients stay referential.
  */
 class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::VectorCoefficient*
       QV; /**< Pointer to the vector coefficient \f$\bvec{q}\f$. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector trial_shape, test_shape,
@@ -55,6 +61,16 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
   DomainVectorScalarIntegrator(mfem::VectorCoefficient& qv,
                                const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
+
+  /**
+   * @brief Constructor for the pull-back of the form through a mapping.
+   * @param qv The referential vector coefficient \f$\bvec{q}\f$.
+   * @param map The mapping (not owned).
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  DomainVectorScalarIntegrator(mfem::VectorCoefficient& qv, Diffeomorphism& map,
+                               const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv}, map_{&map} {}
 
   /**
    * @brief Sets the default integration rule.
@@ -128,6 +144,7 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
   mfem::MatrixCoefficient* QM =
       nullptr; /**< Pointer to a matrix coefficient. If not null, \f$q_{ij}\f$
                   is directly from QM. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector test_shape, qv; /**< Internal buffers for test shape functions
@@ -135,6 +152,7 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
   mfem::DenseMatrix trial_dshape, part_elmat, qm,
       tm; /**< Internal buffers for trial derivative shape functions, partial
              element matrix, and matrix coefficient values. */
+  mfem::DenseMatrix F_, dtmp_; /**< Mapping buffers. */
 #endif
 
  public:
@@ -185,6 +203,31 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
   DomainVectorGradScalarIntegrator(mfem::MatrixCoefficient& qm,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QM{&qm} {}
+
+  /** @brief Pull-back of the form through a mapping (identity coefficient). */
+  DomainVectorGradScalarIntegrator(Diffeomorphism& map,
+                                   const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), map_{&map} {}
+
+  /** @brief Pull-back of the form through a mapping (referential scalar
+   * coefficient). */
+  DomainVectorGradScalarIntegrator(mfem::Coefficient& q, Diffeomorphism& map,
+                                   const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q}, map_{&map} {}
+
+  /** @brief Pull-back of the form through a mapping (referential vector
+   * coefficient). */
+  DomainVectorGradScalarIntegrator(mfem::VectorCoefficient& qv,
+                                   Diffeomorphism& map,
+                                   const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv}, map_{&map} {}
+
+  /** @brief Pull-back of the form through a mapping (referential matrix
+   * coefficient). */
+  DomainVectorGradScalarIntegrator(mfem::MatrixCoefficient& qm,
+                                   Diffeomorphism& map,
+                                   const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QM{&qm}, map_{&map} {}
 
   /**
    * @brief Sets the default integration rule.
@@ -246,12 +289,14 @@ class DomainVectorGradScalarIntegrator : public mfem::BilinearFormIntegrator {
 class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q = nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix test_dshape,
       part_elmat; /**< Internal buffers for test derivative shape functions and
                      partial element matrix. */
   mfem::Vector trial_shape; /**< Internal buffer for trial shape functions. */
+  mfem::DenseMatrix F_, dtmp_; /**< Mapping buffers. */
 #endif
 
  public:
@@ -275,6 +320,17 @@ class DomainDivVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
   DomainDivVectorScalarIntegrator(mfem::Coefficient& q,
                                   const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /** @brief Pull-back of the form through a mapping (unit coefficient). */
+  DomainDivVectorScalarIntegrator(Diffeomorphism& map,
+                                  const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), map_{&map} {}
+
+  /** @brief Pull-back of the form through a mapping (referential scalar
+   * coefficient). */
+  DomainDivVectorScalarIntegrator(mfem::Coefficient& q, Diffeomorphism& map,
+                                  const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q}, map_{&map} {}
 
   /**
    * @brief Sets the default integration rule.
@@ -338,11 +394,13 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::Coefficient* Q =
       nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix trial_dshape,
       test_dshape; /**< Internal buffers for trial and test derivative shape
                       functions. */
+  mfem::DenseMatrix F_, dtmp_; /**< Mapping buffers. */
 #endif
 
  public:
@@ -366,6 +424,17 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
   DomainDivVectorDivVectorIntegrator(mfem::Coefficient& q,
                                      const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q} {}
+
+  /** @brief Pull-back of the form through a mapping (unit coefficient). */
+  DomainDivVectorDivVectorIntegrator(Diffeomorphism& map,
+                                     const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), map_{&map} {}
+
+  /** @brief Pull-back of the form through a mapping (referential scalar
+   * coefficient). */
+  DomainDivVectorDivVectorIntegrator(mfem::Coefficient& q, Diffeomorphism& map,
+                                     const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q}, map_{&map} {}
 
   /**
    * @brief Sets the default integration rule.
@@ -446,6 +515,7 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
       nullptr; /**< Pointer to the scalar coefficient \f$q\f$. */
   mfem::VectorCoefficient*
       QV; /**< Pointer to the vector coefficient \f$\bvec{w}\f$. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
@@ -453,6 +523,7 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
   mfem::DenseMatrix trial_dshape, left_elmat, rigth_elmat_trans,
       part_elmat; /**< Internal buffers for trial derivative shape functions and
                      various intermediate matrices. */
+  mfem::DenseMatrix F_, dtmp_; /**< Mapping buffers. */
 #endif
 
  public:
@@ -477,6 +548,20 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
                                    mfem::Coefficient& q,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv} {}
+
+  /** @brief Pull-back of the form through a mapping (referential
+   * coefficients). */
+  DomainVectorGradVectorIntegrator(mfem::VectorCoefficient& qv,
+                                   Diffeomorphism& map,
+                                   const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv}, map_{&map} {}
+
+  /** @brief Pull-back of the form through a mapping (referential
+   * coefficients, with a scalar factor). */
+  DomainVectorGradVectorIntegrator(mfem::VectorCoefficient& qv,
+                                   mfem::Coefficient& q, Diffeomorphism& map,
+                                   const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), Q{&q}, QV{&qv}, map_{&map} {}
 
   /**
    * @brief Sets the default integration rule.
@@ -555,6 +640,7 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::VectorCoefficient* QV =
       nullptr; /**< Pointer to the vector coefficient \f$q\f$. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector qv, test_shape; /**< Internal buffers for vector coefficient
@@ -562,6 +648,7 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
   mfem::DenseMatrix trial_dshape,
       part_elmat; /**< Internal buffers for trial derivative shape functions and
                      partial element matrix. */
+  mfem::DenseMatrix F_, dtmp_; /**< Mapping buffers. */
 #endif
 
  public:
@@ -573,6 +660,13 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
   DomainVectorDivVectorIntegrator(mfem::VectorCoefficient& qv,
                                   const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), QV{&qv} {}
+
+  /** @brief Pull-back of the form through a mapping (referential vector
+   * coefficient). */
+  DomainVectorDivVectorIntegrator(mfem::VectorCoefficient& qv,
+                                  Diffeomorphism& map,
+                                  const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), QV{&qv}, map_{&map} {}
 
   /**
    * @brief Sets the default integration rule.
@@ -957,16 +1051,30 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
  * point the reduced strain-displacement matrix \f$B\f$
  * (\f$\hat{\varepsilon} = B u\f$) is formed and \f$w B^T C B\f$ added.
  * Manifold elements are not supported; in 2-D the semantics are plane strain.
+ *
+ * With a `Diffeomorphism` the integrator assembles the pull-back of the
+ * form through the mapping (doc/mappings.md): the shape gradients become
+ * derivatives with respect to the mapped coordinates
+ * (\f$\mathrm{gshape} \to \mathrm{gshape}\,\bvec{F}^{-1}\f$) and the weight
+ * gains the Jacobian (\f$w \to J w\f$), after which the assembly is
+ * unchanged. The coefficient stays the *referential* tensor (21 components
+ * in 3-D); the pulled-back tensor \f$c'_{iAkB} = J c_{ijkl} F^{-1}_{Aj}
+ * F^{-1}_{Bl}\f$, with only its major symmetry, is never formed. For the
+ * discrete change-of-variables identity against the mapped mesh, pass the
+ * interpolated mapping and one integration rule to both sides.
  */
 class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::MatrixCoefficient* C_; /**< Pointer to the elasticity tensor
                                   coefficient in Mandel form. */
+  Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::DenseMatrix dshape_, gshape_, B_, Cq_,
       CB_; /**< Internal buffers: reference and physical shape gradients,
               strain-displacement matrix, tensor at the point and C B. */
+  mfem::DenseMatrix F_, gshape_map_; /**< Mapping buffers: deformation
+              gradient and mapped shape gradients. */
 #endif
 
  public:
@@ -979,6 +1087,16 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
   explicit ElasticTensorIntegrator(mfem::MatrixCoefficient& C,
                                    const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), C_(&C) {}
+
+  /**
+   * @brief Constructor for the pull-back of the form through a mapping.
+   * @param C The *referential* Mandel-form elasticity tensor coefficient.
+   * @param map The mapping (not owned).
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  ElasticTensorIntegrator(mfem::MatrixCoefficient& C, Diffeomorphism& map,
+                          const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), C_(&C), map_(&map) {}
 
   /**
    * @brief Implementation of element-level calculations for the bilinear form.
@@ -1021,19 +1139,30 @@ class ElasticTensorIntegrator : public mfem::BilinearFormIntegrator {
  * \f$\Omega\f$.
  *
  *
- * The diffeomorphism and/or resulting matrix field can be specified in three
+ * The diffeomorphism and/or resulting matrix field can be specified in four
  * ways:
  *
+ * -# A `Diffeomorphism` is provided: \f$\bvec{F}\f$ comes from its
+ * EvalGradient() at each quadrature point — exact for the analytic
+ * mappings, the gradient of the interpolant for a
+ * GridFunctionDiffeomorphism (the mode of the discrete change-of-variables
+ * identity, see doc/mappings.md).
  * -# A `mfem::Coefficient` is provided which specifies the scalar part,
  * \f$f\f$, of a radial mapping \f$\boldsymbol{\xi}(\bvec{x}) = f(\bvec{x})
- * \bvec{x}\f$. The form of \f$\bvec{a}\f$ is then calculated numerically.
+ * \bvec{x}\f$. \f$\bvec{F}\f$ is then that of the interpolant of the
+ * mapping on the trial space.
  * -# A `mfem::VectorCoefficient` which directly specifies
- * \f$\boldsymbol{\xi}\f$ is provided. The form of \f$\bvec{a}\f$ is then
- * calculated numerically.
+ * \f$\boldsymbol{\xi}\f$ is provided. \f$\bvec{F}\f$ is again that of the
+ * trial-space interpolant.
  * -# A `mfem::MatrixCoefficient` specifying \f$\bvec{a}\f$ is given directly.
  *
  * There is also a constructor for which no coefficients are provided, this
  * corresponding to the identity transformation.
+ *
+ * The remaining pulled-back Poisson pieces need no new integrators: the
+ * volume terms \f$\int J \rho\, \phi \phi' \dd x\f$ and \f$\int J \rho\,
+ * \phi' \dd x\f$ are mfem::MassIntegrator and mfem::DomainLFIntegrator with
+ * the coefficient \f$\rho\f$ multiplied by JacobianCoefficient.
  */
 class TransformedDiffusionIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -1043,6 +1172,8 @@ class TransformedDiffusionIntegrator : public mfem::BilinearFormIntegrator {
       nullptr; /**< The mapping \f$\boldsymbol{\xi}\f$. */
   mfem::MatrixCoefficient* QM =
       nullptr; /**< The matrix field \f$\bvec{a}\f$ given directly. */
+  Diffeomorphism* D =
+      nullptr; /**< The mapping supplying \f$\bvec{F}\f$ directly. */
 
 #ifndef MFEM_THREAD_SAFE
   mfem::Vector fs, df, x;
@@ -1058,6 +1189,16 @@ and intermediate matrices during integration. */
    */
   TransformedDiffusionIntegrator(const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir) {}
+
+  /**
+   * @brief Constructor from a Diffeomorphism: \f$\bvec{F}\f$ from its
+   * EvalGradient() at each quadrature point.
+   * @param d The mapping (not owned).
+   * @param ir An optional pointer to an `mfem::IntegrationRule`.
+   */
+  TransformedDiffusionIntegrator(Diffeomorphism& d,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), D{&d} {}
 
   /**
    * @brief Constructor for a radial mapping specified by a scalar

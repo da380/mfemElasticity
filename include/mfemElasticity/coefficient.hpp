@@ -1,15 +1,14 @@
 /**
  * @file coefficient.hpp
- * @brief General-purpose coefficients: the unit radial vector, a radial
- * diffeomorphism and the pull-back of a function by a mapping (for problems
- * posed on a reference domain, see TransformedDiffusionIntegrator), and, for
- * the self-gravitating fluid–solid problems, the normal component of a vector
+ * @brief General-purpose coefficients: the unit radial vector and, for the
+ * self-gravitating fluid–solid problems, the normal component of a vector
  * coefficient on boundary elements and the barotropic density gradient
  * @f$d\rho/d\Phi_0@f$ of a fluid.
  *
  * Coefficients tied to one subsystem live with it: the elasticity tensors in
  * elastic_tensor.hpp, harmonic expansions in spherical_harmonics.hpp, the
- * rigid modes in null_space.hpp.
+ * rigid modes in null_space.hpp, mappings and their pull-backs in
+ * mappings.hpp.
  */
 
 #pragma once
@@ -34,42 +33,6 @@ class RadialUnitVectorCoefficient : public mfem::VectorCoefficient {
 
  private:
   mfem::Vector x0_, x_;
-};
-
-/**
- * @brief The radial mapping @f$\boldsymbol{\xi}(\mathbf{x}) =
- * f(\mathbf{x})\,\mathbf{x}@f$ for a scalar coefficient @f$f@f$ (not owned),
- * with position measured from the origin.
- */
-class RadialDiffeomorphismCoefficient : public mfem::VectorCoefficient {
- public:
-  RadialDiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
-
-  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
-            const mfem::IntegrationPoint& ip) override;
-
- private:
-  mfem::Coefficient* Q_ = nullptr;
-};
-
-/**
- * @brief The pull-back @f$f \circ \boldsymbol{\xi}@f$ of a function of
- * position by a mapping @f$\boldsymbol{\xi}@f$ (not owned): a field given on
- * the physical domain, evaluated on the reference domain.
- */
-class TransformedFunctionCoefficient : public mfem::Coefficient {
- public:
-  TransformedFunctionCoefficient(
-      mfem::VectorCoefficient& xi,
-      std::function<mfem::real_t(const mfem::Vector&)> f)
-      : xi_{&xi}, f_{std::move(f)} {}
-
-  mfem::real_t Eval(mfem::ElementTransformation& T,
-                    const mfem::IntegrationPoint& ip) override;
-
- private:
-  mfem::VectorCoefficient* xi_;
-  std::function<mfem::real_t(const mfem::Vector&)> f_;
 };
 
 /**

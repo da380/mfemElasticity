@@ -1,7 +1,8 @@
 target_sources(${PROJECT_NAME} PRIVATE null_space.cpp 
                                        bilininteg.cpp
                                        coefficient.cpp
-                                       lininteg.cpp                                         
+                                       lininteg.cpp
+                                       mappings.cpp
                                        mesh.cpp
                                        mesh_manifest.cpp
                                        poisson.cpp

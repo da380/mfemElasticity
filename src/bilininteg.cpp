@@ -52,6 +52,10 @@ void DomainVectorScalarIntegrator::AssembleElementMatrix2(
       test_fe.CalcShape(ip, test_shape);
     }
 
+    if (map_) {
+      w *= map_->Jacobian(Trans, ip);
+    }
+
     QV->Eval(qv, Trans, ip);
     MultVWt(test_shape, trial_shape, part_elmat);
     for (auto j = 0; j < space_dim; j++) {
@@ -103,6 +107,14 @@ void DomainVectorGradScalarIntegrator::AssembleElementMatrix2(
 
     test_fe.CalcShape(ip, test_shape);
     trial_fe.CalcPhysDShape(Trans, trial_dshape);
+
+    if (map_) {
+      map_->EvalGradient(F_, Trans, ip);
+      w *= F_.Det();
+      F_.Invert();
+      dtmp_ = trial_dshape;
+      Mult(dtmp_, F_, trial_dshape);
+    }
 
     if (QM) {
       QM->Eval(qm, Trans, ip);
@@ -174,6 +186,14 @@ void DomainDivVectorScalarIntegrator::AssembleElementMatrix2(
       w *= Q->Eval(Trans, ip);
     }
 
+    if (map_) {
+      map_->EvalGradient(F_, Trans, ip);
+      w *= F_.Det();
+      F_.Invert();
+      dtmp_ = test_dshape;
+      mfem::Mult(dtmp_, F_, test_dshape);
+    }
+
     for (auto j = 0; j < space_dim; j++) {
       auto test_dshape_column =
           mfem::Vector(test_dshape.GetColumn(j), test_dof);
@@ -231,6 +251,18 @@ void DomainDivVectorDivVectorIntegrator::AssembleElementMatrix2(
     auto w = Trans.Weight() * ip.weight;
     if (Q) {
       w *= Q->Eval(Trans, ip);
+    }
+
+    if (map_) {
+      map_->EvalGradient(F_, Trans, ip);
+      w *= F_.Det();
+      F_.Invert();
+      dtmp_ = trial_dshape;
+      Mult(dtmp_, F_, trial_dshape);
+      if (!same_spaces) {
+        dtmp_ = test_dshape;
+        Mult(dtmp_, F_, test_dshape);
+      }
     }
 
     auto test_dshape_vector =
@@ -301,6 +333,14 @@ void DomainVectorGradVectorIntegrator::AssembleElementMatrix2(
       w *= Q->Eval(Trans, ip);
     }
 
+    if (map_) {
+      map_->EvalGradient(F_, Trans, ip);
+      w *= F_.Det();
+      F_.Invert();
+      dtmp_ = trial_dshape;
+      Mult(dtmp_, F_, trial_dshape);
+    }
+
     for (auto j = 0; j < space_dim; j++) {
       auto trial_dshape_column = Vector(trial_dshape.GetColumn(j), trial_dof);
       MultVWt(test_shape, trial_dshape_column, part_elmat);
@@ -348,11 +388,22 @@ void DomainVectorDivVectorIntegrator::AssembleElementMatrix2(
     Trans.SetIntPoint(&ip);
     auto w = Trans.Weight() * ip.weight;
 
+    if (map_) {
+      map_->EvalGradient(F_, Trans, ip);
+      w *= F_.Det();
+      F_.Invert();
+    }
+
     QV->Eval(qv, Trans, ip);
     qv *= w;
 
     test_fe.CalcShape(ip, test_shape);
     trial_fe.CalcPhysDShape(Trans, trial_dshape);
+
+    if (map_) {
+      dtmp_ = trial_dshape;
+      Mult(dtmp_, F_, trial_dshape);
+    }
 
     for (auto k = 0; k < space_dim; k++) {
       auto trial_dshape_column = Vector(trial_dshape.GetColumn(k), trial_dof);
@@ -589,12 +640,18 @@ void ElasticTensorIntegrator::AssembleElementMatrix(
 
 #ifdef MFEM_THREAD_SAFE
   DenseMatrix dshape_, gshape_, B_, Cq_, CB_;
+  DenseMatrix F_, gshape_map_;
 #endif
   dshape_.SetSize(dof, dim);
   gshape_.SetSize(dof, dim);
   CB_.SetSize(n, dim * dof);
   elmat.SetSize(dof * dim);
   elmat = 0.0;
+
+  if (map_) {
+    F_.SetSize(dim);
+    gshape_map_.SetSize(dof, dim);
+  }
 
   const IntegrationRule* ir = IntRule;
   if (ir == nullptr) {
@@ -606,9 +663,19 @@ void ElasticTensorIntegrator::AssembleElementMatrix(
     Trans.SetIntPoint(&ip);
     el.CalcDShape(ip, dshape_);
     Mult(dshape_, Trans.InverseJacobian(), gshape_);
-    StrainDisplacementMatrix(dim, gshape_, B_);
+    auto w = ip.weight * Trans.Weight();
+    if (map_) {
+      // Pull-back: derivatives w.r.t. the mapped coordinates and the
+      // Jacobian in the weight; the assembly below is unchanged.
+      map_->EvalGradient(F_, Trans, ip);
+      w *= F_.Det();
+      F_.Invert();
+      Mult(gshape_, F_, gshape_map_);
+      StrainDisplacementMatrix(dim, gshape_map_, B_);
+    } else {
+      StrainDisplacementMatrix(dim, gshape_, B_);
+    }
     C_->Eval(Cq_, Trans, ip);
-    const auto w = ip.weight * Trans.Weight();
     Mult(Cq_, B_, CB_);
     AddMult_a_AtB(w, B_, CB_, elmat);
   }
@@ -647,11 +714,11 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
     test_dshape.SetSize(test_dof, dim);
   }
 
-  if (Q || QV) {
+  if (Q || QV || D) {
     F.SetSize(dim, dim);
   }
 
-  if (Q || QV || QM) {
+  if (Q || QV || QM || D) {
     a.SetSize(dim, dim);
     trial_dshape_trans.SetSize(trial_dof, dim);
   }
@@ -706,7 +773,12 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
       Mult(xis, trial_dshape, F);
     }
 
-    if (Q || QV) {
+    if (D) {
+      // F directly from the mapping.
+      D->EvalGradient(F, Trans, ip);
+    }
+
+    if (Q || QV || D) {
       // Form the matrix a = J F^{-1} F^{-T}
       auto J = F.Det();
       F.Invert();
@@ -720,7 +792,7 @@ void TransformedDiffusionIntegrator::AssembleElementMatrix2(
     }
 
     // Form the contribution to the local element matrix.
-    if (Q || QV || QM) {
+    if (Q || QV || QM || D) {
       Mult(trial_dshape, a, trial_dshape_trans);
       AddMult_a_ABt(w, test_dshape, trial_dshape_trans, elmat);
     } else {

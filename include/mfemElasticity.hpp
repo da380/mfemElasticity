@@ -6,6 +6,7 @@
 #include "mfemElasticity/elastic_tensor.hpp"
 #include "mfemElasticity/index.hpp"
 #include "mfemElasticity/lininteg.hpp"
+#include "mfemElasticity/mappings.hpp"
 #include "mfemElasticity/mesh.hpp"
 #include "mfemElasticity/mesh_manifest.hpp"
 #include "mfemElasticity/poisson.hpp"
