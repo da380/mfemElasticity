@@ -174,6 +174,64 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
     td_vcoefs_.push_back(&c);
   }
 
+  // --- gauged fluid regions -------------------------------------------------
+
+  /**
+   * @brief Treat the marked element attributes as an inviscid fluid in the
+   * gauged (relabelling) formulation: the rheology supplies the fluid's
+   * physical stiffness (its bulk modulus, with zero shear), and this call
+   * adds the gauge-fixing shear penalty @f$\epsilon\,2\mu_g\,
+   * \mathrm{dev}\,\varepsilon(u):\mathrm{dev}\,\varepsilon(u')@f$ on those
+   * attributes to the *solver* operator only. Solve() then removes the
+   * @f$O(\epsilon)@f$ bias from the observables by iterated Tikhonov
+   * refinement: each step solves the regularised system for the residual of
+   * the physical one, and the residual after an exact step is
+   * @f$\epsilon Q\,\delta@f$ with @f$\delta@f$ the last increment, so the
+   * error contracts by @f$O(\epsilon\,\mu_g/\mu_{\text{solid}})@f$ per
+   * step. The physical operator (SystemMatrix()) is unchanged. See
+   * doc/gauged_fluid.md for the formulation and its verification.
+   *
+   * The fluid displacement is gauge-dependent (determined only up to a
+   * linearised relabelling); the solid displacement and any field derived
+   * from @f$\mathrm{div}(\rho u)@f$ or interface normal displacements are
+   * observables. Essential boundary conditions must not touch the marked
+   * attributes (their elimination is not folded into the penalty).
+   *
+   * @param fluid_marker Element attributes of the fluid (sized to
+   * attributes.Max(); copied).
+   * @param mu_gauge Gauge shear scale @f$\mu_g@f$ (a natural choice is the
+   * fluid's own bulk modulus); not owned, must outlive the problem.
+   * @param epsilon Penalty factor @f$\epsilon@f$ (typically 1e-2 to 1e-3).
+   * @param refinements Tikhonov refinement steps per Solve() (each costs
+   * one linear solve on top of the first).
+   */
+  virtual void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
+                              mfem::Coefficient& mu_gauge,
+                              mfem::real_t epsilon, int refinements = 2);
+
+  /** @brief Remove the gauge penalty and the refinement loop. */
+  void ClearGaugedFluid();
+
+  bool HasGaugedFluid() const { return gauge_integrators_ != nullptr; }
+
+  /** @brief Change @f$\epsilon@f$ (marks the operator stale). */
+  void SetGaugeEpsilon(mfem::real_t epsilon);
+  mfem::real_t GaugeEpsilon() const;
+
+  void SetGaugeRefinements(int n) { gauge_refinements_ = n; }
+  int GaugeRefinements() const { return gauge_refinements_; }
+
+  /** @brief Norms of the physical residual @f$\|\epsilon Q\,\delta\|@f$ at
+   * the start of each refinement step of the last Solve(); their decay is
+   * the observed contraction factor. */
+  const std::vector<mfem::real_t>& GaugeResiduals() const {
+    return gauge_residuals_;
+  }
+
+  /** @brief The regularised matrix @f$A + \epsilon Q@f$ the solver runs on
+   * (assembling if needed); equals SystemMatrix() without a gauged fluid. */
+  const mfem::OperatorHandle& RegularizedMatrix();
+
   /** @brief Relative tolerance of the linear solves (against the load). */
   void SetRelTol(mfem::real_t rel_tol) { rel_tol_ = rel_tol; }
   mfem::real_t RelTol() const { return rel_tol_; }
@@ -270,6 +328,16 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief (Re)assemble the stiffness and set up the solver. */
   void AssembleOperator();
 
+  /**
+   * @brief The Tikhonov refinement loop of a gauged-fluid Solve(): after
+   * the first regularised solve has put its solution in @p X, repeatedly
+   * solve @f$(A + \epsilon Q)\,\delta = \epsilon Q\,\delta_{\text{prev}}@f$
+   * through SolveLinearSystem() and accumulate. Overridden by problems
+   * whose SolveLinearSystem() carries further unknowns alongside the
+   * displacement.
+   */
+  virtual bool GaugeRefine(mfem::Vector& X);
+
   /** @brief Assemble the operator if it is out of date. */
   void EnsureOperator();
 
@@ -302,6 +370,20 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   long total_its_ = 0;
   std::unique_ptr<mfem::BilinearForm> prec_form_;
   mfem::OperatorHandle prec_A_;
+
+  // Gauged fluid regions: the template form owning the penalty integrator
+  // (borrowed by q_form_ and appended to a_solve_form_), the eliminated
+  // penalty matrix eps Q for the refinement residuals, and the regularised
+  // matrix A + eps Q the solver runs on.
+  mfem::Array<int> gauge_marker_;
+  std::unique_ptr<mfem::ConstantCoefficient> gauge_eps_coef_;
+  std::unique_ptr<mfem::ProductCoefficient> gauge_mu_eps_;
+  std::unique_ptr<mfem::BilinearForm> gauge_integrators_;
+  mfem::BilinearFormIntegrator* gauge_integ_ = nullptr;
+  int gauge_refinements_ = 2;
+  std::unique_ptr<mfem::BilinearForm> q_form_, a_solve_form_;
+  mfem::OperatorHandle Q_, A_solve_;
+  std::vector<mfem::real_t> gauge_residuals_;
 
   mfem::real_t t_ = 0.0;
   mfem::real_t rel_tol_ = 1e-12;

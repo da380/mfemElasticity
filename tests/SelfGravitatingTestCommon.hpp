@@ -147,4 +147,59 @@ inline FluidRegion OuterCore(Mesh& solid, Coefficient& rho_f,
   return f;
 }
 
+// --- gauged-fluid model on the three-layer meshes ---------------------------
+//
+// The whole body (all three layers) carries the displacement; the outer
+// core has the Adams-Williamson bulk modulus kappa = rho^2 |grad Phi0| /
+// |drho/dr| built on the problem's own discrete background gravity
+// (N^2 = 0, so the gauged formulation must agree with Dahlen's away from
+// degree 0) and zero shear.
+
+constexpr double kDrhoDr = 0.1 / (kRCmb - kRIcb);
+
+inline double FullDensity(const Vector& x) {
+  const double r = x.Norml2();
+  if (r < 0.5 * (kRIcb + kRCmb)) {
+    return r < kRIcb ? 1.3 : FluidDensity(x);
+  }
+  return r < kRCmb ? FluidDensity(x) : 1.0;
+}
+
+// kappa on the body SubMesh: Adams-Williamson in the fluid (attribute 2),
+// kKappa in the solid. The background gravity is wired after the problem
+// is constructed (it is evaluated only at operator assembly).
+struct AWBulkModulus : public Coefficient {
+  VectorCoefficient* g = nullptr;
+
+  double Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    if (T.Attribute != 2) {
+      return kKappa;
+    }
+    MFEM_ASSERT(g, "background gravity not wired");
+    Vector gv(T.GetSpaceDim()), x(T.GetSpaceDim());
+    g->Eval(gv, T, ip);
+    T.Transform(ip, x);
+    const double rho = FluidDensity(x);
+    return rho * rho * gv.Norml2() / kDrhoDr;
+  }
+};
+
+// Shear: zero in the fluid, kMu in the solid layers.
+inline double GaugedShearModulus(const Vector& x) {
+  const double r = x.Norml2();
+  return (r > kRIcb && r < kRCmb) ? 0.0 : kMu;
+}
+
+// SurfaceLoad minus its spherical mean: no degree-0 content (at degree 0
+// the gauged and Dahlen fluids differ by design).
+inline double ZeroMeanSurfaceLoad(const Vector& x, double t) {
+  const double r = x.Norml2();
+  if (r == 0.0) {
+    return 0.0;
+  }
+  const double c = (x.Size() == 2 ? x[1] : x[2]) / r;
+  const double mean_c2 = x.Size() == 2 ? 0.5 : 1.0 / 3.0;
+  return 0.02 * 3.0 * (c * c - mean_c2) * (1.0 + t);
+}
+
 }  // namespace self_grav_test

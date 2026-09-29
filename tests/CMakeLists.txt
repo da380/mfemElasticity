@@ -81,6 +81,10 @@ if(USE_MPI)
     target_link_libraries(TestBoundaryNormalIntegratorsPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSelfGravitatingFluidPar TestSelfGravitatingFluidPar.cpp)
     target_link_libraries(TestSelfGravitatingFluidPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestFluidGaugePar TestFluidGaugePar.cpp)
+    target_link_libraries(TestFluidGaugePar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestSelfGravitatingGaugedPar TestSelfGravitatingGaugedPar.cpp)
+    target_link_libraries(TestSelfGravitatingGaugedPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestNullSpacePar TestNullSpacePar.cpp)
     target_link_libraries(TestNullSpacePar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestCompositeRheologyPar TestCompositeRheologyPar.cpp)
@@ -109,6 +113,12 @@ if(USE_MPI)
         add_test(NAME TestSelfGravitatingFluidPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSelfGravitatingFluidPar>)
+        add_test(NAME TestFluidGaugePar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestFluidGaugePar>)
+        add_test(NAME TestSelfGravitatingGaugedPar_np${np}
+                 COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
+                         $<TARGET_FILE:TestSelfGravitatingGaugedPar>)
         add_test(NAME TestNullSpacePar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestNullSpacePar>)
@@ -189,3 +199,11 @@ gtest_discover_tests(TestSelfGravitating)
 add_executable(TestSelfGravitatingFluid TestSelfGravitatingFluid.cpp)
 target_link_libraries(TestSelfGravitatingFluid PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestSelfGravitatingFluid)
+
+add_executable(TestFluidGauge TestFluidGauge.cpp)
+target_link_libraries(TestFluidGauge PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestFluidGauge)
+
+add_executable(TestSelfGravitatingGauged TestSelfGravitatingGauged.cpp)
+target_link_libraries(TestSelfGravitatingGauged PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSelfGravitatingGauged)

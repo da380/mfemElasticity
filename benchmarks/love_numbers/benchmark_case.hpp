@@ -209,8 +209,20 @@ struct CaseOptions {
   real_t rel_tol = 1e-10;
   bool no_fluid_gradient = false;
   bool diagnostics = false;
+  bool gauged = false;
+  real_t gauge_eps = 1e-2;
+  int gauge_refinements = 3;
 
   void Add(OptionsParser& args) {
+    args.AddOption(&gauged, "-gauged", "--gauged", "-dahlen", "--dahlen",
+                   "Gauged fluid treatment: the fluid layers join the "
+                   "displacement SubMesh with their bulk modulus and a gauge "
+                   "shear penalty (doc/gauged_fluid.md), instead of Dahlen's "
+                   "interface and fluid-mass terms.");
+    args.AddOption(&gauge_eps, "-geps", "--gauge-epsilon",
+                   "Gauge penalty factor epsilon (gauged fluid).");
+    args.AddOption(&gauge_refinements, "-gref", "--gauge-refinements",
+                   "Tikhonov refinement steps per solve (gauged fluid).");
     args.AddOption(&manifest, "-c", "--case", "Manifest of the case.");
     args.AddOption(&order, "-o", "--order", "Finite element order.");
     args.AddOption(&dtn_degree, "-deg", "--dtn-degree",
@@ -285,11 +297,18 @@ class Case {
     dim = parent->Dimension();
     MFEM_VERIFY(dim == 3, "The benchmark is for balls.");
 
-    // The solid regions and the material on them.
+    // The displacement regions and the material on them: the solid layers,
+    // and with the gauged fluid treatment the fluid layers as well (the
+    // member keeps the name `solid` as "the displacement SubMesh").
     solid_attributes = manifest.SolidAttributes();
     fluid_attributes = manifest.FluidAttributes();
+    Array<int> u_attributes(solid_attributes);
+    if (options.gauged) {
+      u_attributes.Append(fluid_attributes);
+      u_attributes.Sort();
+    }
     solid = std::make_unique<ParSubMesh>(
-        ParSubMesh::CreateFromDomain(*parent, solid_attributes));
+        ParSubMesh::CreateFromDomain(*parent, u_attributes));
     rho_solid_ = OnSolid(*rho);
     kappa_solid_ = OnSolid(*kappa);
     mu_solid_ = OnSolid(*mu);
@@ -328,20 +347,22 @@ class Case {
     // The fluid layers: the density on the parent's fluid elements, and on
     // the solid's boundary elements the density of the fluid beyond them.
     const int n_bdr = solid->bdr_attributes.Max();
-    fluid_side_ = FluidSideDensity(manifest, n_bdr);
-    rho_interface_c_ = std::make_unique<PWConstCoefficient>(fluid_side_);
     std::vector<FluidRegion> fluids;
-    for (const int attribute : fluid_attributes) {
-      FluidRegion f;
-      f.attributes = Array<int>({attribute});
-      f.density = rho_parent_c_.get();
-      f.interface_density = rho_interface_c_.get();
-      f.interface_marker = MeshManifest::Marker(
-          manifest.FluidSolidInterfaces(attribute), n_bdr);
-      if (options.no_fluid_gradient) {
-        f.density_gradient = &zero_;
+    if (!options.gauged) {
+      fluid_side_ = FluidSideDensity(manifest, n_bdr);
+      rho_interface_c_ = std::make_unique<PWConstCoefficient>(fluid_side_);
+      for (const int attribute : fluid_attributes) {
+        FluidRegion f;
+        f.attributes = Array<int>({attribute});
+        f.density = rho_parent_c_.get();
+        f.interface_density = rho_interface_c_.get();
+        f.interface_marker = MeshManifest::Marker(
+            manifest.FluidSolidInterfaces(attribute), n_bdr);
+        if (options.no_fluid_gradient) {
+          f.density_gradient = &zero_;
+        }
+        fluids.push_back(f);
       }
-      fluids.push_back(f);
     }
 
     rheology_ = std::make_unique<IsotropicElasticRheology>(dim, *kappa_c_,
@@ -349,21 +370,40 @@ class Case {
     problem = std::make_unique<Problem>(fes_u.get(), fes_phi.get(),
                                         *rheology_, *rho_c_, G,
                                         options.dtn_degree, nullptr, fluids);
-    // A solid layer with fluid all around it turns freely in a spherical
-    // model.
-    for (const int attribute : solid_attributes) {
-      bool enclosed = true;
-      for (const auto& f : manifest.Interfaces()) {
-        if (f.below == attribute || f.above == attribute) {
-          const int other = f.below == attribute ? f.above : f.below;
-          enclosed = enclosed && fluid_attributes.Find(other) >= 0;
-        }
+    if (options.gauged && fluid_attributes.Size() > 0) {
+      // The gauge shear scale is the model's own bulk modulus (the fluid's
+      // kappa on the fluid layers).
+      gauge_marker_.SetSize(solid->attributes.Max());
+      gauge_marker_ = 0;
+      for (const int a : fluid_attributes) {
+        gauge_marker_[a - 1] = 1;
       }
-      if (enclosed) {
-        problem->AddRegionRotations(Array<int>({attribute}));
-        if (root) {
-          std::cout << "Layer " << attribute
-                    << " is enclosed by fluid: its rotations are projected.\n";
+      problem->SetGaugedFluid(gauge_marker_, *kappa_c_, options.gauge_eps,
+                              options.gauge_refinements);
+      if (root) {
+        std::cout << "Gauged fluid: eps " << options.gauge_eps << ", "
+                  << options.gauge_refinements << " refinements.\n";
+      }
+    }
+    // A solid layer with fluid all around it turns freely in a spherical
+    // model; with the gauged fluid the penalty owns those modes and they
+    // must not be projected (doc/gauged_fluid.md).
+    if (!options.gauged) {
+      for (const int attribute : solid_attributes) {
+        bool enclosed = true;
+        for (const auto& f : manifest.Interfaces()) {
+          if (f.below == attribute || f.above == attribute) {
+            const int other = f.below == attribute ? f.above : f.below;
+            enclosed = enclosed && fluid_attributes.Find(other) >= 0;
+          }
+        }
+        if (enclosed) {
+          problem->AddRegionRotations(Array<int>({attribute}));
+          if (root) {
+            std::cout << "Layer " << attribute
+                      << " is enclosed by fluid: its rotations are "
+                         "projected.\n";
+          }
         }
       }
     }
@@ -577,7 +617,14 @@ class Case {
        << ",\n  \"rel_tol\": " << Num(options_.rel_tol)
        << ",\n  \"solver\": \""
        << (options_.solver == 0 ? "schur_cg" : "block_minres")
-       << "\",\n  \"elements\": " << elements
+       << "\",\n  \"fluid_treatment\": \""
+       << (options_.gauged ? "gauged" : "dahlen") << "\""
+       << (options_.gauged
+               ? ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps) +
+                     ",\n  \"gauge_refinements\": " +
+                     std::to_string(options_.gauge_refinements)
+               : std::string())
+       << ",\n  \"elements\": " << elements
        << ",\n  \"displacement_unknowns\": " << displacement_unknowns
        << ",\n  \"potential_unknowns\": " << potential_unknowns
        << ",\n  \"G\": " << Num(G) << ",\n  \"radius\": " << Num(radius)
@@ -628,6 +675,7 @@ class Case {
   std::unique_ptr<GridFunctionCoefficient> rho_c_, kappa_c_, mu_c_,
       rho_parent_c_;
   Vector fluid_side_;
+  Array<int> gauge_marker_;
   std::unique_ptr<PWConstCoefficient> rho_interface_c_;
   ConstantCoefficient zero_{0.0};
   std::unique_ptr<H1_FECollection> fec_;

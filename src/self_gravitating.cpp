@@ -959,6 +959,61 @@ void LinearQuasiStaticSelfGravitatingProblem::SetupMinres(OperatorHandle& A) {
   B_block_ = std::make_unique<BlockVector>(offsets_);
 }
 
+void LinearQuasiStaticSelfGravitatingProblem::SetGaugedFluid(
+    const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
+    int refinements) {
+  MFEM_VERIFY(fluids_.empty(),
+              "SetGaugedFluid: the gauged formulation carries the fluid "
+              "inside the displacement SubMesh; construct the problem "
+              "without FluidRegions.");
+  LinearQuasiStaticProblemBase::SetGaugedFluid(fluid_marker, mu_gauge,
+                                               epsilon, refinements);
+}
+
+bool LinearQuasiStaticSelfGravitatingProblem::GaugeRefine(Vector& X) {
+  // Each step solves the regularised coupled system for the physical
+  // residual, which after an exact step is [eps Q delta_u; 0]: the
+  // refinement solves carry zero potential load and no tidal term, and the
+  // potential accumulates alongside the displacement.
+  gauge_residuals_.clear();
+  Vector B_phi_saved(B_phi_);
+  Coefficient* psi_saved = psi_;
+  psi_ = nullptr;
+  B_phi_ = 0.0;
+
+  Vector Phi_acc(Phi_true_);
+  Vector r(X.Size()), d(X.Size()), prev;
+  bool ok = true;
+  int outer = outer_its_;
+  int inner = inner_its_;
+  for (int k = 0; k < gauge_refinements_; ++k) {
+    Q_.Ptr()->Mult(k == 0 ? X : prev, r);
+    gauge_residuals_.push_back(std::sqrt(Dot(r, r)));
+    d = 0.0;
+    if (X_block_) {
+      *X_block_ = 0.0;  // cold-start the increment solve
+    }
+    ok = SolveLinearSystem(r, d) && ok;
+    outer += outer_its_;
+    inner += inner_its_;
+    X += d;
+    Phi_acc += Phi_true_;
+    prev = d;
+  }
+  psi_ = psi_saved;
+  B_phi_ = B_phi_saved;
+  Phi_true_ = Phi_acc;
+  outer_its_ = outer;
+  inner_its_ = inner;
+  if (X_block_) {
+    // Leave the accumulated solution as the next solve's warm start.
+    X_block_->GetBlock(0) = X;
+    X_block_->GetBlock(1) = Phi_true_;
+  }
+  DistributePotential(Phi_true_);
+  return ok;
+}
+
 bool LinearQuasiStaticSelfGravitatingProblem::SolveLinearSystem(
     const Vector& B_in, Vector& X) {
   inner_its_ = 0;

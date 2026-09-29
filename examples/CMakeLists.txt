@@ -11,6 +11,7 @@ set(SERIAL_EXAMPLES
     coupled_poisson             # coupled Poisson pair across mesh / submesh
     elastogravity_layered       # LinearQuasiStaticSelfGravitatingProblem: uniform, fluid core (+ inner core)
     quasi_static_elasticity     # quasi_static_problem.hpp driver
+    gauged_fluid_cavity         # gauged fluid region, purely elastic (SetGaugedFluid)
     viscoelasticity             # ViscoelasticOperator driver
     viscoelastic_loading        # GIA-style layered load/rebound driver
     viscoelastic_schemes        # cost/accuracy table of the time integrators

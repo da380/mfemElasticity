@@ -160,6 +160,27 @@ struct FluidRegion {
  * SetRelaxationWeights() reassembles the displacement block only (the
  * interface term is reassembled with it, harmlessly); the potential block,
  * the coupling and the DtN are built once.
+ *
+ * **Gauged fluid regions** (the alternative to Dahlen's treatment above;
+ * see doc/gauged_fluid.md). Instead of FluidRegions, the fluid attributes
+ * join the displacement SubMesh: the rheology gives them their bulk modulus
+ * with zero shear, @p density covers them, and SetGaugedFluid() adds the
+ * gauge shear penalty and the Tikhonov refinement of
+ * LinearQuasiStaticProblemBase. Every operator of this class then extends
+ * over the fluid on its own: the coupling and the gravity terms integrate
+ * over the whole SubMesh, and the interface terms (F2)-(F3), the fluid mass
+ * term @f$M_F@f$ and its near-indefiniteness, and the 2-D constant-mode
+ * inconsistency never arise, because the class sees no FluidRegions. The
+ * refinement solves the regularised coupled system against the physical
+ * residual @f$[\epsilon Q\,\delta_u; 0]@f$ with zero potential load and no
+ * tidal term (GaugeRefine() override). The two treatments agree exactly
+ * when the fluid is materially barotropic, i.e. its bulk modulus satisfies
+ * the Adams-Williamson condition @f$\kappa = \rho^2 g / |d\rho/dr|@f$
+ * (@f$N^2 = 0@f$); for a two-parameter fluid the static
+ * @f$\kappa@f$-response differs from Dahlen's secular one, and the gauge
+ * freedom itself shrinks to label-preserving relabellings. Do not project
+ * inner-core rotations in this mode (AddRegionRotations()): with the fluid
+ * meshed they cost @f$O(\epsilon)@f$ energy and the penalty handles them.
  */
 class LinearQuasiStaticSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase {
@@ -351,9 +372,21 @@ class LinearQuasiStaticSelfGravitatingProblem
    * "background_potential" (the latter two on the body). */
   void RegisterFields(mfem::DataCollection& dc) override;
 
+  /** @brief Gauged-fluid mode: requires an empty FluidRegion list (the
+   * fluid lives inside the displacement SubMesh; see the class notes). */
+  void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
+                      mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
+                      int refinements = 2) override;
+
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
+
+  /** @brief Tikhonov refinement on the coupled system: each step solves the
+   * regularised block system for @f$[\epsilon Q\,\delta_u; 0]@f$ (zero
+   * potential load, no tidal term) and accumulates the potential alongside
+   * the displacement. */
+  bool GaugeRefine(mfem::Vector& X) override;
 
  private:
   /** @brief @f$S x = A_{uu} x - C A_{\phi\phi}^{-1} C^T x@f$. */

@@ -103,6 +103,10 @@ def main() -> None:
     p.add_argument("--lmin", type=int, default=0, help="lowest degree")
     p.add_argument("--dtn-degree", type=int, default=16)
     p.add_argument("--rel-tol", type=float, default=1e-10)
+    p.add_argument("--fluid", choices=("dahlen", "gauged"),
+                   default="dahlen",
+                   help="fluid treatment (gauged: doc/gauged_fluid.md); "
+                        "gauged results carry a _gauged suffix")
     p.add_argument("--solver", type=int, default=1, choices=(0, 1),
                    help="0: Schur-complement CG, 1: block MINRES")
     p.add_argument("--buffer", type=float, default=0.2,
@@ -171,23 +175,26 @@ def main() -> None:
                 failures.append(f"{case}: partition_case")
                 continue
         for order in args.order:
+            gauged = args.fluid == "gauged"
+            suffix = "_gauged" if gauged else ""
             common = ["-c", str(case / "case.json"), "-o", str(order),
                       "-rt", f"{args.rel_tol:g}", "-s", str(args.solver),
+                      *(["-gauged"] if gauged else []),
                       *shlex.split(args.program_args)]
             jobs = []
             if not args.field_only:
                 jobs.append((
-                    case / f"results_o{order}.json",
-                    case / f"log_o{order}.txt",
+                    case / f"results_o{order}{suffix}.json",
+                    case / f"log_o{order}{suffix}.txt",
                     [str(programs / "love_benchmark"), *common,
                      "-lmin", str(args.lmin), "-lmax", str(args.lmax),
                      "-deg", str(max(args.dtn_degree, args.lmax))]))
             if args.field or args.field_only:
-                extra = (["-pv", str(case / f"paraview_o{order}")]
+                extra = (["-pv", str(case / f"paraview_o{order}{suffix}")]
                          if args.paraview else [])
                 jobs.append((
-                    case / f"field_o{order}.json",
-                    case / f"field_log_o{order}.txt",
+                    case / f"field_o{order}{suffix}.json",
+                    case / f"field_log_o{order}{suffix}.txt",
                     [str(programs / "field_benchmark"), *common,
                      "-lmax", str(args.field_lmax),
                      "-deg", str(max(args.dtn_degree, args.field_lmax)),

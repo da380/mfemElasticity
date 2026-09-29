@@ -93,6 +93,7 @@ def style() -> None:
 
 def read_run(path: Path, *, fluid: bool) -> Run:
     r = json.loads(path.read_text())
+    gauged = r.get("fluid_treatment") == "gauged"
     values: dict[str, dict[int, float]] = {key: {} for key, *_ in QUANTITIES}
     seconds = r["setup_seconds"]
     for d in r["degrees"]:
@@ -102,17 +103,23 @@ def read_run(path: Path, *, fluid: bool) -> Run:
                 continue
             if name == "h":
                 seconds += d[forcing]["seconds"]
-            if forcing == "load" and l == 0 and (fluid or name != "h"):
+            if forcing == "load" and l == 0 and name != "h":
                 # k' and l' vanish at degree zero: nothing to be relative to
+                continue
+            if (forcing == "load" and l == 0 and fluid and not gauged):
+                # Dahlen's fluid differs from the reference at degree zero
+                # by design (doc/gauged_fluid.md); the gauged fluid is
+                # comparable there.
                 continue
             if forcing == "load" and l == 1 and name == "k":
                 # minus one by the choice of frame
                 continue
             values[key][l] = d[forcing][name]
     h = float(path.parent.name[1:])
+    label = f"h = {h:g}, order {r['order']}" + (" (gauged)" if gauged else "")
     return Run(h=h, order=r["order"], ranks=r["ranks"], seconds=seconds,
                unknowns=r["displacement_unknowns"] + r["potential_unknowns"],
-               values=values, label=f"h = {h:g}, order {r['order']}")
+               values=values, label=label)
 
 
 def reference_values(ref: dict) -> dict[str, dict[int, float]]:
@@ -150,11 +157,14 @@ def print_table(runs: list[Run], ref: dict) -> None:
 
 
 def finest_per_order(runs: list[Run]) -> list[Run]:
-    best: dict[int, Run] = {}
+    # One entry per order and fluid treatment (gauged runs are their own
+    # series).
+    best: dict[tuple[int, bool], Run] = {}
     for run in runs:
-        if run.order not in best or run.h < best[run.order].h:
-            best[run.order] = run
-    return [best[o] for o in sorted(best)]
+        key = (run.order, "(gauged)" in run.label)
+        if key not in best or run.h < best[key].h:
+            best[key] = run
+    return [best[k] for k in sorted(best)]
 
 
 def plot_love_numbers(runs: list[Run], ref: dict, title: str, out: Path) -> None:
