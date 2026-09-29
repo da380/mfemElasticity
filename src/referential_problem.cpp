@@ -1216,7 +1216,8 @@ void LinearQuasiStaticReferentialProblem::DistributePotential(
 // ---------------------------------------------------------------------------
 // Diagnostics
 
-std::vector<real_t> LinearQuasiStaticReferentialProblem::RigidPairResiduals() {
+real_t LinearQuasiStaticReferentialProblem::NullPairResidual(
+    const Vector& u_true) {
   EnsureOperator();
   real_t a_max = 0.0;
 #ifdef MFEM_USE_MPI
@@ -1234,13 +1235,21 @@ std::vector<real_t> LinearQuasiStaticReferentialProblem::RigidPairResiduals() {
   {
     a_max = A_.As<SparseMatrix>()->MaxNorm();
   }
-  std::vector<real_t> out;
   BlockVector n(offsets_), r(offsets_);
+  n.GetBlock(0) = u_true;
+  n.GetBlock(1) = 0.0;
+  block_op_->Mult(n, r);
+  const real_t norm = std::sqrt(Dot(u_true, u_true));
+  return std::sqrt(Dot(r, r)) / (a_max * std::max(norm, real_t{1e-300}));
+}
+
+std::vector<real_t> LinearQuasiStaticReferentialProblem::RigidPairResiduals() {
+  // The projector's basis is orthonormal, so the general diagnostic's
+  // norm factor is one and the historic semantics are unchanged.
+  EnsureOperator();
+  std::vector<real_t> out;
   for (int i = 0; i < projector_u_->Size(); i++) {
-    n.GetBlock(0) = projector_u_->Basis(i);
-    n.GetBlock(1) = 0.0;
-    block_op_->Mult(n, r);
-    out.push_back(std::sqrt(Dot(r, r)) / a_max);
+    out.push_back(NullPairResidual(projector_u_->Basis(i)));
   }
   return out;
 }

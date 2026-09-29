@@ -271,6 +271,18 @@ class LinearQuasiStaticReferentialProblem
   const NullSpaceProjector& RigidModes() const { return *projector_u_; }
 
   /**
+   * @brief Diagnostic: @f$\|A_{\mathrm{blk}}(u, 0)\| /
+   * (\|A\|_{\max}\,\|u\|)@f$ for an arbitrary candidate null pair
+   * @f$(u, 0)@f$ (true dofs) under the full block operator. Assembles
+   * if needed. The sharp test of the tensor dictionary: rigid modes,
+   * and in fluid regions linearised relabellings (where the material
+   * @f$\mu_b = p^0@f$ term, the geometric @f$-p^0@f$ term and the
+   * gravity terms must annihilate the direction jointly, through the
+   * equilibrium condition).
+   */
+  mfem::real_t NullPairResidual(const mfem::Vector& u_true);
+
+  /**
    * @brief Diagnostic: @f$\|A_{\mathrm{blk}} n\| / \|A\|_{\max}@f$ for
    * each rigid null pair @f$(u_r, 0)@f$ under the full block operator.
    * Translations are exact discrete null vectors (round-off); rotations

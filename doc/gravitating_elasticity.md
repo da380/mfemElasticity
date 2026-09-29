@@ -32,6 +32,13 @@ Sources, and how they are used here:
 - **Al-Attar & Woodhouse (2010)**, `181-1-567.pdf` ("AW10"): the
   parametrisation of equilibrium stress fields in general models, and the
   modern rendering of Dahlen's hydrostatic-region argument (§6 below).
+- **Valette (1986)** ("About the influence of pre-stress upon adiabatic
+  perturbations of the Earth", GJRAS 85, 179–208) and **Valette (1991)**
+  ("gravito-elastodynamics of a pre-stressed elastic earth", GJI 104,
+  555): the geometric (Weingarten-operator) treatment of the fluid–solid
+  interface terms — the same content as Woodhouse–Dahlen but with the
+  interface curvature explicit; the natural cross-check for the slip
+  derivation of §5. (Not yet in `doc/Elasticity/`.)
 
 ## 1. Notation and kinematics
 
@@ -393,6 +400,58 @@ continuous-space gauge for barotropic fluids, the sliding interface
 otherwise) applies verbatim with the general operators of this note, and
 the barotropic/Adams–Williamson discussion there identifies when the
 hydrostatic short-cuts remain exact.
+
+### 5.1 The welded (gauged) case in the general class — implemented
+
+The gauged treatment transfers to the general class with **no new
+machinery**: the fluid's inputs come from the background module (bare
+tensor with `μ_b = p⁰` via BareElasticTensorCoefficient, `S_e = −p⁰1`),
+and the base-class `SetGaugedFluid` penalty + refinement act on the
+attribute unchanged (the class's block refinement is penalty-agnostic).
+Verified two ways (`TestReferentialProblem`):
+
+- **The joint relabelling-invariance identity** (the fluid dictionary
+  test, `FluidRelabellingNullPair`): an azimuthal relabelling
+  `w = curl ψ` supported inside the core is annihilated by the u-row
+  operator only *jointly* — material `μ_b = p⁰` term, geometric `−p⁰`
+  term and gravity second variation cancelling through the equilibrium
+  condition. Measured by the energy along the orbit (normalised by the
+  elastic energy of `w`): with the bare dictionary it converges to zero
+  (0.087 → 0.0088 → 0.0016 at orders 1–3); with the seismological
+  moduli used directly it converges to the finite defect
+  `∫2p⁰|sym Dw|²` ≈ 0.137 — an 85× separation at order 3. The
+  conversion is load-bearing, and this is the sharpest single test of
+  the §2 dictionary. The full block operator (discrete `ζ⁰`) is
+  near-null on `(w, 0)` with the residual falling with order.
+- **Cross-check against the Eulerian gauged class**
+  (`GaugedFluidCrossCheck2D`): the same two-layer fluid-core problem
+  through both formalisms agrees in the mantle displacement and in
+  `ζ¹ = φ¹ + u·∇Φ₀` (2-D constant removed) at the 2 % discretisation
+  level on the coarse test mesh.
+
+### 5.2 The slip case — decisions taken, derivation next
+
+Settled in discussion (29 Sep 2026): the referential potential
+`ζ` stays **single-valued on the ball** (composed with the solid-side
+extension), so the DtN and the potential block are untouched and the
+slip enters only through interface integrals on `Σ`; the interface
+multiplier (the constraint force of the normal-continuity condition)
+comes out **proportional to the referential pressure**, with the
+surviving aspherical terms the `p⁰`-weighted curvature couplings — the
+referential form of AC18's `ϖ⁰` Q/S terms, and of **Valette (1986,
+1991)**'s Weingarten-operator boundary terms (the geometric rendering of
+Woodhouse–Dahlen; the natural cross-check for the derivation). For a
+stratified fluid an interface `N²`-type term from the slipped fluid
+transporting its boundary values is expected in addition. Maitra &
+Al-Attar (2021) is *consistent* with all of this: its content — how the
+elastic tensor changes when the equilibrium stress changes — is an
+inversion-coupling matter (density/initial-stress coupling), not part of
+the forward GIA problem. The derivation is to be written here (second
+variation of the referential energy over the broken space with the
+linearised slip map) and reviewed before the three-block
+`[u_s; u_f; ζ]` solver is built. Fluid admissibility of the background
+(§6): fluid attributes become dev-free-constrained subdomains of the
+minimum-deviatoric generator (agreed).
 
 ## 6. Equilibrium stress in general models
 

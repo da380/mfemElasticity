@@ -533,6 +533,260 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
   }
 }
 
+// WP5a, the fluid dictionary test: on a two-layer disc with a uniform
+// fluid core, a linearised relabelling supported inside the core (w =
+// curl psi, div w = 0 exactly) is a null pair (w, 0) of the full block
+// operator -- but only JOINTLY: the material term (whose bare shear
+// modulus in the fluid is mu_b = p0, NOT zero -- the seismological
+// conversion), the geometric -p0 term and the gravity terms annihilate
+// the direction through the equilibrium condition. The residual falls
+// with order; dropping the bare conversion (seismological moduli used
+// directly) breaks the cancellation by an order of magnitude.
+TEST(ReferentialProblem, FluidRelabellingNullPair) {
+  const int dim = 2;
+  const double r_cmb = 3483.0 / 6371.0;
+
+  // The candidate relabelling: w = curl(psi z) with psi a C^2 radial bump
+  // strictly inside the core -- div w = 0 exactly, azimuthal (so it
+  // preserves any radial stratification), zero near the CMB.
+  const double r0 = 0.15, r1 = 0.85 * r_cmb;
+  auto dpsi = [r0, r1](double r) {
+    if (r <= r0 || r >= r1) {
+      return 0.0;
+    }
+    const double q = (r - r0) * (r1 - r);
+    return 3.0 * q * q * (r1 + r0 - 2.0 * r);
+  };
+  VectorFunctionCoefficient w_coeff(dim,
+                                    [&dpsi](const Vector& x, Vector& w) {
+                                      const double r = x.Norml2();
+                                      w.SetSize(2);
+                                      if (r < 1e-12) {
+                                        w = 0.0;
+                                        return;
+                                      }
+                                      const double d = dpsi(r) / r;
+                                      w(0) = d * x(1);
+                                      w(1) = -d * x(0);
+                                    });
+
+  // Part 1: the u-row identity with fully analytic coefficients. The
+  // material term (bare moduli: in the fluid mu_b = p0, from the
+  // seismological conversion), the geometric -p0 term and the gravity
+  // second-variation term must annihilate w JOINTLY, through the
+  // equilibrium condition grad p0 = -rho grad zeta0. Dropping the
+  // conversion (seismological moduli used directly) leaves an O(p0)
+  // defect that does not converge away.
+  {
+    FunctionCoefficient p0(UniformDiscPressure);
+    FunctionCoefficient kappa_c([](const Vector&) { return kKappa; });
+    FunctionCoefficient mu_c([r_cmb](const Vector& x) {
+      return x.Norml2() < r_cmb ? 0.0 : kMu;
+    });
+    auto C_seis =
+        IsotropicElasticTensorCoefficient::FromBulkModulus(dim, kappa_c,
+                                                           mu_c);
+    BareElasticTensorCoefficient C_bare(dim, C_seis, p0);
+    MatrixFunctionCoefficient S_e(dim, [](const Vector& x, DenseMatrix& S) {
+      S.SetSize(x.Size());
+      S = 0.0;
+      const double p = std::max(0.0, UniformDiscPressure(x));
+      for (int i = 0; i < x.Size(); i++) {
+        S(i, i) = -p;
+      }
+    });
+    // Uniform disc: grad zeta0 = 2 pi G rho x, analytically.
+    VectorFunctionCoefficient g0(dim, [](const Vector& x, Vector& g) {
+      g = x;
+      g *= 2.0 * std::numbers::pi * kG * kRho;
+    });
+    IdentityDiffeomorphism id(dim);
+    const double scale = 1.0 / (8.0 * std::numbers::pi * kG);
+
+    std::vector<double> res, res_wrong;
+    for (int order : {1, 2, 3}) {
+      Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+      Array<int> body_attr({1, 2});
+      SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+      H1_FECollection fec(order, dim);
+      FiniteElementSpace fes_u(&body, &fec, dim);
+      GridFunction w_gf(&fes_u);
+      w_gf.ProjectCoefficient(w_coeff);
+
+      // The metric is the energy along the relabelling orbit,
+      // |w K w| normalised by the plain elastic energy of w: for the
+      // right dictionary it converges to zero (the orbit is flat); for
+      // the wrong one it converges to the finite defect
+      // int 2 p0 |sym Dw|^2 -- an h-independent separation.
+      ConstantCoefficient kappa_n(kKappa);
+      BilinearForm dform(&fes_u);
+      dform.AddDomainIntegrator(new VectorDiffusionIntegrator(kappa_n));
+      dform.Assemble();
+      dform.Finalize();
+      Vector tmp(w_gf.Size());
+      dform.SpMat().Mult(w_gf, tmp);
+      const double energy_scale = InnerProduct(w_gf, tmp);
+
+      auto orbit_energy = [&](MatrixCoefficient& C) {
+        BilinearForm k(&fes_u);
+        k.AddDomainIntegrator(new MaterialStiffnessIntegrator(C, id));
+        k.AddDomainIntegrator(new GeometricStiffnessIntegrator(S_e));
+        k.AddDomainIntegrator(new ReferentialGravityIntegrator(id, g0, scale));
+        k.Assemble();
+        k.Finalize();
+        Vector r(w_gf.Size());
+        k.SpMat().Mult(w_gf, r);
+        return std::abs(InnerProduct(w_gf, r)) / energy_scale;
+      };
+      res.push_back(orbit_energy(C_bare));
+      res_wrong.push_back(orbit_energy(C_seis));
+    }
+    for (size_t i = 0; i < res.size(); i++) {
+      std::cout << "order " << i + 1 << ": orbit energy = " << res[i]
+                << ", without conversion = " << res_wrong[i] << "\n";
+    }
+    EXPECT_LT(res[1], 0.35 * res[0]);         // converging to a flat orbit
+    EXPECT_LT(res[2], 0.5 * res[1]);
+    EXPECT_GT(res_wrong[2], 10.0 * res[2]);   // the conversion is load-bearing
+  }
+
+  // Part 2: the same direction under the FULL block operator of the
+  // general class (background module coefficients, discrete zeta0):
+  // (w, 0) is near-null with the residual falling with order.
+  {
+    std::vector<double> res;
+    for (int order : {1, 2}) {
+      Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+      Array<int> body_attr({1, 2});
+      SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+      H1_FECollection fec(order, dim);
+      FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&parent, &fec);
+      RadialHydrostaticBackground bg(
+          dim, [](double) { return kRho; }, [](double) { return kKappa; },
+          [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+      LinearQuasiStaticReferentialProblem problem(
+          &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
+      GridFunction w_gf(&fes_u);
+      w_gf.ProjectCoefficient(w_coeff);
+      Vector w_true;
+      w_gf.GetTrueDofs(w_true);
+      res.push_back(problem.NullPairResidual(w_true));
+    }
+    EXPECT_LT(res[1], 0.7 * res[0]);
+  }
+}
+
+// WP5a, the gauged fluid in the general class: the same two-layer
+// physical problem through the general referential class (base-class
+// SetGaugedFluid, prescribed vacuum extension) and through the Eulerian
+// self-gravitating class in gauged mode. Solid displacement agrees
+// directly; the potential through the change of variables
+// zeta1 = phi1 + u.grad Phi0 (modulo the 2-D constant).
+TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
+  const int dim = 2, order = 2;
+  const double r_cmb = 3483.0 / 6371.0;
+  const double eps = 1e-2;
+  const int nref = 3;
+
+  Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
+  Array<int> body_attr({1, 2}), buffer_attr({3});
+  SubMesh body(SubMesh::CreateFromDomain(parent, body_attr));
+  SubMesh buffer(SubMesh::CreateFromDomain(parent, buffer_attr));
+  H1_FECollection fec(order, dim);
+  FiniteElementSpace fes_u(&body, &fec, dim), fes_phi(&parent, &fec);
+  FiniteElementSpace fes_u2(&body, &fec, dim), fes_zeta(&parent, &fec);
+  FiniteElementSpace fes_buffer(&buffer, &fec, dim);
+  Vector bb_min, bb_max;
+  parent.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+
+  Array<int> fluid_marker(body.attributes.Max());
+  fluid_marker = 0;
+  fluid_marker[0] = 1;
+  Array<int> surface(body.bdr_attributes.Max());
+  surface = 0;
+  surface[body.bdr_attributes.Max() - 1] = 1;
+  ConstantCoefficient rho(kRho), mu_gauge(kKappa);
+  FunctionCoefficient sigma([](const Vector& x) {
+    const double r = x.Norml2();
+    const double c = x[1] / r;
+    return 0.02 * (1.0 + (2.0 * c * c - 1.0));
+  });
+
+  // Eulerian, gauged mode: seismological moduli, fluid = kappa + no shear.
+  FunctionCoefficient kappa_c([](const Vector&) { return kKappa; });
+  FunctionCoefficient mu_c([r_cmb](const Vector& x) {
+    return x.Norml2() < r_cmb ? 0.0 : kMu;
+  });
+  IsotropicElasticRheology e_rheology(dim, kappa_c, mu_c);
+  LinearQuasiStaticSelfGravitatingProblem eulerian(
+      &fes_u, &fes_phi, e_rheology, rho, kG, kDtNDegree);
+  eulerian.SetGaugedFluid(fluid_marker, mu_gauge, eps, nref);
+  eulerian.SetSurfaceLoad(sigma, surface);
+  eulerian.SetRelTol(1e-11);
+  eulerian.AssembleForce(0.0);
+  ASSERT_TRUE(eulerian.Solve());
+
+  // General referential class: background module (bare conversion,
+  // S_e = -p0 1), base-class gauge on the fluid attribute.
+  RadialHydrostaticBackground bg(
+      dim, [](double) { return kRho; }, [](double) { return kKappa; },
+      [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+  LinearQuasiStaticReferentialProblem referential(
+      &fes_u2, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
+  auto E = NewRadialVacuumExtension(fes_u2, fes_buffer, 1.0, r_out);
+  referential.SetPrescribedVacuumExtension(fes_buffer, *E);
+  referential.SetGaugedFluid(fluid_marker, mu_gauge, eps, nref);
+  referential.SetSurfaceLoad(sigma, surface);
+  referential.SetRelTol(1e-11);
+  referential.AssembleForce(0.0);
+  ASSERT_TRUE(referential.Solve());
+
+  // Solid (mantle) displacement: sample points away from the CMB and the
+  // surface; the fluid displacement is gauge and is not compared.
+  double du2 = 0.0, un2 = 0.0;
+  int n_pts = 0;
+  Vector x(dim);
+  for (int i = 0; i < 32; i++) {
+    const double r = r_cmb + 0.1 + (0.85 - r_cmb) * (i % 8) / 7.0;
+    const double th = 2.0 * std::numbers::pi * i / 32.0 + 0.05;
+    x(0) = r * std::cos(th);
+    x(1) = r * std::sin(th);
+    Vector ue, ur;
+    if (!EvalAt(eulerian.Displacement(), body, x, ue) ||
+        !EvalAt(referential.Displacement(), body, x, ur)) {
+      continue;
+    }
+    n_pts++;
+    for (int d = 0; d < dim; d++) {
+      du2 += (ur(d) - ue(d)) * (ur(d) - ue(d));
+      un2 += ue(d) * ue(d);
+    }
+  }
+  ASSERT_GT(n_pts, 24);
+  EXPECT_LT(std::sqrt(du2 / un2), 2e-2);
+
+  // Potential through the change of variables, modulo the 2-D constant.
+  {
+    VectorGridFunctionCoefficient u_c(&eulerian.Displacement());
+    InnerProductCoefficient advect(u_c, eulerian.BackgroundGravity());
+    GridFunctionCoefficient phi1(&eulerian.PotentialOnBody());
+    SumCoefficient zeta_expected(phi1, advect);
+    GridFunction d(referential.PotentialOnBody());
+    GridFunction z(d);
+    z.ProjectCoefficient(zeta_expected);
+    d -= z;
+    d -= d.Sum() / d.Size();
+    ConstantCoefficient zc(0.0);
+    const double rel =
+        d.ComputeL2Error(zc) /
+        std::max(1e-30, const_cast<GridFunction&>(
+                            referential.PotentialOnBody())
+                            .ComputeL2Error(zc));
+    EXPECT_LT(rel, 2e-2);
+  }
+}
+
 // Pre-stress in loading (the ellipse benchmark of
 // examples/prestress_loading.cpp, in miniature): the loading response
 // with the full minimum-deviatoric equilibrium stress versus the
