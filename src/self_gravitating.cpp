@@ -964,13 +964,13 @@ void LinearQuasiStaticSelfGravitatingProblem::SetupMinres(OperatorHandle& A) {
 
 void LinearQuasiStaticSelfGravitatingProblem::SetGaugedFluid(
     const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
-    int refinements) {
+    int refinements, GaugePenalty penalty) {
   MFEM_VERIFY(fluids_.empty(),
               "SetGaugedFluid: the gauged formulation carries the fluid "
               "inside the displacement SubMesh; construct the problem "
               "without FluidRegions.");
   LinearQuasiStaticProblemBase::SetGaugedFluid(fluid_marker, mu_gauge,
-                                               epsilon, refinements);
+                                               epsilon, refinements, penalty);
 }
 
 bool LinearQuasiStaticSelfGravitatingProblem::GaugeRefine(Vector& X) {

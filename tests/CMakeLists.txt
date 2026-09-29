@@ -209,6 +209,10 @@ add_executable(TestFluidGauge TestFluidGauge.cpp)
 target_link_libraries(TestFluidGauge PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestFluidGauge)
 
+add_executable(TestReferentialProblem TestReferentialProblem.cpp)
+target_link_libraries(TestReferentialProblem PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestReferentialProblem)
+
 add_executable(TestGeneralisedStiffness TestGeneralisedStiffness.cpp)
 target_link_libraries(TestGeneralisedStiffness PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestGeneralisedStiffness)

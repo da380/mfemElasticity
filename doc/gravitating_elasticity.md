@@ -280,10 +280,40 @@ Structural remarks:
   variables `ζ¹ = φ¹ + u·∇Φ₀`: congruent, not identical — the tier-(i)
   verification maps solutions across, it does not compare operators
   entry-wise.
-- **No gravity interface or surface terms.** `ρ` is a fixed referential
-  field, so no `[∇φ¹·n̂ + 4πGρ u·n̂]`-type jump conditions arise: the
-  natural flux continuity of `a∇ζ` carries all of it, boundary motion
-  living inside `a(F)`. Second derivatives of `Φ₀` never appear either.
+- **No gravity interface terms — but the perturbation needs the buffer
+  too.** `ρ` is a fixed referential field, so no
+  `[∇φ¹·n̂ + 4πGρ u·n̂]`-type jump conditions arise, and second
+  derivatives of `Φ₀` never appear. However, the gravity terms of the
+  second variation live wherever `∇ζ⁰ ≠ 0` — the buffer included —
+  through the *extended* perturbation: exactly as `φ_e` needs a taper
+  (§3), the linearised motion `u` must be extended from `∂B` to the DtN
+  sphere, and `δa(u_ext)` contributes there. The extension is gauge
+  (observables are extension-independent; `ζ¹` itself is
+  extension-dependent in the vacuum), but it cannot be omitted:
+  truncating the gravity terms at `∂B` is not a gauge choice and produces
+  O(1) errors in both `u` and `ζ¹` (found by the tier-(i) cross-check,
+  `TestReferentialProblem`, which is kept in the tree documenting the
+  gap); the potential-row-only load mapping is likewise
+  extension-dependent. Options, with the outcome of trying them: (a) carry the displacement
+  on the whole ball, the buffer part a pure-gauge field under a small
+  harmonic stiffness. Tried: it works only in the *biased* O(ε) regime.
+  The Tikhonov refinement that removes the analogous bias for the gauged
+  fluid is structurally inapplicable here — its contraction factor
+  `ε‖A_S⁻¹Q‖` is bounded for the fluid because penalty and physical
+  stiffness share the same `h`-scaling, but the vacuum has *no* physical
+  buffer stiffness (only the zeroth-order gravity terms) while the
+  harmonic penalty scales like `1/h²`, so refinement diverges with mesh
+  or order (observed; `TestReferentialProblem` documents the regime).
+  (b) a *prescribed* linear extension `u_ext = E(u|_{∂B})` — e.g. a
+  radial interpolation of the boundary values tapered to zero at the DtN
+  sphere, a pairing the structured buffer meshes can supply — with the
+  buffer blocks folded through `E` by sparse triple products: exact
+  (any `E` is a gauge choice), no extra unknowns, no near-kernel, no ε.
+  **The route of choice for the linear problem.** Different `E`s agreeing
+  in observables is a built-in gauge-invariance test. (c) hybrid Eulerian
+  variables outside the body: not pursued. The ball-wide field (a)
+  returns in the non-linear problem, where the whole motion is a genuine
+  unknown and the buffer carries real mesh-motion energy.
 - **Saddle structure as before**: symmetric, elastic-positive in `u`,
   Laplace-type in `ζ¹`; the block solvers and projectors carry over.
 - **Rigid modes have no potential partners.** The referential potential

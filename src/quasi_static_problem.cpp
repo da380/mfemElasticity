@@ -185,7 +185,7 @@ bool LinearQuasiStaticProblemBase::Solve() {
 
 void LinearQuasiStaticProblemBase::SetGaugedFluid(
     const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
-    int refinements) {
+    int refinements, GaugePenalty penalty) {
   MFEM_VERIFY(fluid_marker.Size() == fes_->GetMesh()->attributes.Max(),
               "SetGaugedFluid: the fluid marker must be sized to "
               "attributes.Max().");
@@ -196,7 +196,12 @@ void LinearQuasiStaticProblemBase::SetGaugedFluid(
       std::make_unique<ProductCoefficient>(*gauge_eps_coef_, mu_gauge);
   const int dim = fes_->GetMesh()->Dimension();
   gauge_integrators_ = detail::MakeBilinearForm(fes_);
-  auto* integ = new ElasticityIntegrator(*gauge_mu_eps_, -2.0 / dim, 1.0);
+  BilinearFormIntegrator* integ;
+  if (penalty == GaugePenalty::Deviatoric) {
+    integ = new ElasticityIntegrator(*gauge_mu_eps_, -2.0 / dim, 1.0);
+  } else {
+    integ = new VectorDiffusionIntegrator(*gauge_mu_eps_);
+  }
   gauge_integrators_->AddDomainIntegrator(integ, gauge_marker_);
   gauge_integ_ = integ;
   gauge_refinements_ = refinements;

@@ -382,9 +382,10 @@ class LinearQuasiStaticSelfGravitatingProblem
 
   /** @brief Gauged-fluid mode: requires an empty FluidRegion list (the
    * fluid lives inside the displacement SubMesh; see the class notes). */
-  void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
-                      mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
-                      int refinements = 2) override;
+  void SetGaugedFluid(
+      const mfem::Array<int>& fluid_marker, mfem::Coefficient& mu_gauge,
+      mfem::real_t epsilon, int refinements = 2,
+      GaugePenalty penalty = GaugePenalty::Deviatoric) override;
 
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;

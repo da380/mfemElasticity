@@ -205,9 +205,15 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * @param refinements Tikhonov refinement steps per Solve() (each costs
    * one linear solve on top of the first).
    */
+  /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev shear)
+   * or Harmonic (a vacuum-extension field: full-gradient
+   * @f$\epsilon\mu_g\nabla u:\nabla v@f$). */
+  enum class GaugePenalty { Deviatoric, Harmonic };
+
   virtual void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
                               mfem::Coefficient& mu_gauge,
-                              mfem::real_t epsilon, int refinements = 2);
+                              mfem::real_t epsilon, int refinements = 2,
+                              GaugePenalty penalty = GaugePenalty::Deviatoric);
 
   /** @brief Remove the gauge penalty and the refinement loop. */
   void ClearGaugedFluid();
