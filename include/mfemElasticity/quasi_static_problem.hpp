@@ -239,6 +239,10 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   /** @brief Norms of the physical residual @f$\|\epsilon Q\,\delta\|@f$ at
    * the start of each refinement step of the last Solve(); their decay is
    * the observed contraction factor. */
+  /** @brief Diagnostic: the assembled gauge penalty eps Q applied to a
+   * displacement true-dof vector (zero without a gauged fluid). */
+  void ApplyGaugePenalty(const mfem::Vector& u_true, mfem::Vector& r);
+
   const std::vector<mfem::real_t>& GaugeResiduals() const {
     return gauge_residuals_;
   }

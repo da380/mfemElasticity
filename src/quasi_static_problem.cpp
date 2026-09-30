@@ -218,7 +218,7 @@ void LinearQuasiStaticProblemBase::SetGaugedFluid(
         std::make_unique<ProductCoefficient>(-2.0 / dim, *gauge_mu_eps_);
     gauge_Cdev_ = std::make_unique<IsotropicElasticTensorCoefficient>(
         dim, *gauge_lambda_eps_, *gauge_mu_eps_);
-    integ = new MaterialStiffnessIntegrator(*gauge_Cdev_, *map);
+    integ = new ElasticTensorIntegrator(*gauge_Cdev_, *map);
   } else if (penalty == GaugePenalty::Deviatoric) {
     integ = new ElasticityIntegrator(*gauge_mu_eps_, -2.0 / dim, 1.0);
   } else {
@@ -228,6 +228,17 @@ void LinearQuasiStaticProblemBase::SetGaugedFluid(
   gauge_integ_ = integ;
   gauge_refinements_ = refinements;
   operator_dirty_ = true;
+}
+
+void LinearQuasiStaticProblemBase::ApplyGaugePenalty(const Vector& u_true,
+                                                     Vector& r) {
+  r.SetSize(u_true.Size());
+  r = 0.0;
+  if (!HasGaugedFluid()) {
+    return;
+  }
+  EnsureOperator();
+  Q_.Ptr()->Mult(u_true, r);
 }
 
 void LinearQuasiStaticProblemBase::ClearGaugedFluid() {

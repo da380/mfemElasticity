@@ -296,18 +296,24 @@ and the whole follows.
    amplitude — wherever every assembled term is covariant, which
    certifies the whole mapped chain at once: stiffness, equilibrium
    stress, gravity couplings, Poisson block, loads, extensions and
-   projectors. The finding: the fluid *gauge penalty* is the one
-   non-covariant assembly piece (a stock integrator on each side's own
-   fluid geometry), and because the gauge subspace has stiffness
-   `O(ε)`, an `O(εA)` penalty difference produces `O(A)` differences in
-   the gauge representative (measured: `u` 4e-3 for the welded gauged
-   fluid, 1e-1 through the slipping interface forms, at `A` = 0.02 and
-   `h` = 0.35, while ζ stays at 1e-4). Physics is unaffected — the
-   penalty is gauge, and the exact-F benchmark against pyslfp is
-   insensitive to it — but a mapping-aware gauge penalty (the
-   deviatoric form through `MaterialStiffnessIntegrator` with a
-   pulled-back tensor) would make the identity strict on gauge-bearing
-   cases too, and is the natural follow-up. Two prerequisites of the
+   projectors. The finding, now RESOLVED for the welded family: the
+   fluid *gauge penalty* was the one non-covariant assembly piece (a
+   stock integrator on each side's own fluid geometry), and because the
+   gauge subspace has stiffness `O(ε)`, an `O(εA)` penalty difference
+   produced `O(A)` differences in the gauge representative (u 4e-3
+   welded-gauged at the time of the finding). The penalty is now
+   assembled covariantly — the pulled-back deviatoric tensor through
+   `ElasticTensorIntegrator`'s mapped form — and the welded gauged
+   identity is STRICT (u 1.6e-7, ζ 4e-8 at A = 0.02, h = 0.3). Two
+   lessons of the fix: the pull-back penalty must use
+   `ElasticTensorIntegrator(C, map)` (the certified 2a form), NOT
+   `MaterialStiffnessIntegrator`, whose mapped form belongs to the
+   referential physics and expects a RELABELLED tensor; and when both
+   sides of an identity assemble the same term, both should use the
+   same integrator class (the identity map included), so the quadrature
+   defaults coincide. Through the slipping interface the identity
+   remains informational (u 1.2e-2: the interface constraint forms are
+   not yet certified covariant — the remaining follow-up). Two prerequisites of the
    identity that the driver documents: the two sides must share one
    vacuum-extension matrix (gauge *data*; the builder samples the body
    side of the surface, which differs at `O(A)` between the meshes),

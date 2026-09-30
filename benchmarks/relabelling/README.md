@@ -53,13 +53,18 @@ mpiexec -np 8 ../bin/aspherical_reference \
 - `relabelled_identity` (interpolated F): the discrete
   change-of-variables identity at the level of the full coupled SOLVE —
   the mapped assembly on the reference mesh against the standard
-  assembly on the nodal-image mesh, entrywise. STRICT on gauge-free
-  cases (solid models, welded): agreement to ~1e-6, bounded only by the
-  DtN centring on the shifted mesh centroid, with any unmapped assembly
-  term showing up linearly in the amplitude. On gauge-bearing cases
-  (gauged fluid, slipping interface) the stock gauge penalty is the one
-  non-covariant assembly piece and bounds the agreement (measured u
-  4e-3 welded-gauged, 1e-1 through the slip interface forms at
-  A = 0.02, h = 0.35, zeta 1e-4): the run is informational there, the
-  covariant terms being certified by the strict solid runs; a
-  mapping-aware gauge penalty is the noted follow-up.
+  assembly on the nodal-image mesh, entrywise. STRICT on every welded
+  case, the gauged fluid included: agreement to ~1e-6 on the solids
+  (u 4e-7 and 1e-6 at A = 0.02, h = 0.3) and to 1.6e-7 on the welded
+  gauged fluid core, bounded only by the DtN centring on the shifted
+  mesh centroid, with any unmapped assembly term showing up linearly in
+  the amplitude. The gauge penalty is assembled covariantly (the
+  pulled-back deviatoric tensor through `ElasticTensorIntegrator`'s
+  mapped form — note it must be that integrator: the material-stiffness
+  form expects a RELABELLED tensor and is not the plain pull-back).
+  Through the slipping interface the run stays informational (u 1.2e-2
+  at A = 0.02: the interface constraint forms are not yet certified
+  covariant). The driver also prints per-attribute differences and
+  operator-action probes (the same field through both sides' assembled
+  operators, and the penalty alone), which localise any future
+  non-covariant term to its block.

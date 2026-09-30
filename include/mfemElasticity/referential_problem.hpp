@@ -471,6 +471,13 @@ class LinearQuasiStaticReferentialProblem
    */
   mfem::real_t NullPairResidual(const mfem::Vector& u_true);
 
+  /** @brief Diagnostic: the assembled block operator applied to a
+   * (u, zeta) true-dof pair — for entrywise cross-checks between two
+   * problems sharing a dof layout (the relabelled identity's probes). */
+  void ApplyBlockOperator(const mfem::Vector& u_true,
+                          const mfem::Vector& z_true, mfem::Vector& r_u,
+                          mfem::Vector& r_z);
+
   /**
    * @brief Diagnostic: @f$\|A_{\mathrm{blk}} n\| / \|A\|_{\max}@f$ for
    * each rigid null pair @f$(u_r, 0)@f$ under the full block operator.

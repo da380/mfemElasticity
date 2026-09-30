@@ -1873,6 +1873,17 @@ real_t LinearQuasiStaticReferentialProblem::NullPairResidual(
   return std::sqrt(Dot(r, r)) / (a_max * std::max(norm, real_t{1e-300}));
 }
 
+void LinearQuasiStaticReferentialProblem::ApplyBlockOperator(
+    const Vector& u_true, const Vector& z_true, Vector& r_u, Vector& r_z) {
+  EnsureOperator();
+  BlockVector n(offsets_), r(offsets_);
+  n.GetBlock(0) = u_true;
+  n.GetBlock(1) = z_true;
+  block_op_->Mult(n, r);
+  r_u = r.GetBlock(0);
+  r_z = r.GetBlock(1);
+}
+
 std::vector<real_t> LinearQuasiStaticReferentialProblem::RigidPairResiduals() {
   // The projector's basis is orthonormal, so the general diagnostic's
   // norm factor is one and the historic semantics are unchanged.
@@ -2473,7 +2484,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocks(
     // mapped problem's gauge is the pull-back of the unmapped one (the
     // identity map included, for one integrator class on both sides of
     // a change-of-variables identity).
-    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
+    qf.AddDomainIntegrator(new ElasticTensorIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     Qf_ = std::make_unique<SparseMatrix>(qf.SpMat());
@@ -2716,7 +2727,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocksPar(
     auto& gmap = ref_rheology_->EquilibriumMapping();
     ParBilinearForm qf(pfes_f_);
     // The covariant penalty (see the serial block).
-    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
+    qf.AddDomainIntegrator(new ElasticTensorIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     qf.FormSystemMatrix(empty, H);
@@ -3159,7 +3170,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
     // mapped problem's gauge is the pull-back of the unmapped one (the
     // identity map included, for one integrator class on both sides of
     // a change-of-variables identity).
-    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
+    qf.AddDomainIntegrator(new ElasticTensorIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     Qf_ = std::make_unique<SparseMatrix>(qf.SpMat());
@@ -3354,7 +3365,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
     auto& gmap = ref_rheology_->EquilibriumMapping();
     ParBilinearForm qf(pfes_f_);
     // The covariant penalty (see the serial block).
-    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
+    qf.AddDomainIntegrator(new ElasticTensorIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     qf.FormSystemMatrix(empty, QfH);

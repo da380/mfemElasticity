@@ -61,8 +61,12 @@ REFERENTIAL_MODELS = ("homogeneous", "two_solid", "linear_solid",
                       "fluid_core", "inner_core", "stratified_core",
                       "earth_like", "prem_4")
 SLIP_MODELS = ("fluid_core",)
+SOLID_MODELS = ("homogeneous", "two_solid", "linear_solid")
 MAPPED_MODELS = ("homogeneous", "two_solid", "linear_solid", "fluid_core")
-IDENTITY_MODELS = ("homogeneous", "two_solid", "linear_solid")
+# Strict for every welded case since the covariant gauge penalty:
+# solids and the gauged fluid core alike.
+IDENTITY_MODELS = ("homogeneous", "two_solid", "linear_solid",
+                   "fluid_core")
 ASPHERICAL_MODELS = ("homogeneous", "linear_solid")
 # The shift legs run the referential method only: an OUTWARD interface
 # shift through the slipping machinery leaves the AL constraint system
@@ -186,7 +190,7 @@ def main() -> None:
     # cost against accuracy, collated by cmb_report.py in the plot stage.
     if "cmb" in stages:
         for model in prof["models"]:
-            if model in IDENTITY_MODELS:
+            if model in SOLID_MODELS:
                 continue  # no fluid layer, nothing to approximate
             stage(f"cmb:{model}", run_py(
                 "love_numbers", "run", model, *common,

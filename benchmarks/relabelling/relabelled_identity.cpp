@@ -381,6 +381,98 @@ int main(int argc, char* argv[]) {
 
   auto A = build(serial, true);
   auto B = build(mapped_serial, false);
+
+  // Operator-action probes: one smooth field, restricted per attribute,
+  // projected ONCE (the sides share a dof layout, so the same true-dof
+  // vector is fed to both) and pushed through both assembled block
+  // operators — a non-pulled-back block shows up in the probe whose
+  // support its columns touch.
+  if (!slip) {
+    struct Probe : public VectorCoefficient {
+      int attr;  // 0: everywhere
+      Probe(int d, int attribute) : VectorCoefficient(d), attr(attribute) {}
+      void Eval(Vector& V, ElementTransformation& T,
+                const IntegrationPoint& ip) override {
+        V.SetSize(vdim);
+        if (attr != 0 && T.Attribute != attr) {
+          V = 0.0;
+          return;
+        }
+        Vector x(3);
+        x = 0.0;
+        T.Transform(ip, x);
+        for (int i = 0; i < vdim; i++) {
+          V[i] = std::sin(3.0 * x[0] + i) * std::cos(2.0 * x[1]) +
+                 0.3 * x[2] + 0.1 * (i + 1);
+        }
+      }
+    };
+    const int d = A->fes_u->GetVDim();
+    Vector zu(A->fes_zeta->GetTrueVSize());
+    zu = 0.0;
+    Vector zero_u(A->fes_u->GetTrueVSize());
+    zero_u = 0.0;
+    FunctionCoefficient zc([](const Vector& x) {
+      return std::sin(2.0 * x[0]) * std::cos(x[1]) + 0.3 * x[2];
+    });
+    auto probe = [&](const char* name, const Vector& u, const Vector& z) {
+      Vector ruA, rzA, ruB, rzB;
+      A->problem->ApplyBlockOperator(u, z, ruA, rzA);
+      B->problem->ApplyBlockOperator(u, z, ruB, rzB);
+      real_t s[4] = {0.0, 0.0, 0.0, 0.0};
+      for (int i = 0; i < ruA.Size(); i++) {
+        s[0] += (ruA[i] - ruB[i]) * (ruA[i] - ruB[i]);
+        s[1] += ruB[i] * ruB[i];
+      }
+      for (int i = 0; i < rzA.Size(); i++) {
+        s[2] += (rzA[i] - rzB[i]) * (rzA[i] - rzB[i]);
+        s[3] += rzB[i] * rzB[i];
+      }
+      MPI_Allreduce(MPI_IN_PLACE, s, 4, MPITypeMap<real_t>::mpi_type,
+                    MPI_SUM, MPI_COMM_WORLD);
+      if (Mpi::Root()) {
+        std::cout << "  probe " << name << ": |dr_u|/|r_u| "
+                  << std::sqrt(s[0] / std::max(s[1], real_t{1e-300}))
+                  << ", |dr_z|/|r_z| "
+                  << std::sqrt(s[2] / std::max(s[3], real_t{1e-300}))
+                  << "\n";
+      }
+    };
+    if (Mpi::Root()) {
+      std::cout << "\noperator-action probes (A vs B):\n";
+    }
+    ParGridFunction gu(A->fes_u.get());
+    Vector tu;
+    for (int a = 0; a <= A->solid->attributes.Max(); a++) {
+      Probe pc(d, a);
+      gu.ProjectCoefficient(pc);
+      gu.GetTrueDofs(tu);
+      std::string name = a == 0 ? "u everywhere"
+                                : "u attribute " + std::to_string(a);
+      probe(name.c_str(), tu, zu);
+      Vector qA, qB;
+      A->problem->ApplyGaugePenalty(tu, qA);
+      B->problem->ApplyGaugePenalty(tu, qB);
+      real_t q[2] = {0.0, 0.0};
+      for (int i = 0; i < qA.Size(); i++) {
+        q[0] += (qA[i] - qB[i]) * (qA[i] - qB[i]);
+        q[1] += qB[i] * qB[i];
+      }
+      MPI_Allreduce(MPI_IN_PLACE, q, 2, MPITypeMap<real_t>::mpi_type,
+                    MPI_SUM, MPI_COMM_WORLD);
+      if (Mpi::Root()) {
+        std::cout << "    penalty alone: |dQu|/|Qu| "
+                  << std::sqrt(q[0] / std::max(q[1], real_t{1e-300}))
+                  << "\n";
+      }
+    }
+    ParGridFunction gz(A->fes_zeta.get());
+    Vector tz;
+    gz.ProjectCoefficient(zc);
+    gz.GetTrueDofs(tz);
+    probe("zeta", zero_u, tz);
+  }
+
   const bool okA = A->problem->Solve();
   const bool okB = B->problem->Solve();
 
@@ -400,24 +492,75 @@ int main(int argc, char* argv[]) {
   const real_t dz =
       rel_diff(A->problem->Potential(), B->problem->Potential());
 
-  // Strict where every assembled term is covariant: the welded method
-  // on a model without gauge machinery (no fluid). With a gauged fluid
-  // or the slipping interface the gauge penalty bounds the agreement
-  // (header note) and the run is informational.
-  const bool strict = !slip && fluid_attributes.Size() == 0;
+  // Localise a gauge-bearing mismatch: the relative difference per
+  // mesh attribute (fluid vs solid) says whether it is a gauge
+  // representative shift (fluid only) or a physical leak.
+  Vector attr_sums;
+  int n_attr = 0;
+  if (!slip && fluid_attributes.Size() > 0) {
+    auto& a_gf = A->problem->Displacement();
+    auto& b_gf = B->problem->Displacement();
+    Vector ta, tb;
+    a_gf.GetTrueDofs(ta);
+    b_gf.GetTrueDofs(tb);
+    ta -= tb;
+    ParGridFunction d_gf(const_cast<ParFiniteElementSpace*>(
+        static_cast<const ParFiniteElementSpace*>(a_gf.FESpace())));
+    d_gf.SetFromTrueDofs(ta);
+    const int d = a_gf.FESpace()->GetVDim();
+    VectorFunctionCoefficient zero(
+        d, [](const Vector&, Vector& v) { v = 0.0; });
+    Mesh* mesh = a_gf.FESpace()->GetMesh();
+    Vector ed(mesh->GetNE()), eb(mesh->GetNE());
+    ed = 0.0;
+    eb = 0.0;
+    d_gf.ComputeElementLpErrors(2.0, zero, ed);
+    b_gf.ComputeElementLpErrors(2.0, zero, eb);
+    n_attr = mesh->attributes.Max();
+    attr_sums.SetSize(2 * n_attr);
+    attr_sums = 0.0;
+    for (int e = 0; e < mesh->GetNE(); e++) {
+      const int a = mesh->GetAttribute(e) - 1;
+      attr_sums[2 * a] += ed(e) * ed(e);
+      attr_sums[2 * a + 1] += eb(e) * eb(e);
+    }
+    MPI_Allreduce(MPI_IN_PLACE, attr_sums.GetData(), 2 * n_attr,
+                  MPITypeMap<real_t>::mpi_type, MPI_SUM, MPI_COMM_WORLD);
+  }
+
+  // Strict wherever every assembled term is covariant: all welded
+  // cases, the gauged fluid included now that the gauge penalty is
+  // assembled as the exact pull-back (ElasticTensorIntegrator with the
+  // pulled-back deviatoric tensor). The slipping interface remains
+  // informational until its interface forms are certified the same way.
+  const bool strict = !slip;
   const bool pass = okA && okB && (!strict || (du < 1e-5 && dz < 1e-5));
   if (root) {
     std::cout << "\nrelabelled identity (" << m << ", order " << order
               << ", amplitude " << amplitude << "):\n  converged "
               << (okA && okB ? "yes" : "NO") << "\n  |u_A - u_B| / |u_B|  "
               << du << "\n  |z_A - z_B| / |z_B|  " << dz << "\n";
+    for (int a = 0; a < n_attr; a++) {
+      if (attr_sums[2 * a + 1] <= 0.0) {
+        continue;
+      }
+      const bool is_fluid = std::find(fluid_attributes.begin(),
+                                      fluid_attributes.end(), a + 1) !=
+                            fluid_attributes.end();
+      std::cout << "    attribute " << a + 1
+                << (is_fluid ? " (fluid)" : " (solid)") << ": u diff "
+                << std::sqrt(attr_sums[2 * a] /
+                             std::max(attr_sums[2 * a + 1],
+                                      real_t{1e-300}))
+                << "\n";
+    }
     if (strict) {
       std::cout << (pass ? "  IDENTITY HOLDS (to the DtN-centring floor)\n"
                          : "  MISMATCH: an unmapped assembly term\n");
     } else {
-      std::cout << "  informational: the (unmapped) gauge penalty bounds "
-                   "the agreement here (header note); the covariant "
-                   "terms are certified by the strict solid-model runs\n";
+      std::cout << "  informational: the slip interface forms are not "
+                   "yet certified covariant (the welded runs, gauged "
+                   "included, are strict)\n";
     }
   }
   return pass ? 0 : 1;
