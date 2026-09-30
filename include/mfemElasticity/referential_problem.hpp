@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <array>
 #include <list>
 #include <memory>
 #include <vector>
@@ -162,6 +163,74 @@ ParSlipInterfaceBlocks NewSlipInterfaceMatrix(
     mfem::ParFiniteElementSpace& fes_s, const mfem::HypreParMatrix& J,
     const mfem::Array<int>& interface_marker, mfem::Coefficient& pi,
     Diffeomorphism& map);
+#endif
+
+/**
+ * @brief The symmetrised broken-@f$\zeta@f$ gravity interface blocks
+ * (doc/slip_interface.tex, the gravity-interface proposition
+ * @f$G_\Sigma@f$). With @f$G_A@f$ the one-sided vector kernel of
+ * SlipInterfaceGravityIntegrator and @f$M_q@f$ the one-sided
+ * scalar--vector kernel of SlipInterfaceGravityScalarIntegrator, both
+ * assembled on the solid side, the polarised form on the broken pairs
+ * @f$(u_s, u_f)@f$, @f$(\zeta_s, \zeta_f)@f$ is
+ * @f[
+ *   G_\Sigma = \tfrac12\,(S^T G_A D + D^T G_A^T S)
+ *   \;+\; \Bigl[\tfrac12\,D^T M_q S_\zeta + \text{transpose}\Bigr],
+ * @f]
+ * with @f$S = [I, J]@f$, @f$D = [I, -J]@f$ on the vector pairing and
+ * @f$S_\zeta = [I, J_\zeta]@f$ on the scalar pairing. The signs are
+ * PLUS here (against B_Sigma's minus): the solid-side normal is
+ * @f$-N@f$ of the derivation and both @f$\bnu@f$-linear coefficients
+ * flip with it, cancelling the slip-slot minus of
+ * @f$\bs = -F_e^{-1}\jump{\bv}@f$ — pinned by the
+ * discrete-vs-quadrature cross-check of TestSlipInterface.
+ *
+ * Vector–vector blocks in the (solid, fluid) ordering; the vz blocks
+ * are the (vector-row, scalar-column) rectangles, the (scalar, vector)
+ * blocks being their transposes. The full quadratic form on
+ * @f$(v, \zeta)@f$ is @f$v^T [vv] v + 2\, v^T [vz] \zeta@f$.
+ */
+struct SlipGravityInterfaceBlocks {
+  std::unique_ptr<mfem::SparseMatrix> ss, sf, fs, ff;
+  std::unique_ptr<mfem::SparseMatrix> vz_ss, vz_sf, vz_fs, vz_ff;
+};
+
+/**
+ * @param fes_s The solid-side vector shadow space.
+ * @param fes_zs The solid-side scalar space (same mesh and collection).
+ * @param J The vector dof pairing (solid vdofs x fluid vdofs).
+ * @param Jz The scalar dof pairing (solid dofs x fluid dofs).
+ * @param interface_marker Boundary attributes of @f$\Sigma@f$ on the
+ * solid SubMesh.
+ * @param grad_zeta0 The referential @f$\nabla\zeta^0@f$ on the
+ * interface.
+ * @param G The gravitational constant.
+ * @param map The equilibrium mapping. Serial.
+ */
+SlipGravityInterfaceBlocks NewSlipGravityInterfaceMatrix(
+    mfem::FiniteElementSpace& fes_s, mfem::FiniteElementSpace& fes_zs,
+    const mfem::SparseMatrix& J, const mfem::SparseMatrix& Jz,
+    const mfem::Array<int>& interface_marker,
+    mfem::VectorCoefficient& grad_zeta0, mfem::real_t G, Diffeomorphism& map);
+
+#ifdef MFEM_USE_MPI
+/** @brief The broken-@f$\zeta@f$ gravity interface blocks on true dofs. */
+struct ParSlipGravityInterfaceBlocks {
+  std::unique_ptr<mfem::HypreParMatrix> ss, sf, fs, ff;
+  std::unique_ptr<mfem::HypreParMatrix> vz_ss, vz_sf, vz_fs, vz_ff;
+};
+
+/**
+ * @brief Parallel overload of NewSlipGravityInterfaceMatrix: kernels
+ * assembled by Par(Mixed)BilinearForm on the solid side, blocks formed
+ * by hypre products with the true-dof pairings. Semantics and sign
+ * conventions as the serial builder.
+ */
+ParSlipGravityInterfaceBlocks NewSlipGravityInterfaceMatrix(
+    mfem::ParFiniteElementSpace& fes_s, mfem::ParFiniteElementSpace& fes_zs,
+    const mfem::HypreParMatrix& J, const mfem::HypreParMatrix& Jz,
+    const mfem::Array<int>& interface_marker,
+    mfem::VectorCoefficient& grad_zeta0, mfem::real_t G, Diffeomorphism& map);
 #endif
 
 /**
@@ -601,6 +670,45 @@ class LinearQuasiStaticSlipReferentialProblem
    * Tikhonov refinement of the fluid gauge). */
   void SetConstraint(mfem::real_t theta, int al_iterations);
 
+  /**
+   * @brief Switch to the broken-@f$\zeta@f$ organisation
+   * (doc/slip_interface.tex, sec:brokenzeta): the potential is composed
+   * region-wise, @f$(\zeta_o, \zeta_f)@f$ on the outer (solid + buffer)
+   * and fluid regions, the gravity sources are exact — the fluid
+   * extension and every mismatch term drop, so SetFluidExtension() is
+   * not required — and their place is taken by the interface form
+   * @f$G_\Sigma@f$ (NewSlipGravityInterfaceMatrix) and the scalar-jump
+   * constraint @f$\jump{\zeta^1} = \mathbf{b}\cdot\jump{\bv}@f$,
+   * imposed by penalty + augmented Lagrangian alongside the normal-jump
+   * constraint. The vacuum extension (the outer region's own buffer
+   * continuation) is still required. The DtN stays on the ball space
+   * and is folded through the outer injection.
+   *
+   * @param fes_zeta_outer Scalar space on a SubMesh of the ball
+   * covering every attribute EXCEPT the fluid (solid + buffer), sharing
+   * @c fes_zeta's FiniteElementCollection (a shadow space,
+   * SubMeshDofInjection::MakeShadowSpace).
+   * @param theta_zeta Penalty for the scalar-jump constraint; the AL
+   * iteration count is shared with SetConstraint().
+   */
+  void EnableBrokenZeta(mfem::FiniteElementSpace* fes_zeta_outer,
+                        mfem::real_t theta_zeta);
+
+  /** @brief Whether the broken-@f$\zeta@f$ organisation is active. */
+  bool BrokenZetaEnabled() const { return broken_zeta_; }
+
+  /** @brief Scalar-jump energies @f$\sqrt{(c, c)_\Sigma}@f$,
+   * @f$c = \jump{\zeta^1} - \mathbf{b}\cdot\jump{\bv}@f$, at the end of
+   * each AL iteration of the last broken-@f$\zeta@f$ Solve(). */
+  const std::vector<mfem::real_t>& ZetaJumpHistory() const {
+    return zeta_jump_history_;
+  }
+
+  /** @brief The outer-region potential @f$\zeta_o^1@f$ (broken mode). */
+  const mfem::GridFunction& OuterPotential() const { return *zeta_o_gf_; }
+  /** @brief The fluid-region potential @f$\zeta_f^1@f$ (broken mode). */
+  const mfem::GridFunction& FluidPotential() const { return *zeta_f_gf_; }
+
   const mfem::GridFunction& FluidDisplacement() const { return *u_f_; }
   mfem::FiniteElementSpace& FluidSpace() { return *fes_f_; }
 
@@ -647,6 +755,16 @@ class LinearQuasiStaticSlipReferentialProblem
 #ifdef MFEM_USE_MPI
   void AssembleSlipBlocksPar(mfem::OperatorHandle& A);
 #endif
+
+  // Broken-zeta organisation (EnableBrokenZeta).
+  void AssembleBrokenBlocks(mfem::OperatorHandle& A);
+#ifdef MFEM_USE_MPI
+  void AssembleBrokenBlocksPar(mfem::OperatorHandle& A);
+#endif
+  void SetupSolverBroken(mfem::OperatorHandle& A);
+  bool SolveLinearSystemBroken(const mfem::Vector& B, mfem::Vector& X);
+  void SetupBrokenRigidModes();
+  void DistributeBrokenPotential();
 
   mfem::FiniteElementSpace* fes_f_;
 #ifdef MFEM_USE_MPI
@@ -710,6 +828,67 @@ class LinearQuasiStaticSlipReferentialProblem
   std::unique_ptr<mfem::MINRESSolver> minres3_;
   std::unique_ptr<mfem::BlockVector> X3_, B3_, w_al_;
   std::vector<mfem::real_t> jump_history_;
+
+  // ---- broken-zeta organisation (EnableBrokenZeta) ----
+  bool broken_zeta_ = false;
+  mfem::real_t theta_zeta_ = 0.0;
+  mfem::FiniteElementSpace* fes_zo_ = nullptr;
+#ifdef MFEM_USE_MPI
+  mfem::ParFiniteElementSpace* pfes_zo_ = nullptr;
+  std::unique_ptr<mfem::ParFiniteElementSpace> pfes_zs_solid_;
+#endif
+  std::unique_ptr<mfem::FiniteElementSpace> fes_zs_solid_;
+  std::unique_ptr<mfem::GridFunction> zeta_o_gf_, zeta_f_gf_;
+  std::vector<mfem::real_t> zeta_jump_history_;
+
+  // transfers: Pzo (ball x outer injection), Pos (solid-scalar x
+  // outer-scalar pairing over the whole solid), Jzsf (solid-scalar x
+  // fluid-scalar pairing at Sigma); serial sparse or hypre true-dof.
+  std::unique_ptr<mfem::SparseMatrix> Pzo_, Pos_, Jzsf_, PosT_, JzsfT_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pPzo_, pPos_, pJzsf_, pPosT_,
+      pJzsfT_;
+#endif
+  const mfem::Operator *op_Pzo_ = nullptr, *op_Pos_ = nullptr,
+                       *op_PosT_ = nullptr, *op_Jzsf_ = nullptr,
+                       *op_JzsfT_ = nullptr;
+
+  // solver blocks (physical + both penalties + eps Q folded), row-major
+  // 4x4; the (2,2) entry is the sparse part, completed by the DtN fold.
+  std::array<std::unique_ptr<mfem::SparseMatrix>, 16> bzS_;
+#ifdef MFEM_USE_MPI
+  std::array<std::unique_ptr<mfem::HypreParMatrix>, 16> pbzS_;
+#endif
+  // constraint kernels on the solid side: scalar boundary mass Mz,
+  // the (vector x scalar) coupling Kvz = oint (b.u) zeta, and the
+  // (b x b) vector boundary mass Pb.
+  std::unique_ptr<mfem::SparseMatrix> Mz_, Kvz_, Pb_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pMz_, pKvz_, pPb_;
+#endif
+  const mfem::Operator *op_Mz_ = nullptr, *op_Kvz_ = nullptr,
+                       *op_Pb_ = nullptr;
+
+  // zeta_o solver block: sparse part + DtN folded through Pzo.
+  std::unique_ptr<mfem::Operator> dtn_fold_;
+  std::unique_ptr<mfem::SumOperator> S22_op_;
+  std::unique_ptr<mfem::Solver> prec22_, prec33_;
+  std::unique_ptr<mfem::SparseMatrix> prec22_mat_, prec33_mat_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pprec22_mat_, pprec33_mat_;
+#endif
+  mfem::Vector ones_o_, ones_f_, L_outer_o_;
+  mfem::real_t outer_length_o_ = 0.0;
+
+  // four-block solver
+  mfem::Array<int> offsets4_;
+  std::unique_ptr<NullSpaceProjector> projector4_;
+  std::unique_ptr<mfem::BlockOperator> block_op4_;
+  std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec4_;
+  std::unique_ptr<ProjectedOperator> projected_op4_;
+  std::unique_ptr<ProjectedSolver> projected4_, projected_prec4_;
+  std::unique_ptr<mfem::MINRESSolver> minres4_;
+  std::unique_ptr<mfem::BlockVector> X4_, B4_, w_al4_;
 };
 
 }  // namespace mfemElasticity

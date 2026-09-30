@@ -1405,6 +1405,199 @@ void SlipInterfacePressureIntegrator::AssembleElementMatrix(
   }
 }
 
+namespace {
+
+/// Shared surface machinery of the slip-interface kernels: physical
+/// tangential shape gradients gshape, tangential projector P_T, the
+/// (mapped) Nanson normal nu and F^{-1} at the current point. Returns
+/// false where the normal is unavailable.
+bool SlipSurfaceData(const mfem::FiniteElement& el,
+                     mfem::ElementTransformation& Trans,
+                     const mfem::IntegrationPoint& ip, Diffeomorphism* map,
+                     mfem::Vector& shape, mfem::DenseMatrix& dshape,
+                     mfem::DenseMatrix& gshape, mfem::Vector& normal,
+                     mfem::Vector& nu, mfem::DenseMatrix& F,
+                     mfem::DenseMatrix& Fi, mfem::DenseMatrix& PT,
+                     mfem::DenseMatrix& Jt, mfem::DenseMatrix& JtJ) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto sdim = el.GetDim();
+  Trans.SetIntPoint(&ip);
+  if (!BoundaryUnitNormal(Trans, normal)) {
+    return false;
+  }
+  el.CalcShape(ip, shape);
+  el.CalcDShape(ip, dshape);
+  const DenseMatrix& Js = Trans.Jacobian();
+  JtJ.SetSize(sdim);
+  MultAtB(Js, Js, JtJ);
+  DenseMatrixInverse JtJinv(JtJ);
+  DenseMatrix JtJi(sdim);
+  JtJinv.GetInverseMatrix(JtJi);
+  Jt.SetSize(sdim, dim);
+  {
+    DenseMatrix JsT(sdim, dim);
+    for (int a = 0; a < sdim; a++) {
+      for (int b = 0; b < dim; b++) {
+        JsT(a, b) = Js(b, a);
+      }
+    }
+    Mult(JtJi, JsT, Jt);
+  }
+  gshape.SetSize(el.GetDof(), dim);
+  Mult(dshape, Jt, gshape);
+  PT.SetSize(dim);
+  Mult(Js, Jt, PT);
+  F.SetSize(dim);
+  Fi.SetSize(dim);
+  if (map) {
+    map->MapNormal(normal, Trans, ip, nu);
+    map->EvalGradient(F, Trans, ip);
+    CalcInverse(F, Fi);
+  } else {
+    nu = normal;
+    Fi = 0.0;
+    for (int d = 0; d < dim; d++) {
+      Fi(d, d) = 1.0;
+    }
+  }
+  return true;
+}
+
+}  // namespace
+
+const mfem::IntegrationRule& SlipInterfaceGravityIntegrator::GetRule(
+    const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans) {
+  const auto order = 2 * el.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(el.GetGeomType(), order);
+}
+
+void SlipInterfaceGravityIntegrator::AssembleElementMatrix(
+    const mfem::FiniteElement& el, mfem::ElementTransformation& Trans,
+    mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto sdim = el.GetDim();
+  const auto dof = el.GetDof();
+  constexpr real_t kPi = std::numbers::pi_v<real_t>;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector shape_, normal_, nu_, gz_, b_, A_;
+  DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
+#endif
+  shape_.SetSize(dof);
+  dshape_.SetSize(dof, sdim);
+  elmat.SetSize(dim * dof);
+  elmat = 0.0;
+
+  DenseMatrix T(dof, dim);  // T(p, j) = gshape_p . dir_col_j
+
+  const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    if (!SlipSurfaceData(el, Trans, ip, map_, shape_, dshape_, gshape_,
+                         normal_, nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
+      continue;
+    }
+    dir_.SetSize(dim);
+    Mult(PT_, Fi_, dir_);
+    Mult(gshape_, dir_, T);
+
+    // b = F^{-T} grad zeta0 (identity map: b = grad zeta0), and
+    // A = (|b|^2 / 8 pi G) nu - ((b.nu) / 4 pi G) b.
+    gz_.SetSize(dim);
+    grad_zeta0_->Eval(gz_, Trans, ip);
+    b_.SetSize(dim);
+    if (map_) {
+      Fi_.MultTranspose(gz_, b_);
+    } else {
+      b_ = gz_;
+    }
+    const real_t b2 = b_ * b_;
+    const real_t bnu = b_ * nu_;
+    A_.SetSize(dim);
+    for (int d = 0; d < dim; d++) {
+      A_[d] = b2 * nu_[d] / (8.0 * kPi * G_) - bnu * b_[d] / (4.0 * kPi * G_);
+    }
+
+    const auto w = ip.weight * Trans.Weight();
+    for (int i = 0; i < dim; i++) {
+      const double row = w * A_[i];
+      for (int p = 0; p < dof; p++) {
+        for (int j = 0; j < dim; j++) {
+          const double tv = row * T(p, j);
+          for (int qq = 0; qq < dof; qq++) {
+            elmat(p + i * dof, qq + j * dof) += tv * shape_[qq];
+          }
+        }
+      }
+    }
+  }
+}
+
+const mfem::IntegrationRule& SlipInterfaceGravityScalarIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void SlipInterfaceGravityScalarIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto sdim = trial_fe.GetDim();
+  const auto dof_z = trial_fe.GetDof();  // scalar zeta (surface gradient)
+  const auto dof_v = test_fe.GetDof();   // vector slip slot
+  constexpr real_t kPi = std::numbers::pi_v<real_t>;
+
+#ifdef MFEM_THREAD_SAFE
+  Vector shape_, normal_, nu_, gz_, b_;
+  DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_, T_;
+#endif
+  shape_.SetSize(dof_z);
+  dshape_.SetSize(dof_z, sdim);
+  elmat.SetSize(dim * dof_v, dof_z);
+  elmat = 0.0;
+
+  Vector test_shape(dof_v);
+  T_.SetSize(dof_z, dim);  // T(p, j) = gshape^zeta_p . dir_col_j
+
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    if (!SlipSurfaceData(trial_fe, Trans, ip, map_, shape_, dshape_, gshape_,
+                         normal_, nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
+      continue;
+    }
+    dir_.SetSize(dim);
+    Mult(PT_, Fi_, dir_);
+    Mult(gshape_, dir_, T_);
+    test_fe.CalcShape(ip, test_shape);
+
+    gz_.SetSize(dim);
+    grad_zeta0_->Eval(gz_, Trans, ip);
+    b_.SetSize(dim);
+    if (map_) {
+      Fi_.MultTranspose(gz_, b_);
+    } else {
+      b_ = gz_;
+    }
+    const real_t qcoef = (b_ * nu_) / (4.0 * kPi * G_);
+
+    const auto w = ip.weight * Trans.Weight() * qcoef;
+    for (int p = 0; p < dof_z; p++) {
+      for (int j = 0; j < dim; j++) {
+        const double tv = w * T_(p, j);
+        for (int qq = 0; qq < dof_v; qq++) {
+          elmat(qq + j * dof_v, p) += tv * test_shape[qq];
+        }
+      }
+    }
+  }
+}
+
 const mfem::IntegrationRule& BoundaryNormalScalarIntegrator::GetRule(
     const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
     const mfem::ElementTransformation& Trans) {
@@ -1454,6 +1647,48 @@ void BoundaryNormalScalarIntegrator::AssembleElementMatrix2(
       }
     }
     AddMultVWt(nshape, trial_shape, elmat);
+  }
+}
+
+const mfem::IntegrationRule& BoundaryVectorScalarIntegrator::GetRule(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    const mfem::ElementTransformation& Trans) {
+  const auto order = trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderW();
+  return mfem::IntRules.Get(trial_fe.GetGeomType(), order);
+}
+
+void BoundaryVectorScalarIntegrator::AssembleElementMatrix2(
+    const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+    mfem::ElementTransformation& Trans, mfem::DenseMatrix& elmat) {
+  using namespace mfem;
+  const auto dim = Trans.GetSpaceDim();
+  const auto trial_dof = trial_fe.GetDof();
+  const auto test_dof = test_fe.GetDof();
+
+#ifdef MFEM_THREAD_SAFE
+  Vector trial_shape, test_shape, cvec_, cshape_;
+#endif
+  trial_shape.SetSize(trial_dof);
+  test_shape.SetSize(test_dof);
+  cvec_.SetSize(dim);
+  cshape_.SetSize(dim * test_dof);
+  elmat.SetSize(dim * test_dof, trial_dof);
+  elmat = 0.0;
+
+  const auto* ir = IntRule ? IntRule : &GetRule(trial_fe, test_fe, Trans);
+  for (auto q = 0; q < ir->GetNPoints(); q++) {
+    const auto& ip = ir->IntPoint(q);
+    Trans.SetIntPoint(&ip);
+    c_->Eval(cvec_, Trans, ip);
+    trial_fe.CalcShape(ip, trial_shape);
+    test_fe.CalcShape(ip, test_shape);
+    const auto w = ip.weight * Trans.Weight();
+    for (auto d = 0; d < dim; d++) {
+      for (auto i = 0; i < test_dof; i++) {
+        cshape_[i + d * test_dof] = w * test_shape[i] * cvec_[d];
+      }
+    }
+    AddMultVWt(cshape_, trial_shape, elmat);
   }
 }
 

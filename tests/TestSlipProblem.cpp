@@ -438,6 +438,108 @@ TEST(SlipProblem, PressureFreeReducesToSlidingCavity) {
   }
 }
 
+// The broken-zeta organisation head to head against the single-valued
+// one (doc/slip_interface.tex, sec:brokenzeta and reduction (d)): the
+// same physical problem, same meshes and spaces, but the two
+// organisations share NO gravity-interface machinery — mismatch volume
+// terms + fluid extension on one side, G_Sigma + the scalar-jump
+// constraint (and no fluid extension at all) on the other. Agreement of
+// the solid displacement and the solid-region potential is the
+// designed self-benchmark of both. Both constraints' AL iterations
+// must contract their jumps.
+TEST(SlipProblem, BrokenZetaHeadToHead) {
+  const int order = 2;
+  Setting s(order);
+  const int dim = 2;
+
+  auto interface = RadialBdrMarker(*s.solid, 0.9 * kRc, 1.1 * kRc);
+  auto surface_s = RadialBdrMarker(*s.solid, 0.9, 1.1);
+  FunctionCoefficient sigma(SurfaceSigma);
+  ConstantCoefficient mu_gauge(kKappa);
+
+  // --- The single-valued reference (the verified path).
+  LinearQuasiStaticSlipReferentialProblem sv(
+      s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
+      s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
+  auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
+  sv.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
+  auto Ef = NewRadialFluidExtension(*s.fes_s, *s.fes_f, kRc);
+  sv.SetFluidExtension(*Ef);
+  sv.SetFluidGauge(mu_gauge, kEps);
+  sv.SetConstraint(kTheta, kALIterations);
+  sv.SetSurfaceLoad(sigma, surface_s);
+  sv.SetRelTol(1e-10);
+  sv.AssembleForce(0.0);
+  ASSERT_TRUE(sv.Solve());
+
+  // --- The broken-zeta problem: outer (solid + buffer) scalar region,
+  // no fluid extension anywhere.
+  Array<int> outer_attr({2, 3});
+  SubMesh outer(SubMesh::CreateFromDomain(*s.parent, outer_attr));
+  auto fes_zo = SubMeshDofInjection::MakeShadowSpace(*s.fes_zeta, outer);
+
+  LinearQuasiStaticSlipReferentialProblem bz(
+      s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
+      s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
+  bz.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
+  bz.SetFluidGauge(mu_gauge, kEps);
+  bz.SetConstraint(kTheta, kALIterations);
+  bz.EnableBrokenZeta(fes_zo.get(), kTheta);
+  bz.SetSurfaceLoad(sigma, surface_s);
+  bz.SetRelTol(1e-10);
+  bz.AssembleForce(0.0);
+  ASSERT_TRUE(bz.Solve());
+
+  // Both constraints contract under the AL iterations.
+  {
+    const auto& jn = bz.NormalJumpHistory();
+    const auto& jz = bz.ZetaJumpHistory();
+    ASSERT_EQ(static_cast<int>(jn.size()), kALIterations);
+    ASSERT_EQ(static_cast<int>(jz.size()), kALIterations);
+    EXPECT_LT(jn.back(), 0.05 * jn.front());
+    EXPECT_LT(jz.back(), 0.2 * jz.front());
+    std::cout << "broken-zeta normal jump: first " << jn.front() << ", last "
+              << jn.back() << "\n";
+    std::cout << "broken-zeta scalar jump: first " << jz.front() << ", last "
+              << jz.back() << "\n";
+  }
+
+  // Solid displacement, modulo rigid modes.
+  {
+    Vector d(bz.Displacement());
+    d -= sv.Displacement();
+    auto proj = MakeRigidModeProjector(*s.fes_s);
+    proj->Project(d);
+    Vector ref(sv.Displacement());
+    proj->Project(ref);
+    const double rel = d.Norml2() / ref.Norml2();
+    std::cout << "solid displacement, broken vs single-valued: " << rel
+              << "\n";
+    EXPECT_LT(rel, 3e-2);
+  }
+
+  // Potential on the solid region, modulo the 2-D constant.
+  {
+    auto solid_potential = [&](const GridFunction& zeta_ball) {
+      auto shadow =
+          SubMeshDofInjection::MakeShadowSpace(*s.fes_zeta, *s.solid);
+      GridFunction z(shadow.get());
+      SubMesh::Transfer(zeta_ball, z);
+      Vector v(z);
+      v -= v.Sum() / v.Size();
+      return v;
+    };
+    Vector zb = solid_potential(bz.Potential());
+    Vector zs = solid_potential(sv.Potential());
+    Vector d(zb);
+    d -= zs;
+    const double rel = d.Norml2() / zs.Norml2();
+    std::cout << "potential (solid region), broken vs single-valued: " << rel
+              << "\n";
+    EXPECT_LT(rel, 3e-2);
+  }
+}
+
 TEST(SlipProblem, RigidPairsNearNull) {
   Setting s(2);
   auto interface = RadialBdrMarker(*s.solid, 0.9 * kRc, 1.1 * kRc);

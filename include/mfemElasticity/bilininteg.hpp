@@ -1750,6 +1750,114 @@ class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
+ * @brief The one-sided VECTOR kernel of the broken-\f$\zeta\f$ gravity
+ * interface form (doc/slip_interface.tex, the gravity-interface
+ * proposition): on boundary elements of one (solid-side) vector space,
+ * \f[
+ *   G_A(\bvec{u}, \bvec{w}) = \oint_\Sigma
+ *     \mathbf{A}\cdot\nabla_\Sigma \bvec{u}\,[\,P_T F_e^{-1}\bvec{w}\,]
+ *     \,\dd S,
+ *   \qquad
+ *   \mathbf{A} = \frac{|\mathbf{b}|^2}{8\pi G}\,\bnu
+ *              - \frac{\mathbf{b}\cdot\bnu}{4\pi G}\,\mathbf{b},
+ * \f]
+ * with \f$\mathbf{b} = F_e^{-T}\nabla\zeta^0\f$ computed from the
+ * supplied referential gradient \f$\nabla\zeta^0\f$ and the mapping,
+ * and \f$\bnu = \mathrm{cof}(F_e)\bvec{n}\f$. Conventions (tangential
+ * projector, non-symmetry, space requirements) exactly as
+ * SlipInterfacePressureIntegrator; the symmetrised blocks are built by
+ * NewSlipGravityInterfaceMatrix.
+ */
+class SlipInterfaceGravityIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::VectorCoefficient* grad_zeta0_;
+  mfem::real_t G_;
+  Diffeomorphism* map_ = nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector shape_, normal_, nu_, gz_, b_, A_;
+  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_;
+#endif
+
+ public:
+  /** @param grad_zeta0 The referential background-potential gradient
+   *  \f$\nabla\zeta^0\f$ on the interface.
+   *  @param G The gravitational constant.
+   *  @param ir Optional integration rule; identity mapping. */
+  SlipInterfaceGravityIntegrator(mfem::VectorCoefficient& grad_zeta0,
+                                 mfem::real_t G,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), grad_zeta0_{&grad_zeta0}, G_{G} {}
+
+  SlipInterfaceGravityIntegrator(mfem::VectorCoefficient& grad_zeta0,
+                                 mfem::real_t G, Diffeomorphism& map,
+                                 const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir),
+        grad_zeta0_{&grad_zeta0},
+        G_{G},
+        map_{&map} {}
+
+  /** @brief Default rule: 2 el.GetOrder() + Trans.OrderW(). */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& el, const mfem::ElementTransformation& Trans);
+
+  void AssembleElementMatrix(const mfem::FiniteElement& el,
+                             mfem::ElementTransformation& Trans,
+                             mfem::DenseMatrix& elmat) override;
+};
+
+/**
+ * @brief The one-sided SCALAR--vector kernel of the broken-\f$\zeta\f$
+ * gravity interface form: mixed boundary integrator with scalar trial
+ * \f$\zeta\f$ (which carries the surface gradient) and vector test
+ * \f$\bvec{w}\f$ (the slip slot),
+ * \f[
+ *   G_q(\zeta, \bvec{w}) = \oint_\Sigma
+ *     q\,\nabla_\Sigma\zeta\cdot\bigl(P_T F_e^{-1}\bvec{w}\bigr)\,\dd S,
+ *   \qquad q = \frac{\mathbf{b}\cdot\bnu}{4\pi G},
+ * \f]
+ * coefficients as SlipInterfaceGravityIntegrator. Assembled on the
+ * solid side; the four rectangular \f$(\bvec{v}, \zeta)\f$ blocks are
+ * built by NewSlipGravityInterfaceMatrix.
+ */
+class SlipInterfaceGravityScalarIntegrator
+    : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::VectorCoefficient* grad_zeta0_;
+  mfem::real_t G_;
+  Diffeomorphism* map_ = nullptr;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector shape_, normal_, nu_, gz_, b_;
+  mfem::DenseMatrix dshape_, gshape_, Jt_, JtJ_, F_, Fi_, PT_, dir_, T_;
+#endif
+
+ public:
+  SlipInterfaceGravityScalarIntegrator(
+      mfem::VectorCoefficient& grad_zeta0, mfem::real_t G,
+      const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), grad_zeta0_{&grad_zeta0}, G_{G} {}
+
+  SlipInterfaceGravityScalarIntegrator(
+      mfem::VectorCoefficient& grad_zeta0, mfem::real_t G, Diffeomorphism& map,
+      const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir),
+        grad_zeta0_{&grad_zeta0},
+        G_{G},
+        map_{&map} {}
+
+  /** @brief Default rule: trial + test order + Trans.OrderW(). */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+};
+
+/**
  * @brief Mixed boundary integrator acting on a scalar trial field \f$p\f$
  * and a vector test field \f$\bvec{v}\f$:
  * \f[
@@ -1798,6 +1906,44 @@ class BoundaryNormalScalarIntegrator : public mfem::BilinearFormIntegrator {
   BoundaryNormalScalarIntegrator(mfem::Coefficient& q, Diffeomorphism& map,
                                  const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), Q{&q}, map_{&map} {}
+
+  /** @brief Default rule: order trial + test + Trans.OrderW(). */
+  static const mfem::IntegrationRule& GetRule(
+      const mfem::FiniteElement& trial_fe, const mfem::FiniteElement& test_fe,
+      const mfem::ElementTransformation& Trans);
+
+  void AssembleElementMatrix2(const mfem::FiniteElement& trial_fe,
+                              const mfem::FiniteElement& test_fe,
+                              mfem::ElementTransformation& Trans,
+                              mfem::DenseMatrix& elmat) override;
+};
+
+/**
+ * @brief Mixed boundary integrator acting on a scalar trial field
+ * \f$p\f$ and a vector test field \f$\bvec{v}\f$:
+ * \f[
+ *   (\bvec{v}, p) \mapsto \oint_\Gamma p\,(\mathbf{c}\cdot\bvec{v})
+ *   \,\dd S,
+ * \f]
+ * with \f$\mathbf{c}\f$ a given vector coefficient (evaluated as
+ * supplied — any mapping factors belong in the coefficient). The
+ * direction-agnostic sibling of BoundaryNormalScalarIntegrator, used
+ * for the broken-\f$\zeta\f$ scalar-jump constraint kernel
+ * \f$\oint \chi\,(\mathbf{b}\cdot\bvec{u})\f$. Space requirements as
+ * there (nodal vector space, vdim = space dimension, byNODES).
+ */
+class BoundaryVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
+ private:
+  mfem::VectorCoefficient* c_;
+
+#ifndef MFEM_THREAD_SAFE
+  mfem::Vector trial_shape, test_shape, cvec_, cshape_;
+#endif
+
+ public:
+  explicit BoundaryVectorScalarIntegrator(
+      mfem::VectorCoefficient& c, const mfem::IntegrationRule* ir = nullptr)
+      : mfem::BilinearFormIntegrator(ir), c_{&c} {}
 
   /** @brief Default rule: order trial + test + Trans.OrderW(). */
   static const mfem::IntegrationRule& GetRule(

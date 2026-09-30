@@ -90,6 +90,60 @@ SlipInterfaceBlocks NewSlipInterfaceMatrix(FiniteElementSpace& fes_s,
   return B;
 }
 
+SlipGravityInterfaceBlocks NewSlipGravityInterfaceMatrix(
+    FiniteElementSpace& fes_s, FiniteElementSpace& fes_zs,
+    const SparseMatrix& J, const SparseMatrix& Jz,
+    const Array<int>& interface_marker, VectorCoefficient& grad_zeta0,
+    real_t G_newton, Diffeomorphism& map) {
+  Array<int> marker(interface_marker);
+
+  // The one-sided vector kernel G_A on the solid side.
+  BilinearForm ga(&fes_s);
+  ga.AddBoundaryIntegrator(
+      new SlipInterfaceGravityIntegrator(grad_zeta0, G_newton, map), marker);
+  ga.Assemble();
+  ga.Finalize();
+  const SparseMatrix& GA = ga.SpMat();
+  std::unique_ptr<SparseMatrix> GAt(Transpose(GA));
+  std::unique_ptr<SparseMatrix> Gsym(Add(0.5, GA, 0.5, *GAt));
+  std::unique_ptr<SparseMatrix> Gskew(Add(0.5, *GAt, -0.5, GA));
+  std::unique_ptr<SparseMatrix> Jt(Transpose(J));
+
+  // The one-sided scalar--vector kernel M_q (vector test rows, scalar
+  // trial columns).
+  MixedBilinearForm mq(&fes_zs, &fes_s);
+  mq.AddBoundaryIntegrator(
+      new SlipInterfaceGravityScalarIntegrator(grad_zeta0, G_newton, map),
+      marker);
+  mq.Assemble();
+  mq.Finalize();
+  const SparseMatrix& Mq = mq.SpMat();
+
+  // Signs: PLUS against B_Sigma's minus (see the header note); pinned
+  // by the discrete-vs-quadrature cross-check.
+  SlipGravityInterfaceBlocks B;
+  B.ss = std::make_unique<SparseMatrix>(*Gsym);
+  B.sf.reset(mfem::Mult(*Gskew, J));
+  B.fs.reset(Transpose(*B.sf));
+  {
+    std::unique_ptr<SparseMatrix> tmp(mfem::Mult(*Jt, *Gsym));
+    B.ff.reset(mfem::Mult(*tmp, J));
+    *B.ff *= -1.0;
+  }
+  B.vz_ss = std::make_unique<SparseMatrix>(Mq);
+  *B.vz_ss *= 0.5;
+  B.vz_sf.reset(mfem::Mult(Mq, Jz));
+  *B.vz_sf *= 0.5;
+  {
+    std::unique_ptr<SparseMatrix> JtM(mfem::Mult(*Jt, Mq));
+    B.vz_fs = std::make_unique<SparseMatrix>(*JtM);
+    *B.vz_fs *= -0.5;
+    B.vz_ff.reset(mfem::Mult(*JtM, Jz));
+    *B.vz_ff *= -0.5;
+  }
+  return B;
+}
+
 
 std::unique_ptr<mfem::SparseMatrix> NewRadialVacuumExtension(
     FiniteElementSpace& body_fes, FiniteElementSpace& buffer_fes,
@@ -730,6 +784,57 @@ ParSlipInterfaceBlocks NewSlipInterfaceMatrix(ParFiniteElementSpace& fes_s,
   *B.sf *= -1.0;
   B.fs.reset(B.sf->Transpose());
   B.ff.reset(mfem::RAP(Gsym.get(), Jnc));
+  return B;
+}
+
+ParSlipGravityInterfaceBlocks NewSlipGravityInterfaceMatrix(
+    ParFiniteElementSpace& fes_s, ParFiniteElementSpace& fes_zs,
+    const HypreParMatrix& J, const HypreParMatrix& Jz,
+    const Array<int>& interface_marker, VectorCoefficient& grad_zeta0,
+    real_t G_newton, Diffeomorphism& map) {
+  Array<int> marker(interface_marker);
+
+  // The one-sided vector kernel G_A on the solid side, on true dofs.
+  ParBilinearForm ga(&fes_s);
+  ga.AddBoundaryIntegrator(
+      new SlipInterfaceGravityIntegrator(grad_zeta0, G_newton, map), marker);
+  ga.Assemble();
+  ga.Finalize();
+  std::unique_ptr<HypreParMatrix> GA(ga.ParallelAssemble());
+  std::unique_ptr<HypreParMatrix> GAt(GA->Transpose());
+  std::unique_ptr<HypreParMatrix> Gsym(mfem::Add(0.5, *GA, 0.5, *GAt));
+  std::unique_ptr<HypreParMatrix> Gskew(mfem::Add(0.5, *GAt, -0.5, *GA));
+  auto* Jnc = const_cast<HypreParMatrix*>(&J);
+  auto* Jznc = const_cast<HypreParMatrix*>(&Jz);
+  std::unique_ptr<HypreParMatrix> Jt(Jnc->Transpose());
+
+  // The one-sided scalar--vector kernel M_q on true dofs.
+  ParMixedBilinearForm mq(&fes_zs, &fes_s);
+  mq.AddBoundaryIntegrator(
+      new SlipInterfaceGravityScalarIntegrator(grad_zeta0, G_newton, map),
+      marker);
+  mq.Assemble();
+  mq.Finalize();
+  std::unique_ptr<HypreParMatrix> Mq(mq.ParallelAssemble());
+
+  // Signs as the serial builder (PLUS against B_Sigma's minus).
+  ParSlipGravityInterfaceBlocks B;
+  B.ss = std::make_unique<HypreParMatrix>(*Gsym);
+  B.sf.reset(ParMult(Gskew.get(), Jnc));
+  B.fs.reset(B.sf->Transpose());
+  B.ff.reset(mfem::RAP(Gsym.get(), Jnc));
+  *B.ff *= -1.0;
+  B.vz_ss = std::make_unique<HypreParMatrix>(*Mq);
+  *B.vz_ss *= 0.5;
+  B.vz_sf.reset(ParMult(Mq.get(), Jznc));
+  *B.vz_sf *= 0.5;
+  {
+    std::unique_ptr<HypreParMatrix> JtM(ParMult(Jt.get(), Mq.get()));
+    B.vz_fs = std::make_unique<HypreParMatrix>(*JtM);
+    *B.vz_fs *= -0.5;
+    B.vz_ff.reset(ParMult(JtM.get(), Jznc));
+    *B.vz_ff *= -0.5;
+  }
   return B;
 }
 
@@ -2041,6 +2146,856 @@ void LinearQuasiStaticSlipReferentialProblem::SetGaugedFluid(
       "space here; use SetFluidGauge().");
 }
 
+namespace {
+
+/// b = F^{-T} grad zeta0 for the broken-zeta constraint kernels: the
+/// mapped background field on the interface, from the referential
+/// gradient and the equilibrium mapping.
+class MappedBackgroundField : public VectorCoefficient {
+ public:
+  MappedBackgroundField(VectorCoefficient& grad_zeta0, Diffeomorphism& map)
+      : VectorCoefficient(grad_zeta0.GetVDim()),
+        grad_zeta0_(&grad_zeta0),
+        map_(&map) {}
+
+  void Eval(Vector& V, ElementTransformation& T,
+            const IntegrationPoint& ip) override {
+    const int dim = GetVDim();
+    Vector gz(dim);
+    grad_zeta0_->Eval(gz, T, ip);
+    DenseMatrix F(dim), Fi(dim);
+    map_->EvalGradient(F, T, ip);
+    CalcInverse(F, Fi);
+    V.SetSize(dim);
+    Fi.MultTranspose(gz, V);
+  }
+
+ private:
+  VectorCoefficient* grad_zeta0_;
+  Diffeomorphism* map_;
+};
+
+}  // namespace
+
+void LinearQuasiStaticSlipReferentialProblem::EnableBrokenZeta(
+    FiniteElementSpace* fes_zeta_outer, real_t theta_zeta) {
+  MFEM_VERIFY(fes_zeta_outer && theta_zeta > 0.0,
+              "EnableBrokenZeta: an outer scalar space and a positive "
+              "penalty are required.");
+  MFEM_VERIFY(fes_zeta_outer->FEColl() == fes_zeta_->FEColl() &&
+                  fes_zeta_outer->GetVDim() == 1,
+              "EnableBrokenZeta: the outer space must be a scalar shadow "
+              "of the potential space (same collection).");
+  fes_zo_ = fes_zeta_outer;
+  theta_zeta_ = theta_zeta;
+  broken_zeta_ = true;
+  operator_dirty_ = true;
+
+#ifdef MFEM_USE_MPI
+  pfes_zo_ = dynamic_cast<ParFiniteElementSpace*>(fes_zo_);
+  MFEM_VERIFY((pfes_ != nullptr) == (pfes_zo_ != nullptr),
+              "EnableBrokenZeta: the outer space must match the problem's "
+              "serial/parallel type.");
+  if (pfes_zo_) {
+    auto* outer_sub = dynamic_cast<ParSubMesh*>(pfes_zo_->GetParMesh());
+    MFEM_VERIFY(outer_sub &&
+                    outer_sub->GetParent() == pfes_zeta_->GetParMesh(),
+                "EnableBrokenZeta: the outer space must live on a "
+                "ParSubMesh of the ball.");
+    auto* solid_sub = dynamic_cast<ParSubMesh*>(pfes_->GetParMesh());
+    pfes_zs_solid_ =
+        SubMeshDofInjection::MakeShadowSpace(*pfes_zeta_, *solid_sub);
+    SubMeshDofInjection inj_zo(*pfes_zo_, *pfes_zeta_);
+    SubMeshDofInjection inj_zs(*pfes_zs_solid_, *pfes_zeta_);
+    pPzo_ = inj_zo.NewTrueDofMatrix();
+    pPos_ = NewSubMeshPairingTrueDofMatrix(inj_zs, inj_zo);
+    pJzsf_ = NewSubMeshPairingTrueDofMatrix(inj_zs, *injection_fluid_);
+    pPosT_.reset(pPos_->Transpose());
+    pJzsfT_.reset(pJzsf_->Transpose());
+    op_Pzo_ = pPzo_.get();
+    op_Pos_ = pPos_.get();
+    op_PosT_ = pPosT_.get();
+    op_Jzsf_ = pJzsf_.get();
+    op_JzsfT_ = pJzsfT_.get();
+  } else
+#endif
+  {
+    auto* outer_sub = dynamic_cast<SubMesh*>(fes_zo_->GetMesh());
+    MFEM_VERIFY(outer_sub && outer_sub->GetParent() == fes_zeta_->GetMesh(),
+                "EnableBrokenZeta: the outer space must live on a SubMesh "
+                "of the ball.");
+    auto* solid_sub = dynamic_cast<SubMesh*>(fes_->GetMesh());
+    fes_zs_solid_ =
+        SubMeshDofInjection::MakeShadowSpace(*fes_zeta_, *solid_sub);
+    SubMeshDofInjection inj_zo(*fes_zo_, *fes_zeta_);
+    SubMeshDofInjection inj_zs(*fes_zs_solid_, *fes_zeta_);
+    Pzo_ = inj_zo.NewSparseMatrix();
+    Pos_ = NewSubMeshPairingMatrix(inj_zs, inj_zo);
+    Jzsf_ = NewSubMeshPairingMatrix(inj_zs, *injection_fluid_);
+    PosT_.reset(Transpose(*Pos_));
+    JzsfT_.reset(Transpose(*Jzsf_));
+    op_Pzo_ = Pzo_.get();
+    op_Pos_ = Pos_.get();
+    op_PosT_ = PosT_.get();
+    op_Jzsf_ = Jzsf_.get();
+    op_JzsfT_ = JzsfT_.get();
+  }
+
+  zeta_o_gf_ = detail::MakeGridFunction(fes_zo_);
+  *zeta_o_gf_ = 0.0;
+  zeta_f_gf_ = detail::MakeGridFunction(shadow_zeta_fluid_.get());
+  *zeta_f_gf_ = 0.0;
+
+  // 2-D compatibility data in the broken basis: the joint constant is
+  // the null direction, and the sphere lies in the outer region.
+  {
+    auto ones_gf = detail::MakeGridFunction(fes_zo_);
+    *ones_gf = 1.0;
+    ones_gf->GetTrueDofs(ones_o_);
+    auto ones_f_gf = detail::MakeGridFunction(shadow_zeta_fluid_.get());
+    *ones_f_gf = 1.0;
+    ones_f_gf->GetTrueDofs(ones_f_);
+  }
+  if (dim_ == 2) {
+    L_outer_o_.SetSize(ones_o_.Size());
+    op_Pzo_->MultTranspose(L_outer_, L_outer_o_);
+    outer_length_o_ = Dot(L_outer_o_, ones_o_);
+    MFEM_VERIFY(outer_length_o_ > 0.0,
+                "EnableBrokenZeta: the outer region must carry the "
+                "external boundary.");
+  }
+
+  SetupBrokenRigidModes();
+}
+
+void LinearQuasiStaticSlipReferentialProblem::SetupBrokenRigidModes() {
+  offsets4_.SetSize(5);
+  offsets4_[0] = 0;
+  offsets4_[1] = fes_->GetTrueVSize();
+  offsets4_[2] = fes_f_->GetTrueVSize();
+  offsets4_[3] = fes_zo_->GetTrueVSize();
+  offsets4_[4] = shadow_zeta_fluid_->GetTrueVSize();
+  offsets4_.PartialSum();
+
+  // Common translations, independent mapped rotations of shell and
+  // core (zero potential partners: zeta1 = phi1 + b.v vanishes on the
+  // rigid pairs), and in 2-D the joint potential constant.
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    projector4_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
+  } else
+#endif
+  {
+    projector4_ = std::make_unique<NullSpaceProjector>();
+  }
+  auto gf_s = detail::MakeGridFunction(fes_);
+  auto gf_f = detail::MakeGridFunction(fes_f_);
+  Vector ts, tf;
+  BlockVector n(offsets4_);
+  for (int c = 0; c < dim_; c++) {
+    Vector e(dim_);
+    e = 0.0;
+    e[c] = 1.0;
+    VectorConstantCoefficient tc(e);
+    gf_s->ProjectCoefficient(tc);
+    gf_s->GetTrueDofs(ts);
+    gf_f->ProjectCoefficient(tc);
+    gf_f->GetTrueDofs(tf);
+    n = 0.0;
+    n.GetBlock(0) = ts;
+    n.GetBlock(1) = tf;
+    projector4_->Add(n);
+  }
+  auto& map = ref_rheology_->EquilibriumMapping();
+  const int nrot = (dim_ == 2) ? 1 : 3;
+  for (int c = 0; c < nrot; c++) {
+    MappedRotation rot(map, dim_ == 2 ? 2 : c);
+    gf_s->ProjectCoefficient(rot);
+    gf_s->GetTrueDofs(ts);
+    n = 0.0;
+    n.GetBlock(0) = ts;
+    projector4_->Add(n);
+    gf_f->ProjectCoefficient(rot);
+    gf_f->GetTrueDofs(tf);
+    n = 0.0;
+    n.GetBlock(1) = tf;
+    projector4_->Add(n);
+  }
+  if (dim_ == 2) {
+    n = 0.0;
+    n.GetBlock(2) = ones_o_;
+    n.GetBlock(3) = ones_f_;
+    projector4_->Add(n);
+  }
+}
+
+void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocks(
+    OperatorHandle& A) {
+  MFEM_VERIFY(fluid_mu_gauge_,
+              "LinearQuasiStaticSlipReferentialProblem: call "
+              "SetFluidGauge() before the first Solve().");
+  auto& map = ref_rheology_->EquilibriumMapping();
+  const real_t G_newton = four_pi_G_ / (4.0 * kPi);
+
+  // Fluid elastic block and the fluid-region a'' gravity with the
+  // fluid's OWN field: no extension, no folds, no mismatch terms.
+  BilinearForm a_f(fes_f_);
+  {
+    auto stiffness = ref_rheology_->MakeStiffness();
+    stiffness->AddIntegrators(a_f, nullptr);
+  }
+  a_f.Assemble();
+  a_f.Finalize();
+  BilinearForm g_f(fes_f_);
+  g_f.AddDomainIntegrator(new ReferentialGravityIntegrator(
+      map, *grad_zeta0_fluid_, 1.0 / (2.0 * four_pi_G_)));
+  g_f.Assemble();
+  g_f.Finalize();
+
+  // Fluid a' coupling with the fluid's own potential (both fields on
+  // the fluid SubMesh).
+  MixedBilinearForm c_f(shadow_zeta_fluid_.get(), fes_f_);
+  c_f.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
+      map, *grad_zeta0_fluid_, 1.0 / four_pi_G_));
+  c_f.Assemble();
+  c_f.Finalize();
+
+  // Interface forms: B_Sigma unchanged, and the broken-zeta gravity
+  // form G_Sigma with the vz couplings.
+  auto B = NewSlipInterfaceMatrix(*fes_, *J_, interface_marker_, *pi_, map);
+  auto GS = NewSlipGravityInterfaceMatrix(*fes_, *fes_zs_solid_, *J_, *Jzsf_,
+                                          interface_marker_,
+                                          *grad_zeta0_shadow_, G_newton, map);
+
+  // Constraint kernels on the solid side: normal jump (Bn) and the
+  // scalar jump [[zeta]] = b.[[v]] (Mz, Kvz, Pb).
+  MappedBackgroundField bC(*grad_zeta0_shadow_, map);
+  OuterProductCoefficient bbC(bC, bC);
+  {
+    Array<int> marker(interface_marker_);
+    BilinearForm bn(fes_);
+    bn.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(map), marker);
+    bn.Assemble();
+    bn.Finalize();
+    Bn_ = std::make_unique<SparseMatrix>(bn.SpMat());
+
+    BilinearForm mz(fes_zs_solid_.get());
+    mz.AddBoundaryIntegrator(new MassIntegrator(), marker);
+    mz.Assemble();
+    mz.Finalize();
+    Mz_ = std::make_unique<SparseMatrix>(mz.SpMat());
+
+    BilinearForm pb(fes_);
+    pb.AddBoundaryIntegrator(new VectorMassIntegrator(bbC), marker);
+    pb.Assemble();
+    pb.Finalize();
+    Pb_ = std::make_unique<SparseMatrix>(pb.SpMat());
+
+    MixedBilinearForm kb(fes_zs_solid_.get(), fes_);
+    kb.AddBoundaryIntegrator(new BoundaryVectorScalarIntegrator(bC), marker);
+    kb.Assemble();
+    kb.Finalize();
+    Kvz_ = std::make_unique<SparseMatrix>(kb.SpMat());
+  }
+  op_Bn_ = Bn_.get();
+  op_Mz_ = Mz_.get();
+  op_Kvz_ = Kvz_.get();
+  op_Pb_ = Pb_.get();
+
+  // Poisson blocks per region, 1/4piG; the DtN stays on the ball and
+  // is folded through the outer injection.
+  std::unique_ptr<SparseMatrix> K22, K33, M22, M33;
+  {
+    BilinearForm k(fes_zo_);
+    k.AddDomainIntegrator(new TransformedDiffusionIntegrator(map));
+    k.Assemble();
+    k.Finalize();
+    K22 = std::make_unique<SparseMatrix>(k.SpMat());
+    *K22 *= 1.0 / four_pi_G_;
+    BilinearForm m(fes_zo_);
+    m.AddDomainIntegrator(new MassIntegrator());
+    m.Assemble();
+    m.Finalize();
+    M22 = std::make_unique<SparseMatrix>(m.SpMat());
+  }
+  {
+    BilinearForm k(shadow_zeta_fluid_.get());
+    k.AddDomainIntegrator(new TransformedDiffusionIntegrator(map));
+    k.Assemble();
+    k.Finalize();
+    K33 = std::make_unique<SparseMatrix>(k.SpMat());
+    *K33 *= 1.0 / four_pi_G_;
+    BilinearForm m(shadow_zeta_fluid_.get());
+    m.AddDomainIntegrator(new MassIntegrator());
+    m.Assemble();
+    m.Finalize();
+    M33 = std::make_unique<SparseMatrix>(m.SpMat());
+  }
+  dtn_fold_ = std::make_unique<RAPOperator>(*Pzo_, *dtn_op_, *Pzo_);
+
+  // The fluid gauge penalty eps Q.
+  {
+    ConstantCoefficient eps_c(fluid_gauge_eps_);
+    ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    BilinearForm qf(fes_f_);
+    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    qf.Assemble();
+    qf.Finalize();
+    Qf_ = std::make_unique<SparseMatrix>(qf.SpMat());
+  }
+  op_Qf_ = Qf_.get();
+
+  // Physical blocks.
+  std::unique_ptr<SparseMatrix> A00(new SparseMatrix(*A.As<SparseMatrix>()));
+  if (ext_EtGE_) {
+    A00.reset(Add(1.0, *A00, 1.0, *ext_EtGE_));
+  }
+  A00.reset(Add(1.0, *A00, 1.0, *B.ss));
+  A00.reset(Add(1.0, *A00, 1.0, *GS.ss));
+  std::unique_ptr<SparseMatrix> A10(Add(1.0, *B.fs, 1.0, *GS.fs));
+  std::unique_ptr<SparseMatrix> A01(Transpose(*A10));
+  std::unique_ptr<SparseMatrix> A11(new SparseMatrix(a_f.SpMat()));
+  A11.reset(Add(1.0, *A11, 1.0, g_f.SpMat()));
+  A11.reset(Add(1.0, *A11, 1.0, *B.ff));
+  A11.reset(Add(1.0, *A11, 1.0, *GS.ff));
+  // Couplings to the potentials: the base solid coupling restricted to
+  // the outer columns, the fluid coupling direct, and the G_Sigma
+  // vz blocks folded through the scalar transfers.
+  const SparseMatrix& C_solid =
+      ext_C_total_ ? *ext_C_total_ : *C_.As<SparseMatrix>();
+  std::unique_ptr<SparseMatrix> A02(mfem::Mult(C_solid, *Pzo_));
+  {
+    std::unique_ptr<SparseMatrix> t(mfem::Mult(*GS.vz_ss, *Pos_));
+    A02.reset(Add(1.0, *A02, 1.0, *t));
+  }
+  std::unique_ptr<SparseMatrix> A03(new SparseMatrix(*GS.vz_sf));
+  std::unique_ptr<SparseMatrix> A12(mfem::Mult(*GS.vz_fs, *Pos_));
+  std::unique_ptr<SparseMatrix> A13(Add(1.0, c_f.SpMat(), 1.0, *GS.vz_ff));
+
+  // Penalty folds. Normal jump: theta [Bn, -BnJ; -J^T Bn, J^T Bn J].
+  // Scalar jump c = (Pos zo - Jz zf) - b.(us - J uf):
+  //   theta_z [ Z^T Mz Z - 2 U^T Kvz Z + U^T Pb U ].
+  std::unique_ptr<SparseMatrix> BnJ(mfem::Mult(*Bn_, *J_));
+  std::unique_ptr<SparseMatrix> JtBn(Transpose(*BnJ));
+  std::unique_ptr<SparseMatrix> JtBnJ(mfem::Mult(*Jt_, *BnJ));
+  std::unique_ptr<SparseMatrix> PbJ(mfem::Mult(*Pb_, *J_));
+  std::unique_ptr<SparseMatrix> JtPbJ(mfem::Mult(*Jt_, *PbJ));
+  std::unique_ptr<SparseMatrix> KvzPos(mfem::Mult(*Kvz_, *Pos_));
+  std::unique_ptr<SparseMatrix> KvzJz(mfem::Mult(*Kvz_, *Jzsf_));
+  std::unique_ptr<SparseMatrix> JtKvzPos(mfem::Mult(*Jt_, *KvzPos));
+  std::unique_ptr<SparseMatrix> JtKvzJz(mfem::Mult(*Jt_, *KvzJz));
+  std::unique_ptr<SparseMatrix> MzPos(mfem::Mult(*Mz_, *Pos_));
+  std::unique_ptr<SparseMatrix> MzJz(mfem::Mult(*Mz_, *Jzsf_));
+  std::unique_ptr<SparseMatrix> PosMzPos(mfem::Mult(*PosT_, *MzPos));
+  std::unique_ptr<SparseMatrix> PosMzJz(mfem::Mult(*PosT_, *MzJz));
+  std::unique_ptr<SparseMatrix> JzMzJz(mfem::Mult(*JzsfT_, *MzJz));
+
+  auto set = [&](int i, int j, std::unique_ptr<SparseMatrix> m) {
+    bzS_[4 * i + j] = std::move(m);
+  };
+  {
+    std::unique_ptr<SparseMatrix> s(Add(1.0, *A00, theta_, *Bn_));
+    s.reset(Add(1.0, *s, theta_zeta_, *Pb_));
+    set(0, 0, std::move(s));
+  }
+  {
+    std::unique_ptr<SparseMatrix> s(Add(1.0, *A01, -theta_, *BnJ));
+    s.reset(Add(1.0, *s, -theta_zeta_, *PbJ));
+    set(0, 1, std::move(s));
+    set(1, 0, std::unique_ptr<SparseMatrix>(Transpose(*bzS_[1])));
+  }
+  {
+    std::unique_ptr<SparseMatrix> s(Add(1.0, *A11, theta_, *JtBnJ));
+    s.reset(Add(1.0, *s, theta_zeta_, *JtPbJ));
+    s.reset(Add(1.0, *s, 1.0, *Qf_));
+    set(1, 1, std::move(s));
+  }
+  set(0, 2, std::unique_ptr<SparseMatrix>(
+                Add(1.0, *A02, -theta_zeta_, *KvzPos)));
+  set(0, 3,
+      std::unique_ptr<SparseMatrix>(Add(1.0, *A03, theta_zeta_, *KvzJz)));
+  set(1, 2, std::unique_ptr<SparseMatrix>(
+                Add(1.0, *A12, theta_zeta_, *JtKvzPos)));
+  set(1, 3, std::unique_ptr<SparseMatrix>(
+                Add(1.0, *A13, -theta_zeta_, *JtKvzJz)));
+  set(2, 0, std::unique_ptr<SparseMatrix>(Transpose(*bzS_[2])));
+  set(3, 0, std::unique_ptr<SparseMatrix>(Transpose(*bzS_[3])));
+  set(2, 1, std::unique_ptr<SparseMatrix>(Transpose(*bzS_[6])));
+  set(3, 1, std::unique_ptr<SparseMatrix>(Transpose(*bzS_[7])));
+  set(2, 2, std::unique_ptr<SparseMatrix>(
+                Add(1.0, *K22, theta_zeta_, *PosMzPos)));
+  {
+    auto s = std::make_unique<SparseMatrix>(*PosMzJz);
+    *s *= -theta_zeta_;
+    set(2, 3, std::move(s));
+    set(3, 2, std::unique_ptr<SparseMatrix>(Transpose(*bzS_[11])));
+  }
+  set(3, 3,
+      std::unique_ptr<SparseMatrix>(Add(1.0, *K33, theta_zeta_, *JzMzJz)));
+
+  // The zeta_o solver block: sparse part + the folded DtN.
+  S22_op_ = std::make_unique<SumOperator>(bzS_[10].get(), 1.0,
+                                          dtn_fold_.get(),
+                                          1.0 / four_pi_G_, false, false);
+
+  // Preconditioner matrices for the two potential blocks (shifted).
+  prec22_mat_.reset(
+      Add(1.0, *bzS_[10], shift_ / four_pi_G_, *M22));
+  prec33_mat_.reset(
+      Add(1.0, *bzS_[15], shift_ / four_pi_G_, *M33));
+  prec22_ = std::make_unique<GSSmoother>(*prec22_mat_);
+  prec33_ = std::make_unique<GSSmoother>(*prec33_mat_);
+  prec11_ = std::make_unique<GSSmoother>(*bzS_[5]);
+}
+
+#ifdef MFEM_USE_MPI
+void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocksPar(
+    OperatorHandle& A) {
+  MFEM_VERIFY(fluid_mu_gauge_,
+              "LinearQuasiStaticSlipReferentialProblem: call "
+              "SetFluidGauge() before the first Solve().");
+  auto& map = ref_rheology_->EquilibriumMapping();
+  const real_t G_newton = four_pi_G_ / (4.0 * kPi);
+  Array<int> empty;
+  auto* pshadow_zf = dynamic_cast<ParFiniteElementSpace*>(
+      shadow_zeta_fluid_.get());
+  MFEM_VERIFY(pshadow_zf, "AssembleBrokenBlocksPar: parallel spaces.");
+
+  // Fluid elastic + own-field gravity.
+  OperatorHandle Aff(Operator::Hypre_ParCSR), Gf(Operator::Hypre_ParCSR);
+  ParBilinearForm a_f(pfes_f_);
+  {
+    auto stiffness = ref_rheology_->MakeStiffness();
+    stiffness->AddIntegrators(a_f, nullptr);
+  }
+  a_f.Assemble();
+  a_f.Finalize();
+  a_f.FormSystemMatrix(empty, Aff);
+  ParBilinearForm g_f(pfes_f_);
+  g_f.AddDomainIntegrator(new ReferentialGravityIntegrator(
+      map, *grad_zeta0_fluid_, 1.0 / (2.0 * four_pi_G_)));
+  g_f.Assemble();
+  g_f.Finalize();
+  g_f.FormSystemMatrix(empty, Gf);
+
+  // Fluid a' coupling with the fluid's own potential.
+  OperatorHandle Cf(Operator::Hypre_ParCSR);
+  ParMixedBilinearForm c_f(pshadow_zf, pfes_f_);
+  c_f.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
+      map, *grad_zeta0_fluid_, 1.0 / four_pi_G_));
+  c_f.Assemble();
+  c_f.Finalize();
+  c_f.FormRectangularSystemMatrix(empty, empty, Cf);
+
+  // Interface forms.
+  auto B = NewSlipInterfaceMatrix(*pfes_, *pJ_, interface_marker_, *pi_, map);
+  auto GS = NewSlipGravityInterfaceMatrix(*pfes_, *pfes_zs_solid_, *pJ_,
+                                          *pJzsf_, interface_marker_,
+                                          *grad_zeta0_shadow_, G_newton, map);
+
+  // Constraint kernels on the solid side, on true dofs.
+  MappedBackgroundField bC(*grad_zeta0_shadow_, map);
+  OuterProductCoefficient bbC(bC, bC);
+  {
+    Array<int> marker(interface_marker_);
+    OperatorHandle H(Operator::Hypre_ParCSR);
+    ParBilinearForm bn(pfes_);
+    bn.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(map), marker);
+    bn.Assemble();
+    bn.Finalize();
+    bn.FormSystemMatrix(empty, H);
+    pBn_ = std::make_unique<HypreParMatrix>(*H.As<HypreParMatrix>());
+
+    OperatorHandle Hm(Operator::Hypre_ParCSR);
+    ParBilinearForm mz(pfes_zs_solid_.get());
+    mz.AddBoundaryIntegrator(new MassIntegrator(), marker);
+    mz.Assemble();
+    mz.Finalize();
+    mz.FormSystemMatrix(empty, Hm);
+    pMz_ = std::make_unique<HypreParMatrix>(*Hm.As<HypreParMatrix>());
+
+    OperatorHandle Hp(Operator::Hypre_ParCSR);
+    ParBilinearForm pb(pfes_);
+    pb.AddBoundaryIntegrator(new VectorMassIntegrator(bbC), marker);
+    pb.Assemble();
+    pb.Finalize();
+    pb.FormSystemMatrix(empty, Hp);
+    pPb_ = std::make_unique<HypreParMatrix>(*Hp.As<HypreParMatrix>());
+
+    OperatorHandle Hk(Operator::Hypre_ParCSR);
+    ParMixedBilinearForm kb(pfes_zs_solid_.get(), pfes_);
+    kb.AddBoundaryIntegrator(new BoundaryVectorScalarIntegrator(bC), marker);
+    kb.Assemble();
+    kb.Finalize();
+    kb.FormRectangularSystemMatrix(empty, empty, Hk);
+    pKvz_ = std::make_unique<HypreParMatrix>(*Hk.As<HypreParMatrix>());
+  }
+  op_Bn_ = pBn_.get();
+  op_Mz_ = pMz_.get();
+  op_Kvz_ = pKvz_.get();
+  op_Pb_ = pPb_.get();
+
+  // Poisson blocks per region and the DtN fold.
+  std::unique_ptr<HypreParMatrix> K22, K33, M22, M33;
+  {
+    OperatorHandle H(Operator::Hypre_ParCSR), Hm(Operator::Hypre_ParCSR);
+    ParBilinearForm k(pfes_zo_);
+    k.AddDomainIntegrator(new TransformedDiffusionIntegrator(map));
+    k.Assemble();
+    k.Finalize();
+    k.FormSystemMatrix(empty, H);
+    K22 = std::make_unique<HypreParMatrix>(*H.As<HypreParMatrix>());
+    *K22 *= 1.0 / four_pi_G_;
+    ParBilinearForm m(pfes_zo_);
+    m.AddDomainIntegrator(new MassIntegrator());
+    m.Assemble();
+    m.Finalize();
+    m.FormSystemMatrix(empty, Hm);
+    M22 = std::make_unique<HypreParMatrix>(*Hm.As<HypreParMatrix>());
+  }
+  {
+    OperatorHandle H(Operator::Hypre_ParCSR), Hm(Operator::Hypre_ParCSR);
+    ParBilinearForm k(pshadow_zf);
+    k.AddDomainIntegrator(new TransformedDiffusionIntegrator(map));
+    k.Assemble();
+    k.Finalize();
+    k.FormSystemMatrix(empty, H);
+    K33 = std::make_unique<HypreParMatrix>(*H.As<HypreParMatrix>());
+    *K33 *= 1.0 / four_pi_G_;
+    ParBilinearForm m(pshadow_zf);
+    m.AddDomainIntegrator(new MassIntegrator());
+    m.Assemble();
+    m.Finalize();
+    m.FormSystemMatrix(empty, Hm);
+    M33 = std::make_unique<HypreParMatrix>(*Hm.As<HypreParMatrix>());
+  }
+  dtn_fold_ = std::make_unique<RAPOperator>(*pPzo_, *dtn_op_, *pPzo_);
+
+  // The fluid gauge penalty.
+  {
+    OperatorHandle H(Operator::Hypre_ParCSR);
+    ConstantCoefficient eps_c(fluid_gauge_eps_);
+    ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    ParBilinearForm qf(pfes_f_);
+    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    qf.Assemble();
+    qf.Finalize();
+    qf.FormSystemMatrix(empty, H);
+    pQf_ = std::make_unique<HypreParMatrix>(*H.As<HypreParMatrix>());
+  }
+  op_Qf_ = pQf_.get();
+
+  // Physical blocks.
+  std::unique_ptr<HypreParMatrix> A00(
+      new HypreParMatrix(*A.As<HypreParMatrix>()));
+  if (pext_EtGE_) {
+    A00.reset(mfem::Add(1.0, *A00, 1.0, *pext_EtGE_));
+  }
+  A00.reset(mfem::Add(1.0, *A00, 1.0, *B.ss));
+  A00.reset(mfem::Add(1.0, *A00, 1.0, *GS.ss));
+  std::unique_ptr<HypreParMatrix> A10(mfem::Add(1.0, *B.fs, 1.0, *GS.fs));
+  std::unique_ptr<HypreParMatrix> A01(A10->Transpose());
+  std::unique_ptr<HypreParMatrix> A11(
+      mfem::Add(1.0, *Aff.As<HypreParMatrix>(), 1.0,
+                *Gf.As<HypreParMatrix>()));
+  A11.reset(mfem::Add(1.0, *A11, 1.0, *B.ff));
+  A11.reset(mfem::Add(1.0, *A11, 1.0, *GS.ff));
+  const HypreParMatrix& C_solid =
+      pext_C_total_ ? *pext_C_total_ : *C_.As<HypreParMatrix>();
+  std::unique_ptr<HypreParMatrix> A02(
+      ParMult(const_cast<HypreParMatrix*>(&C_solid), pPzo_.get()));
+  {
+    std::unique_ptr<HypreParMatrix> t(ParMult(GS.vz_ss.get(), pPos_.get()));
+    A02.reset(mfem::Add(1.0, *A02, 1.0, *t));
+  }
+  std::unique_ptr<HypreParMatrix> A03(
+      new HypreParMatrix(*GS.vz_sf));
+  std::unique_ptr<HypreParMatrix> A12(ParMult(GS.vz_fs.get(), pPos_.get()));
+  std::unique_ptr<HypreParMatrix> A13(
+      mfem::Add(1.0, *Cf.As<HypreParMatrix>(), 1.0, *GS.vz_ff));
+
+  // Penalty folds.
+  std::unique_ptr<HypreParMatrix> BnJ(ParMult(pBn_.get(), pJ_.get()));
+  std::unique_ptr<HypreParMatrix> JtBnJ(mfem::RAP(pBn_.get(), pJ_.get()));
+  std::unique_ptr<HypreParMatrix> PbJ(ParMult(pPb_.get(), pJ_.get()));
+  std::unique_ptr<HypreParMatrix> JtPbJ(mfem::RAP(pPb_.get(), pJ_.get()));
+  std::unique_ptr<HypreParMatrix> KvzPos(ParMult(pKvz_.get(), pPos_.get()));
+  std::unique_ptr<HypreParMatrix> KvzJz(ParMult(pKvz_.get(), pJzsf_.get()));
+  std::unique_ptr<HypreParMatrix> JtKvzPos(
+      ParMult(pJt_.get(), KvzPos.get()));
+  std::unique_ptr<HypreParMatrix> JtKvzJz(ParMult(pJt_.get(), KvzJz.get()));
+  std::unique_ptr<HypreParMatrix> MzPos(ParMult(pMz_.get(), pPos_.get()));
+  std::unique_ptr<HypreParMatrix> MzJz(ParMult(pMz_.get(), pJzsf_.get()));
+  std::unique_ptr<HypreParMatrix> PosMzPos(
+      ParMult(pPosT_.get(), MzPos.get()));
+  std::unique_ptr<HypreParMatrix> PosMzJz(ParMult(pPosT_.get(), MzJz.get()));
+  std::unique_ptr<HypreParMatrix> JzMzJz(ParMult(pJzsfT_.get(), MzJz.get()));
+
+  auto set = [&](int i, int j, std::unique_ptr<HypreParMatrix> m) {
+    pbzS_[4 * i + j] = std::move(m);
+  };
+  {
+    std::unique_ptr<HypreParMatrix> s(mfem::Add(1.0, *A00, theta_, *pBn_));
+    s.reset(mfem::Add(1.0, *s, theta_zeta_, *pPb_));
+    set(0, 0, std::move(s));
+  }
+  {
+    std::unique_ptr<HypreParMatrix> s(mfem::Add(1.0, *A01, -theta_, *BnJ));
+    s.reset(mfem::Add(1.0, *s, -theta_zeta_, *PbJ));
+    set(0, 1, std::move(s));
+    set(1, 0, std::unique_ptr<HypreParMatrix>(pbzS_[1]->Transpose()));
+  }
+  {
+    std::unique_ptr<HypreParMatrix> s(mfem::Add(1.0, *A11, theta_, *JtBnJ));
+    s.reset(mfem::Add(1.0, *s, theta_zeta_, *JtPbJ));
+    s.reset(mfem::Add(1.0, *s, 1.0, *pQf_));
+    set(1, 1, std::move(s));
+  }
+  set(0, 2, std::unique_ptr<HypreParMatrix>(
+                mfem::Add(1.0, *A02, -theta_zeta_, *KvzPos)));
+  set(0, 3, std::unique_ptr<HypreParMatrix>(
+                mfem::Add(1.0, *A03, theta_zeta_, *KvzJz)));
+  set(1, 2, std::unique_ptr<HypreParMatrix>(
+                mfem::Add(1.0, *A12, theta_zeta_, *JtKvzPos)));
+  set(1, 3, std::unique_ptr<HypreParMatrix>(
+                mfem::Add(1.0, *A13, -theta_zeta_, *JtKvzJz)));
+  set(2, 0, std::unique_ptr<HypreParMatrix>(pbzS_[2]->Transpose()));
+  set(3, 0, std::unique_ptr<HypreParMatrix>(pbzS_[3]->Transpose()));
+  set(2, 1, std::unique_ptr<HypreParMatrix>(pbzS_[6]->Transpose()));
+  set(3, 1, std::unique_ptr<HypreParMatrix>(pbzS_[7]->Transpose()));
+  set(2, 2, std::unique_ptr<HypreParMatrix>(
+                mfem::Add(1.0, *K22, theta_zeta_, *PosMzPos)));
+  {
+    auto s = std::make_unique<HypreParMatrix>(*PosMzJz);
+    *s *= -theta_zeta_;
+    set(2, 3, std::move(s));
+    set(3, 2, std::unique_ptr<HypreParMatrix>(pbzS_[11]->Transpose()));
+  }
+  set(3, 3, std::unique_ptr<HypreParMatrix>(
+                mfem::Add(1.0, *K33, theta_zeta_, *JzMzJz)));
+
+  S22_op_ = std::make_unique<SumOperator>(pbzS_[10].get(), 1.0,
+                                          dtn_fold_.get(),
+                                          1.0 / four_pi_G_, false, false);
+
+  pprec22_mat_.reset(
+      mfem::Add(1.0, *pbzS_[10], shift_ / four_pi_G_, *M22));
+  pprec33_mat_.reset(
+      mfem::Add(1.0, *pbzS_[15], shift_ / four_pi_G_, *M33));
+  {
+    auto amg = std::make_unique<HypreBoomerAMG>(*pprec22_mat_);
+    amg->SetPrintLevel(0);
+    prec22_ = std::move(amg);
+    auto amg3 = std::make_unique<HypreBoomerAMG>(*pprec33_mat_);
+    amg3->SetPrintLevel(0);
+    prec33_ = std::move(amg3);
+    auto amg1 = std::make_unique<HypreBoomerAMG>(*pbzS_[5]);
+    amg1->SetSystemsOptions(dim_);
+    amg1->SetPrintLevel(0);
+    prec11_ = std::move(amg1);
+  }
+}
+#endif
+
+void LinearQuasiStaticSlipReferentialProblem::SetupSolverBroken(
+    OperatorHandle& A) {
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    AssembleBrokenBlocksPar(A);
+  } else
+#endif
+  {
+    AssembleBrokenBlocks(A);
+  }
+
+  block_op4_ = std::make_unique<BlockOperator>(offsets4_);
+  for (int i = 0; i < 4; i++) {
+    for (int j = 0; j < 4; j++) {
+      const Operator* op = nullptr;
+      if (i == 2 && j == 2) {
+        op = S22_op_.get();
+      } else {
+#ifdef MFEM_USE_MPI
+        if (pfes_) {
+          op = pbzS_[4 * i + j].get();
+        } else
+#endif
+        {
+          op = bzS_[4 * i + j].get();
+        }
+      }
+      block_op4_->SetBlock(i, j, const_cast<Operator*>(op));
+    }
+  }
+
+  {
+    OperatorHandle S00h;
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      S00h.Reset(pbzS_[0].get(), false);
+    } else
+#endif
+    {
+      S00h.Reset(bzS_[0].get(), false);
+    }
+    prec_stale_ = true;
+    SetupDefaultPreconditioner(S00h);
+  }
+  block_prec4_ = std::make_unique<BlockDiagonalPreconditioner>(offsets4_);
+  block_prec4_->SetDiagonalBlock(0, prec_.get());
+  block_prec4_->SetDiagonalBlock(1, prec11_.get());
+  block_prec4_->SetDiagonalBlock(2, prec22_.get());
+  block_prec4_->SetDiagonalBlock(3, prec33_.get());
+
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    minres4_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+  } else
+#endif
+  {
+    minres4_ = std::make_unique<MINRESSolver>();
+  }
+  projected_op4_ =
+      std::make_unique<ProjectedOperator>(*block_op4_, *projector4_);
+  minres4_->SetOperator(*projected_op4_);
+  projected_prec4_ = std::make_unique<ProjectedSolver>(*projector4_);
+  projected_prec4_->SetSolver(*block_prec4_);
+  minres4_->SetPreconditioner(*projected_prec4_);
+  minres4_->SetRelTol(rel_tol_);
+  minres4_->SetAbsTol(0.0);
+  minres4_->SetMaxIter(10000);
+  minres4_->SetPrintLevel(print_level_);
+  minres4_->iterative_mode = true;
+
+  projected4_ = std::make_unique<ProjectedSolver>(*projector4_);
+  projected4_->SetSolver(*minres4_);
+  projected4_->iterative_mode = true;
+
+  if (!X4_ || X4_->Size() != offsets4_.Last()) {
+    X4_ = std::make_unique<BlockVector>(offsets4_);
+    *X4_ = 0.0;
+  }
+  B4_ = std::make_unique<BlockVector>(offsets4_);
+  w_al4_ = std::make_unique<BlockVector>(offsets4_);
+  *w_al4_ = 0.0;
+}
+
+bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
+    const Vector& B, Vector& X) {
+  B4_->GetBlock(0) = B;
+  B4_->GetBlock(1) = 0.0;
+  op_Pzo_->MultTranspose(B_zeta_, B4_->GetBlock(2));
+  B4_->GetBlock(3) = 0.0;
+  if (dim_ == 2) {
+    // Re-balance against the joint constant in the broken basis.
+    const real_t mass = Dot(B4_->GetBlock(2), ones_o_) +
+                        Dot(B4_->GetBlock(3), ones_f_);
+    B4_->GetBlock(2).Add(-mass / outer_length_o_, L_outer_o_);
+  }
+  jump_history_.clear();
+  zeta_jump_history_.clear();
+  *w_al4_ = 0.0;
+  if (std::sqrt(Dot(*B4_, *B4_)) == 0.0) {
+    *X4_ = 0.0;
+    X = 0.0;
+    Zeta_true_ = 0.0;
+    *u_f_ = 0.0;
+    *zeta_o_gf_ = 0.0;
+    *zeta_f_gf_ = 0.0;
+    DistributePotential(Zeta_true_);
+    return true;
+  }
+
+  // Augmented-Lagrangian iterations for BOTH interface constraints
+  // (normal jump and scalar jump), interleaved with the Tikhonov
+  // refinement of the fluid gauge.
+  bool ok = true;
+  int outer = 0;
+  BlockVector rhs(offsets4_);
+  Vector js(offsets4_[1]), tmp_s(offsets4_[1]), Bjs(offsets4_[1]);
+  Vector gU(offsets4_[1]);
+  Vector tmp_f(fes_f_->GetTrueVSize());
+  const int nzs = op_Mz_->Height();
+  Vector Z(nzs), rz(nzs), tmp_z(nzs);
+  Vector tmp_zo(fes_zo_->GetTrueVSize());
+  Vector tmp_zf(shadow_zeta_fluid_->GetTrueVSize());
+  for (int k = 0; k < al_iterations_; k++) {
+    rhs = *B4_;
+    rhs -= *w_al4_;
+    op_Qf_->AddMult(X4_->GetBlock(1), rhs.GetBlock(1));
+    projected4_->Mult(rhs, *X4_);
+    ok = minres4_->GetConverged() && ok;
+    outer += minres4_->GetNumIterations();
+
+    // Normal jump: js = u_s - J u_f.
+    js = X4_->GetBlock(0);
+    op_J_->Mult(X4_->GetBlock(1), tmp_s);
+    js -= tmp_s;
+    op_Bn_->Mult(js, Bjs);
+    jump_history_.push_back(std::sqrt(std::abs(Dot(js, Bjs))));
+    w_al4_->GetBlock(0).Add(theta_, Bjs);
+    op_Jt_->Mult(Bjs, tmp_f);
+    w_al4_->GetBlock(1).Add(-theta_, tmp_f);
+
+    // Scalar jump: Z = Pos zo - Jz zf, U = js; the constraint energy
+    // (c, c) = Z^T Mz Z - 2 U^T Kvz Z + U^T Pb U and its gradients.
+    op_Pos_->Mult(X4_->GetBlock(2), Z);
+    op_Jzsf_->Mult(X4_->GetBlock(3), tmp_z);
+    Z -= tmp_z;
+    op_Mz_->Mult(Z, rz);
+    real_t cc = Dot(Z, rz);
+    op_Kvz_->Mult(Z, gU);  // Kvz Z (solid-u dual)
+    cc -= 2.0 * Dot(js, gU);
+    op_Pb_->Mult(js, tmp_s);
+    cc += Dot(js, tmp_s);
+    zeta_jump_history_.push_back(std::sqrt(std::abs(cc)));
+    // gU := Pb U - Kvz Z; rz := Mz Z - Kvz^T U.
+    gU *= -1.0;
+    gU += tmp_s;
+    op_Kvz_->MultTranspose(js, tmp_z);
+    rz -= tmp_z;
+    w_al4_->GetBlock(0).Add(theta_zeta_, gU);
+    op_Jt_->Mult(gU, tmp_f);
+    w_al4_->GetBlock(1).Add(-theta_zeta_, tmp_f);
+    op_PosT_->Mult(rz, tmp_zo);
+    w_al4_->GetBlock(2).Add(theta_zeta_, tmp_zo);
+    op_JzsfT_->Mult(rz, tmp_zf);
+    w_al4_->GetBlock(3).Add(-theta_zeta_, tmp_zf);
+  }
+  outer_its_ = outer;
+  NoteIterations(outer);
+
+  X = X4_->GetBlock(0);
+  u_f_->SetFromTrueDofs(X4_->GetBlock(1));
+  zeta_o_gf_->SetFromTrueDofs(X4_->GetBlock(2));
+  zeta_f_gf_->SetFromTrueDofs(X4_->GetBlock(3));
+  DistributeBrokenPotential();
+  return ok;
+}
+
+void LinearQuasiStaticSlipReferentialProblem::DistributeBrokenPotential() {
+  // Compose the ball potential for the observables: fluid first, outer
+  // second, so the (double-valued) interface trace takes the solid-side
+  // value -- zeta1 is extension- and organisation-invariant only on the
+  // solid region anyway.
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto* zf = dynamic_cast<ParGridFunction*>(zeta_f_gf_.get());
+    auto* zo = dynamic_cast<ParGridFunction*>(zeta_o_gf_.get());
+    auto* zb = dynamic_cast<ParGridFunction*>(zeta_.get());
+    MFEM_VERIFY(zf && zo && zb, "DistributeBrokenPotential: parallel grids.");
+    ParSubMesh::Transfer(*zf, *zb);
+    ParSubMesh::Transfer(*zo, *zb);
+  } else
+#endif
+  {
+    SubMesh::Transfer(*zeta_f_gf_, *zeta_);
+    SubMesh::Transfer(*zeta_o_gf_, *zeta_);
+  }
+  zeta_->GetTrueDofs(Zeta_true_);
+  DistributePotential(Zeta_true_);
+}
+
 void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
     OperatorHandle& A) {
   MFEM_VERIFY(Ef_,
@@ -2396,6 +3351,10 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
 #endif
 
 void LinearQuasiStaticSlipReferentialProblem::SetupSolver(OperatorHandle& A) {
+  if (broken_zeta_) {
+    SetupSolverBroken(A);
+    return;
+  }
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     AssembleSlipBlocksPar(A);
@@ -2473,6 +3432,9 @@ void LinearQuasiStaticSlipReferentialProblem::SetupSolver(OperatorHandle& A) {
 
 bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
     const Vector& B, Vector& X) {
+  if (broken_zeta_) {
+    return SolveLinearSystemBroken(B, X);
+  }
   B3_->GetBlock(0) = B;
   B3_->GetBlock(1) = 0.0;
   B3_->GetBlock(2) = B_zeta_;
@@ -2526,6 +3488,9 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
 
 real_t LinearQuasiStaticSlipReferentialProblem::BlockNullPairResidual(
     const Vector& us_true, const Vector& uf_true) {
+  MFEM_VERIFY(!broken_zeta_,
+              "BlockNullPairResidual: not available in the broken-zeta "
+              "organisation.");
   EnsureOperator();
   real_t a_max = 0.0;
 #ifdef MFEM_USE_MPI
@@ -2558,6 +3523,9 @@ real_t LinearQuasiStaticSlipReferentialProblem::BlockNullPairResidual(
 
 std::vector<real_t>
 LinearQuasiStaticSlipReferentialProblem::SlipRigidPairResiduals() {
+  MFEM_VERIFY(!broken_zeta_,
+              "SlipRigidPairResiduals: not available in the broken-zeta "
+              "organisation.");
   EnsureOperator();
   std::vector<real_t> out;
   BlockVector nb(offsets3_);

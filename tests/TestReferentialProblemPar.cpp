@@ -275,6 +275,121 @@ void RunSlipCase(int order, const std::string& label) {
         label + " slip potential norm");
 }
 
+// Serial-vs-parallel agreement of the broken-zeta slip solver: the
+// four-block system with per-region potentials, the G_Sigma blocks and
+// both interface constraints (no fluid extension anywhere) must build
+// the same discrete system on 1 and N ranks.
+void RunBrokenSlipCase(int order, const std::string& label) {
+  const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  const double r_cmb = 3483.0 / 6371.0;
+  Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3}),
+      outer_attr({2, 3});
+
+  Vector bb_min, bb_max;
+  smesh.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+
+  RadialHydrostaticBackground bg(
+      dim, [](double) { return kRho; }, [](double) { return kKappa; },
+      [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+  FunctionCoefficient sigma(SurfaceLoad);
+  ConstantCoefficient mu_gauge(kKappa);
+
+  auto interface_marker = [r_cmb](Mesh& solid) {
+    Array<int> marker(solid.bdr_attributes.Max());
+    marker = 0;
+    for (int i = 0; i < solid.GetNBE(); i++) {
+      auto* tr = solid.GetBdrElementTransformation(i);
+      Vector c(solid.Dimension());
+      tr->Transform(Geometries.GetCenter(solid.GetBdrElementGeometry(i)), c);
+      const double r = c.Norml2();
+      if (r > 0.9 * r_cmb && r < 1.1 * r_cmb) {
+        marker[solid.GetBdrAttribute(i) - 1] = 1;
+      }
+    }
+    return marker;
+  };
+  auto surface_marker = [](Mesh& solid) {
+    Array<int> marker(solid.bdr_attributes.Max());
+    marker = 0;
+    for (int i = 0; i < solid.GetNBE(); i++) {
+      auto* tr = solid.GetBdrElementTransformation(i);
+      Vector c(solid.Dimension());
+      tr->Transform(Geometries.GetCenter(solid.GetBdrElementGeometry(i)), c);
+      if (c.Norml2() > 0.9) {
+        marker[solid.GetBdrAttribute(i) - 1] = 1;
+      }
+    }
+    return marker;
+  };
+
+  // Serial reference on every rank.
+  double us_ref = 0.0, uf_ref = 0.0, z_ref = 0.0;
+  {
+    SubMesh solid(SubMesh::CreateFromDomain(smesh, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(smesh, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(smesh, buffer_attr));
+    SubMesh outer(SubMesh::CreateFromDomain(smesh, outer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&smesh, &fec);
+    auto marker = interface_marker(solid);
+    LinearQuasiStaticSlipReferentialProblem problem(
+        &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
+        marker, kG, kDtNDegree);
+    auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);
+    problem.SetPrescribedVacuumExtension(fes_buffer, *Evac);
+    problem.SetFluidGauge(mu_gauge, 1e-2);
+    problem.SetConstraint(1e2, 6);
+    auto fes_zo = SubMeshDofInjection::MakeShadowSpace(fes_zeta, outer);
+    problem.EnableBrokenZeta(fes_zo.get(), 1e2);
+    auto surface = surface_marker(solid);
+    problem.SetSurfaceLoad(sigma, surface);
+    problem.SetRelTol(1e-11);
+    problem.AssembleForce(0.0);
+    Check(problem.Solve() ? 0.0 : 1.0, 0.0,
+          label + " serial broken-zeta solve");
+    us_ref = L2Norm(problem.Displacement());
+    uf_ref = L2Norm(problem.FluidDisplacement());
+    z_ref = L2Norm(problem.Potential());
+  }
+
+  // Parallel problem.
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh solid(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  ParSubMesh fluid(ParSubMesh::CreateFromDomain(pmesh, fluid_attr));
+  ParSubMesh buffer(ParSubMesh::CreateFromDomain(pmesh, buffer_attr));
+  ParSubMesh outer(ParSubMesh::CreateFromDomain(pmesh, outer_attr));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
+  ParFiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&pmesh, &fec);
+  auto marker = interface_marker(solid);
+  LinearQuasiStaticSlipReferentialProblem problem(
+      &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
+      marker, kG, kDtNDegree);
+  auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);
+  problem.SetPrescribedVacuumExtension(fes_buffer, *Evac);
+  problem.SetFluidGauge(mu_gauge, 1e-2);
+  problem.SetConstraint(1e2, 6);
+  auto fes_zo = SubMeshDofInjection::MakeShadowSpace(fes_zeta, outer);
+  problem.EnableBrokenZeta(fes_zo.get(), 1e2);
+  auto surface = surface_marker(solid);
+  FunctionCoefficient sigma2(SurfaceLoad);
+  problem.SetSurfaceLoad(sigma2, surface);
+  problem.SetRelTol(1e-11);
+  problem.AssembleForce(0.0);
+  Check(problem.Solve() ? 0.0 : 1.0, 0.0,
+        label + " parallel broken-zeta solve");
+  Check(RelErr(L2Norm(problem.Displacement()), us_ref), 1e-5,
+        label + " broken-zeta solid displacement norm");
+  Check(RelErr(L2Norm(problem.FluidDisplacement()), uf_ref), 1e-4,
+        label + " broken-zeta fluid displacement norm");
+  Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
+        label + " broken-zeta potential norm");
+}
+
 // Serial-vs-parallel agreement of the harmonic buffer extension of a
 // mapping that is non-trivial on the physical surface.
 void RunHarmonicExtensionCase() {
@@ -350,6 +465,8 @@ int main(int argc, char* argv[]) {
   RunCase(2, "o2");
   RunSlipCase(1, "slip o1");
   RunSlipCase(2, "slip o2");
+  RunBrokenSlipCase(1, "broken o1");
+  RunBrokenSlipCase(2, "broken o2");
   RunHarmonicExtensionCase();
   RunEquilibriumStressCase();
 
