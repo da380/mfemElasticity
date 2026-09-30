@@ -42,36 +42,50 @@ EPS = 0.05     # amplitude of the shape, relative to the radius
 BETA = 0.5     # elliptical part relative to the oblate part
 BUFFER = 0.2   # thickness of the buffer shell relative to the body's radius
 
-SIZING = {2: UniformInterfaces(0.1, 0.2, 1.0),
-          3: UniformInterfaces(0.25, 0.5, 2.5)}
+SIZING = {2: (0.1, 0.2, 1.0), 3: (0.25, 0.5, 2.5)}
 
 
-def shape(r, theta, phi):
+def shape(r, theta, phi, eps=None, beta=None):
     """The radial displacement of the body, growing with the radius."""
+    eps = EPS if eps is None else eps
+    beta = BETA if beta is None else beta
     p2 = 0.5 * (3.0 * np.cos(theta) ** 2 - 1.0)
-    return EPS * r * (p2 + BETA * np.sin(theta) ** 2 * np.cos(2.0 * phi))
+    return eps * r * (p2 + beta * np.sin(theta) ** 2 * np.cos(2.0 * phi))
 
 
-def tapered_shape(r, theta, phi):
+def tapered_shape(r, theta, phi, eps=None, beta=None):
     """The same shape inside the body, tapered to zero across the buffer."""
     taper = np.clip((1.0 + BUFFER - r) / BUFFER, 0.0, 1.0) ** 2
-    return shape(np.minimum(r, 1.0), theta, phi) * taper
+    return shape(np.minimum(r, 1.0), theta, phi, eps, beta) * taper
 
 
 def build(dim: int, buffer: bool, args) -> None:
+    eps, beta = args.eps, args.beta
+    scale = args.scale
+    sizing = UniformInterfaces(*(scale * v for v in SIZING[dim]))
+
+    def my_shape(r, theta, phi):
+        return shape(r, theta, phi, eps, beta)
+
+    def my_tapered(r, theta, phi):
+        return tapered_shape(r, theta, phi, eps, beta)
+
     body = Geometry(Skeleton([0.0, 1.0]),
                     layer_names=["body"], interface_names=["surface"])
+    suffix = args.name
     if buffer:
         geometry = body.stretched(
-            CallableDisplacement(tapered_shape, knots=[1.0], name="tapered shape"))
-        spec = MeshSpec(geometry, SIZING[dim], dimension=dim, order=2,
+            CallableDisplacement(my_tapered, knots=[1.0],
+                                 name="tapered shape"))
+        spec = MeshSpec(geometry, sizing, dimension=dim, order=2,
                         shells=[Shell(ratio=BUFFER, name="buffer")],
                         outer_boundary="spherical")
-        name = f"aspherical_buffer_{dim}d"
+        name = f"aspherical_buffer_{dim}d{suffix}"
     else:
-        geometry = body.stretched(CallableDisplacement(shape, name="shape"))
-        spec = MeshSpec(geometry, SIZING[dim], dimension=dim, order=2)
-        name = f"aspherical_{dim}d"
+        geometry = body.stretched(CallableDisplacement(my_shape,
+                                                       name="shape"))
+        spec = MeshSpec(geometry, sizing, dimension=dim, order=2)
+        name = f"aspherical_{dim}d{suffix}"
 
     # The reference (spherical) mesh, then the MFEM file with the nodes moved.
     reference = build_layered_mesh(spec, args.out / f"{name}_reference",
@@ -93,6 +107,15 @@ def main() -> None:
                    help="add a buffer shell, with the shape tapered off across it")
     p.add_argument("--all", action="store_true",
                    help="build all four meshes")
+    p.add_argument("--eps", type=float, default=EPS,
+                   help="amplitude of the shape (default %(default)s)")
+    p.add_argument("--beta", type=float, default=BETA,
+                   help="elliptical part (default %(default)s)")
+    p.add_argument("--scale", type=float, default=1.0,
+                   help="scale factor on the element sizes (smaller is "
+                        "finer)")
+    p.add_argument("--name", default="",
+                   help="suffix on the file names, for parameter sweeps")
     args = p.parse_args()
 
     if args.all:

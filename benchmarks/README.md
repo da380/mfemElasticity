@@ -126,6 +126,25 @@ mpiexec -np 8 ./relabelled_identity -c runs/two_solid/h0.3/case.json \
   case with `radial_profiles.txt` (re-make older cases); the mapped
   runs' `spurious` column now measures lateral leakage, a free check
   that the lateral machinery cancels exactly.
+- `aspherical_reference` (exact F, independent mesh): the
+  independently-meshed leg — the same spherical physics described from
+  an ASPHERICAL reference body whose mesh comes from its own generator
+  (`meshes/aspherical_body.py`, now parametrised by `--eps/--beta/
+  --scale/--name` for sweeps), with phi_e the exact inverse of the
+  generator's radial stretch: the mapping is NOT the identity on the
+  surface, the load carries its Nanson area factor, and the solution is
+  compared as fields against the pyslfp radial solutions composed
+  through the map (relative L2 of u over the body and of the Eulerian
+  phi1 = zeta1 - b.u; degree one skipped). Single solid layer for now
+  (the strict regime). Measured: the errors match the spherical
+  campaign at comparable resolution, are INDEPENDENT of the shape
+  amplitude (eps 0.05 vs 0.02 identical) and fall with refinement — the
+  aspherical machinery adds nothing measurable.
+
+      mpiexec -np 8 ./aspherical_reference \
+          -m ../../data/aspherical_buffer_3d.mesh \
+          -c runs/homogeneous/h0.3/case.json -o 2
+
 - `relabelled_identity` (interpolated F): the discrete
   change-of-variables identity at the level of the full coupled SOLVE —
   the mapped assembly on the reference mesh against the standard

@@ -61,7 +61,7 @@ endfunction()
 # --- Love numbers -----------------------------------------------------------
 
 foreach(driver love_benchmark field_benchmark partition_case
-        relabelled_identity)
+        relabelled_identity aspherical_reference)
     add_executable(${driver} love_numbers/${driver}.cpp)
     target_link_libraries(${driver} mfemElasticity)
     set_target_properties(${driver} PROPERTIES
