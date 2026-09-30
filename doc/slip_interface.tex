@@ -744,10 +744,23 @@ $\varpi^{(1)}$ (the mortar variable), not $\pi$ --- the
 ``multiplier $\to \pi$'' consistency diagnostic of \S\ref{sec:first}
 belongs to a nonlinear/first-variation AL solve, or to checking a
 generated background's traction condition $P_s\bN = -\pi\bnu$
-directly. Remaining: the solution-level reductions (sphere
-$\to$ Dahlen class; $\pi = 0$ $\to$ the sliding tests), the mapped
-($\varphi_e \neq \mathrm{id}$) discrete gravity pieces (the solver
-asserts nothing but currently assembles the mismatch pieces in their
-$\varphi_e = \mathrm{id}$ form), and the broken-$\zeta$ variant.
+directly. The \textbf{solution-level reductions} of
+\S\ref{sec:collect} both pass (same test file): (a) on the spherical
+hydrostatic two-layer background the slip solution reproduces the
+\emph{Dahlen-class} solution (fluid displacement eliminated, F1--F3
+interface terms) under the change of variables $\zeta^1 = \varphi^1 +
+u\cdot\nabla\Phi_0$, to $6\times10^{-3}$ in the solid displacement and
+$5\times10^{-3}$ in the potential at order 2 with a pure degree-2 load
+(degree 0 excluded: the Dahlen fluid treatment's known $l=0$ gap is on
+the other side of that comparison) --- a genuinely two-sided check,
+since the two formulations share no interface machinery; (b) on a
+massless background ($\pi = 0$, gravity off) the solver reduces to the
+gravity-free sliding interface: the potential decouples to zero and
+the solid displacement matches the condensed rank-one cavity reference
+to $2\times10^{-5}$ (the same discrete sliding system). Remaining: the
+mapped ($\varphi_e \neq \mathrm{id}$) discrete gravity pieces (the
+solver asserts nothing but currently assembles the mismatch pieces in
+their $\varphi_e = \mathrm{id}$ form), and the broken-$\zeta$ variant
+with the head-to-head comparison.
 
 \end{document}

@@ -98,6 +98,24 @@ double SurfaceSigma(const Vector& x) {
   return 0.02 * (1.0 + (2.0 * c * c - 1.0));
 }
 
+// Pure degree-2 surface load (no degree-0 part): the Dahlen reduction
+// must avoid l = 0, where the Dahlen fluid treatment has its known gap
+// (the gauged family, and hence the slip solver, sits on the other side
+// of it).
+double SurfaceSigmaDegree2(const Vector& x) {
+  const double r = x.Norml2();
+  const double c = x[1] / r;
+  return 0.02 * (2.0 * c * c - 1.0);
+}
+
+// Radial pressure traction of the gravity-free sliding tests.
+void PressureTraction(const Vector& x, Vector& f) {
+  const double r = x.Norml2();
+  const double c = x[1] / r;
+  f = x;
+  f *= -0.01 * (1.0 + (2.0 * c * c - 1.0)) / r;
+}
+
 }  // namespace
 
 TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
@@ -245,6 +263,178 @@ TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
               << "\n";
     EXPECT_LT(rel_u, 1e-2);
     EXPECT_LT(rel_z, 1e-2);
+  }
+}
+
+// Unit A3, reduction (a): on the spherical hydrostatic two-layer
+// background the slip solver must reproduce the Eulerian Dahlen-class
+// solution (fluid displacement eliminated, F1-F3 interface terms) under
+// the change of variables zeta1 = phi1 + u.grad Phi0. A pure degree-2
+// load keeps the comparison away from the Dahlen degree-0 gap. This is
+// a genuinely two-sided check: the two formulations share no interface
+// machinery.
+TEST(SlipProblem, ReducesToDahlenOnSphere) {
+  const int order = 2;
+  Setting s(order);
+  const int dim = 2;
+
+  auto interface = RadialBdrMarker(*s.solid, 0.9 * kRc, 1.1 * kRc);
+  auto surface_s = RadialBdrMarker(*s.solid, 0.9, 1.1);
+  FunctionCoefficient sigma(SurfaceSigmaDegree2);
+  ConstantCoefficient mu_gauge(kKappa);
+
+  // The slipping three-block problem.
+  LinearQuasiStaticSlipReferentialProblem slip(
+      s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
+      s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
+  auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
+  slip.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
+  auto Ef = NewRadialFluidExtension(*s.fes_s, *s.fes_f, kRc);
+  slip.SetFluidExtension(*Ef);
+  slip.SetFluidGauge(mu_gauge, kEps);
+  slip.SetConstraint(kTheta, kALIterations);
+  slip.SetSurfaceLoad(sigma, surface_s);
+  slip.SetRelTol(1e-10);
+  slip.AssembleForce(0.0);
+  ASSERT_TRUE(slip.Solve());
+
+  // The Dahlen path: displacement on the mantle only, the fluid core as
+  // a FluidRegion (uniform density, zero gradient), seismological
+  // moduli.
+  FiniteElementSpace fes_u_d(s.solid.get(), s.fec.get(), dim);
+  FiniteElementSpace fes_phi(s.parent.get(), s.fec.get());
+  ConstantCoefficient kappa_c(kKappa), mu_c(kMu), rho_c(kRho), zero(0.0);
+  IsotropicElasticRheology e_rheology(dim, kappa_c, mu_c);
+  FluidRegion core;
+  core.attributes = Array<int>({1});
+  core.density = &rho_c;
+  core.density_gradient = &zero;
+  core.interface_marker = interface;
+  std::vector<FluidRegion> fluids{core};
+  LinearQuasiStaticSelfGravitatingProblem dahlen(
+      &fes_u_d, &fes_phi, e_rheology, rho_c, kG, kDtNDegree, nullptr, fluids);
+  FunctionCoefficient sigma_d(SurfaceSigmaDegree2);
+  dahlen.SetSurfaceLoad(sigma_d, surface_s);
+  dahlen.SetRelTol(1e-10);
+  dahlen.AssembleForce(0.0);
+  ASSERT_TRUE(dahlen.Solve());
+
+  // Solid displacement, modulo rigid modes (same space layout).
+  {
+    Vector d(slip.Displacement());
+    d -= dahlen.Displacement();
+    auto proj = MakeRigidModeProjector(*s.fes_s);
+    proj->Project(d);
+    Vector ref(dahlen.Displacement());
+    proj->Project(ref);
+    const double rel = d.Norml2() / ref.Norml2();
+    std::cout << "solid displacement, slip vs Dahlen: " << rel << "\n";
+    EXPECT_LT(rel, 3e-2);
+  }
+
+  // Potential on the solid through the change of variables, modulo the
+  // 2-D constant.
+  {
+    VectorGridFunctionCoefficient u_c(&dahlen.Displacement());
+    InnerProductCoefficient advect(u_c, dahlen.BackgroundGravity());
+    GridFunctionCoefficient phi1(&dahlen.PotentialOnBody());
+    SumCoefficient zeta_expected(phi1, advect);
+    GridFunction d(slip.PotentialOnBody());
+    GridFunction z(d);
+    z.ProjectCoefficient(zeta_expected);
+    d -= z;
+    d -= d.Sum() / d.Size();
+    Vector ref(z);
+    ref -= ref.Sum() / ref.Size();
+    const double rel = d.Norml2() / ref.Norml2();
+    std::cout << "potential (change of variables), slip vs Dahlen: " << rel
+              << "\n";
+    EXPECT_LT(rel, 3e-2);
+  }
+}
+
+// Unit A3, reduction (b): with a massless background (pi = 0, gravity
+// off) the slip solver reduces to the gravity-free sliding interface,
+// whose solid solution has the condensed rank-one cavity form (the
+// TestSlidingInterface reference): the fluid enters only through its
+// bulk modulus against the interface volume change. The potential
+// decouples and stays zero.
+TEST(SlipProblem, PressureFreeReducesToSlidingCavity) {
+  const int order = 2;
+  Setting s(order);
+  const int dim = 2;
+
+  auto interface = RadialBdrMarker(*s.solid, 0.9 * kRc, 1.1 * kRc);
+  auto surface_s = RadialBdrMarker(*s.solid, 0.9, 1.1);
+  ConstantCoefficient mu_gauge(kKappa);
+  VectorFunctionCoefficient traction(dim, PressureTraction);
+
+  // Massless background: p0 = 0, zeta0 = 0, bare = seismological.
+  RadialHydrostaticBackground bg0(
+      dim, [](double) { return 0.0; }, [](double) { return kKappa; },
+      [](double r) { return r < kRc ? 0.0 : kMu; }, kG, 1.0);
+
+  LinearQuasiStaticSlipReferentialProblem slip(
+      s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), bg0.Rheology(),
+      bg0.Density(), bg0.Pressure(), interface, kG, kDtNDegree);
+  auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
+  slip.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
+  auto Ef = NewRadialFluidExtension(*s.fes_s, *s.fes_f, kRc);
+  slip.SetFluidExtension(*Ef);
+  slip.SetFluidGauge(mu_gauge, kEps);
+  slip.SetConstraint(kTheta, kALIterations);
+  slip.ExternalLoad().AddBoundaryIntegrator(
+      new VectorBoundaryLFIntegrator(traction), surface_s);
+  slip.SetRelTol(1e-10);
+  slip.AssembleForce(0.0);
+  ASSERT_TRUE(slip.Solve());
+
+  // The potential decouples (no density anywhere) and stays zero.
+  {
+    Vector z(slip.Potential());
+    const double uscale = slip.Displacement().Norml2();
+    EXPECT_LT(z.Norml2(), 1e-8 * uscale);
+  }
+
+  // Condensed rank-one cavity reference on the solid space (the
+  // TestSlidingInterface construction): cavity solve plus the fluid's
+  // bulk reaction kappa_f / V against the interface volume change.
+  {
+    ConstantCoefficient kappa_c(kKappa), mu_c(kMu), one(1.0);
+    IsotropicElasticRheology rheology(dim, kappa_c, mu_c);
+    LinearQuasiStaticTractionProblem cond(s.fes_s.get(), rheology, traction,
+                                          surface_s);
+    LinearForm b_lf(s.fes_s.get());
+    b_lf.AddBoundaryIntegrator(new VectorBoundaryFluxLFIntegrator(one),
+                               interface);
+    b_lf.Assemble();
+    double V = 0.0;
+    for (int i = 0; i < s.fluid->GetNE(); i++) {
+      V += s.fluid->GetElementVolume(i);
+    }
+    const double sig = kKappa / V;
+    cond.AssembleForce(0.0);
+    ASSERT_TRUE(cond.Solve());
+    GridFunction u_a(cond.Displacement());
+    cond.AssembleForce(0.0);
+    Vector delta(b_lf);
+    delta -= cond.ExternalLoad();
+    cond.AddForce(delta);
+    ASSERT_TRUE(cond.Solve());
+    GridFunction u_b(cond.Displacement());
+    GridFunction u_cond(u_a);
+    u_cond.Add(-sig * b_lf(u_a) / (1.0 + sig * b_lf(u_b)), u_b);
+
+    Vector d(slip.Displacement());
+    d -= u_cond;
+    auto proj = MakeRigidModeProjector(*s.fes_s);
+    proj->Project(d);
+    Vector ref(u_cond);
+    proj->Project(ref);
+    const double rel = d.Norml2() / ref.Norml2();
+    std::cout << "solid displacement, pi = 0 slip vs condensed cavity: "
+              << rel << "\n";
+    EXPECT_LT(rel, 1e-2);
   }
 }
 
