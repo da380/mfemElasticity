@@ -103,17 +103,31 @@ def main() -> None:
     p.add_argument("--lmin", type=int, default=0, help="lowest degree")
     p.add_argument("--dtn-degree", type=int, default=16)
     p.add_argument("--rel-tol", type=float, default=1e-10)
-    p.add_argument("--fluid", choices=("dahlen", "gauged"),
-                   default="dahlen",
-                   help="fluid treatment (gauged: doc/gauged_fluid.md); "
-                        "gauged results carry a _gauged suffix")
+    p.add_argument("--method", nargs="+",
+                   choices=("dahlen", "gauged", "referential", "slip",
+                            "slip_broken"),
+                   default=["dahlen"],
+                   help="the formulations to run, one results file each: "
+                        "dahlen (Eulerian, fluid eliminated), gauged "
+                        "(Eulerian, gauged fluid), referential (welded "
+                        "gauged referential), slip and slip_broken (the "
+                        "slipping interface, single-valued or broken "
+                        "zeta); non-dahlen results carry the method as a "
+                        "suffix")
+    p.add_argument("--fluid", choices=("dahlen", "gauged"), default=None,
+                   help="deprecated alias: --fluid gauged adds gauged to "
+                        "--method")
     p.add_argument("--cmb", choices=("full", "nomass", "uniform", "winkler"),
                    default="full",
                    help="Dahlen-path fluid-interface approximation "
                         "(doc/self_gravitation.md); non-full results carry "
                         "the choice as a suffix")
-    p.add_argument("--solver", type=int, default=1, choices=(0, 1),
-                   help="0: Schur-complement CG, 1: block MINRES")
+    p.add_argument("--solver", type=int, nargs="+", default=[1],
+                   choices=(0, 1),
+                   help="Eulerian linear solvers to run, one results file "
+                        "each: 0 Schur-complement CG (suffix _schur), 1 "
+                        "block MINRES; the referential methods have their "
+                        "own solver and ignore the choice")
     p.add_argument("--buffer", type=float, default=0.2,
                    help="thickness of the buffer shell over the radius")
     p.add_argument("--angular", type=float, default=0.3,
@@ -179,15 +193,25 @@ def main() -> None:
             if not ok:
                 failures.append(f"{case}: partition_case")
                 continue
-        for order in args.order:
-            gauged = args.fluid == "gauged"
-            suffix = "_gauged" if gauged else ""
-            if args.cmb != "full":
+        methods = list(args.method)
+        if args.fluid == "gauged" and "gauged" not in methods:
+            methods.append("gauged")
+        for order, method, solver in ((o, m, s) for o in args.order
+                                      for m in methods
+                                      for s in args.solver):
+            if method not in ("dahlen", "gauged") and solver != args.solver[0]:
+                continue  # the referential solvers ignore the choice
+            suffix = "" if method == "dahlen" else f"_{method}"
+            if args.cmb != "full" and method == "dahlen":
                 suffix += f"_{args.cmb}"
+            if solver == 0:
+                suffix += "_schur"
             common = ["-c", str(case / "case.json"), "-o", str(order),
-                      "-rt", f"{args.rel_tol:g}", "-s", str(args.solver),
-                      *(["-gauged"] if gauged else []),
-                      *(["-cmb", args.cmb] if args.cmb != "full" else []),
+                      "-rt", f"{args.rel_tol:g}", "-s", str(solver),
+                      "-method", method,
+                      *(["-cmb", args.cmb]
+                        if args.cmb != "full" and method == "dahlen"
+                        else []),
                       *shlex.split(args.program_args)]
             jobs = []
             if not args.field_only:
@@ -197,7 +221,8 @@ def main() -> None:
                     [str(programs / "love_benchmark"), *common,
                      "-lmin", str(args.lmin), "-lmax", str(args.lmax),
                      "-deg", str(max(args.dtn_degree, args.lmax))]))
-            if args.field or args.field_only:
+            if (args.field or args.field_only) and method in ("dahlen",
+                                                              "gauged"):
                 extra = (["-pv", str(case / f"paraview_o{order}{suffix}")]
                          if args.paraview else [])
                 jobs.append((

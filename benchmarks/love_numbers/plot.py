@@ -76,6 +76,15 @@ class Run:
     #: quantity -> {degree: value}
     values: dict[str, dict[int, float]]
     label: str
+    method: str = "dahlen"
+    #: a filename-style tag of the variant ("", "_gauged", "_slip_broken",
+    #: "_nomass", "_schur", combinations), telling runs of one (h, order)
+    #: apart
+    tag: str = ""
+    setup_seconds: float = 0.0
+    #: wall seconds and outer iterations of the LOAD solve, by degree
+    solve_seconds: dict[int, float] = None
+    iterations: dict[int, int] = None
 
 
 def style() -> None:
@@ -93,12 +102,20 @@ def style() -> None:
 
 def read_run(path: Path, *, fluid: bool) -> Run:
     r = json.loads(path.read_text())
-    gauged = r.get("fluid_treatment") == "gauged"
+    method = r.get("method",
+                   "gauged" if r.get("fluid_treatment") == "gauged"
+                   else "dahlen")
     cmb = r.get("cmb", "full")
+    schur = r.get("solver") == "schur_cg"
     values: dict[str, dict[int, float]] = {key: {} for key, *_ in QUANTITIES}
     seconds = r["setup_seconds"]
+    solve_seconds: dict[int, float] = {}
+    iterations: dict[int, int] = {}
     for d in r["degrees"]:
         l = d["degree"]
+        if "load" in d:
+            solve_seconds[l] = d["load"]["seconds"]
+            iterations[l] = d["load"]["outer_iterations"]
         for key, _, forcing, name in QUANTITIES:
             if forcing not in d or d[forcing].get(name) is None:
                 continue
@@ -107,9 +124,11 @@ def read_run(path: Path, *, fluid: bool) -> Run:
             if forcing == "load" and l == 0 and name != "h":
                 # k' and l' vanish at degree zero: nothing to be relative to
                 continue
-            if (forcing == "load" and l == 0 and fluid and not gauged):
+            if (forcing == "load" and l == 0 and fluid
+                    and method == "dahlen"):
                 # Dahlen's fluid differs from the reference at degree zero
-                # by design (doc/gauged_fluid.md); the gauged fluid is
+                # by design (doc/gauged_fluid.md); the welded and slipping
+                # treatments describe the fluid compressibly and are
                 # comparable there.
                 continue
             if forcing == "load" and l == 1 and name == "k":
@@ -117,12 +136,21 @@ def read_run(path: Path, *, fluid: bool) -> Run:
                 continue
             values[key][l] = d[forcing][name]
     h = float(path.parent.name[1:])
-    label = f"h = {h:g}, order {r['order']}" + (" (gauged)" if gauged else "")
+    tag = "" if method == "dahlen" else f"_{method}"
+    label = f"h = {h:g}, order {r['order']}"
+    if method != "dahlen":
+        label += f" ({method})"
     if cmb != "full":
+        tag += f"_{cmb}"
         label += f" (cmb {cmb})"
+    if schur:
+        tag += "_schur"
+        label += " (schur)"
     return Run(h=h, order=r["order"], ranks=r["ranks"], seconds=seconds,
                unknowns=r["displacement_unknowns"] + r["potential_unknowns"],
-               values=values, label=label)
+               values=values, label=label, method=method, tag=tag,
+               setup_seconds=r["setup_seconds"],
+               solve_seconds=solve_seconds, iterations=iterations)
 
 
 def reference_values(ref: dict) -> dict[str, dict[int, float]]:
@@ -214,6 +242,36 @@ def plot_errors(runs: list[Run], ref: dict, title: str, out: Path) -> None:
     axes[0, 0].legend(loc="best", fontsize=8)
     fig.suptitle(f"{title}: relative error against the reference", x=0.01,
                  ha="left")
+    fig.tight_layout()
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+
+
+def plot_timing(runs: list[Run], title: str, out: Path) -> None:
+    """The cost comparison of the methods (and solver and interface
+    variants): wall seconds and outer iterations of the load solve by
+    degree, one series per run, setup times in the legend."""
+    shown = runs[:len(COLOURS)]
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharex=True)
+    for i, run in enumerate(shown):
+        ls = sorted(run.solve_seconds or {})
+        if not ls:
+            continue
+        axes[0].semilogy(ls, [run.solve_seconds[l] for l in ls],
+                         marker=MARKERS[i], color=COLOURS[i],
+                         markeredgecolor=SURFACE, markeredgewidth=1.0,
+                         label=f"{run.label}; setup "
+                               f"{run.setup_seconds:.1f} s")
+        axes[1].plot(ls, [run.iterations[l] for l in ls],
+                     marker=MARKERS[i], color=COLOURS[i],
+                     markeredgecolor=SURFACE, markeredgewidth=1.0)
+    axes[0].set_title("load solve, wall seconds", loc="left")
+    axes[1].set_title("outer iterations", loc="left")
+    for ax in axes:
+        ax.set_xlabel("degree")
+        ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+    axes[0].legend(loc="best", fontsize=7)
+    fig.suptitle(f"{title}: cost by method and solver", x=0.01, ha="left")
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -546,9 +604,10 @@ def plot_model(directory: Path) -> list[str]:
         plot_love_numbers(runs, ref, title, directory / "love_numbers.png")
         plot_errors(runs, ref, title, directory / "errors.png")
         plot_convergence(runs, ref, title, directory / "convergence.png")
+        plot_timing(runs, title, directory / "timing.png")
         plot_profiles(runs, reference, results, title,
                       directory / "profiles.png")
-    by_run = {f"h{run.h:g}_o{run.order}": run for run in runs}
+    by_run = {f"h{run.h:g}_o{run.order}{run.tag}": run for run in runs}
     if fields:
         print("\nfields of the cap load, relative L2 error:")
         for run, field in fields:
@@ -573,12 +632,15 @@ def plot_model(directory: Path) -> list[str]:
                 worst[l] = f"{max(errors):.1e}" if errors else "-"
         unknowns = run.unknowns if run is not None else (
             field["displacement_unknowns"] + field["potential_unknowns"])
+        method = run.method if run is not None else "dahlen"
+        setup = f"{run.setup_seconds:.0f}" if run is not None else "-"
         summary.append(
-            f"| {title} | {key} | {unknowns} | "
+            f"| {title} | {key} | {method} | {unknowns} | "
             f"{worst.get(2, '-')} | {worst.get(5, '-')} | "
             + (f"{field['u_error']:.1e} | {field['phi_error']:.1e} | "
                if field is not None else "- | - | ")
-            + (f"{run.seconds:.0f} |" if run is not None else "- |"))
+            + (f"{setup} | {run.seconds:.0f} |"
+               if run is not None else "- | - |"))
     return summary
 
 
@@ -601,9 +663,10 @@ def main() -> None:
         summary += plot_model(directory)
     if not summary:
         raise SystemExit(f"no results under {args.directory}")
-    lines = ["| model | run | unknowns | worst error, degree 2 | "
+    lines = ["| model | run | method | unknowns | worst error, degree 2 | "
              "worst error, degree 5 | field error, u | field error, phi | "
-             "seconds |", "|---|---|---|---|---|---|---|---|", *summary]
+             "setup s | total s |", "|---|---|---|---|---|---|---|---|---|"
+             "---|", *summary]
     out = (args.directory if len(directories) > 1
            else args.directory.parent) / "summary.md"
     if len(directories) > 1:

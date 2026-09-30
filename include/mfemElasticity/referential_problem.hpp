@@ -404,6 +404,17 @@ class LinearQuasiStaticReferentialProblem
   /** @brief True when the displacement lives on the ball itself. */
   bool BallWide() const { return ball_wide_; }
 
+  /**
+   * @brief Zero the stored solution iterate. The block solvers
+   * warm-start from the previous Solve(), and the gauge refinement's
+   * right-hand side deliberately carries the previous solution's
+   * fluid-gauge component forward — right within a continuation, wrong
+   * across INDEPENDENT forcings (a benchmark sweeping degrees), where
+   * the carried gauge component accumulates. Call between independent
+   * solves.
+   */
+  virtual void ResetSolution();
+
   /** @brief Potential-row load as a linear form on the shadow of the
    * potential space; add integrators before the first AssembleForce(). */
   mfem::LinearForm& ExternalPotentialLoad() { return *b_zeta_; }
@@ -711,6 +722,8 @@ class LinearQuasiStaticSlipReferentialProblem
 
   const mfem::GridFunction& FluidDisplacement() const { return *u_f_; }
   mfem::FiniteElementSpace& FluidSpace() { return *fes_f_; }
+
+  void ResetSolution() override;
 
   /** @brief Normal-jump energies @f$\sqrt{j^T B_n j}@f$,
    * @f$j = u_s - J u_f@f$, at the end of each AL iteration of the last

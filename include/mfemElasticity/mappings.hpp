@@ -67,6 +67,16 @@ class Diffeomorphism : public mfem::VectorCoefficient {
                             const mfem::IntegrationPoint& ip) = 0;
 
   /**
+   * @brief Whether this mapping is the identity, exactly. False by
+   * default; IdentityDiffeomorphism overrides. Used by assembly paths
+   * that are only valid at @f$\varphi_e = \mathrm{id}@f$ to refuse a
+   * mapped background instead of silently assembling the wrong form
+   * (an identity-valued CallableDiffeomorphism reports false — use
+   * IdentityDiffeomorphism for an exact identity).
+   */
+  virtual bool IsIdentity() const { return false; }
+
+  /**
    * @brief The Jacobian @f$J = \det F@f$ at an integration point.
    */
   mfem::real_t Jacobian(mfem::ElementTransformation& T,
@@ -115,6 +125,8 @@ class IdentityDiffeomorphism : public Diffeomorphism {
       F(i, i) = 1.0;
     }
   }
+
+  bool IsIdentity() const override { return true; }
 };
 
 /**

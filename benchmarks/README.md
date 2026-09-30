@@ -67,6 +67,48 @@ files), `--mpiexec` names another launcher than the build's, and `--dry-run`
 prints the commands of a sweep without running them. Each script has
 `--help`.
 
+### The methods
+
+`--method` sweeps the FORMULATIONS over the same case, one results file
+(and one series in every figure) each, with the wall times and iteration
+counts compared in `timing.png` and in the summary:
+
+```
+./run fluid_core --h 0.3 --order 2 --np 8 \
+    --method dahlen gauged referential slip slip_broken --solver 1 0
+./run fluid_core --h 0.3 --order 2 --np 8 --cmb uniform
+./plot runs
+```
+
+| method | formulation |
+|---|---|
+| `dahlen` | Eulerian, fluid eliminated (`doc/self_gravitation.md`); `--cmb full/nomass/uniform/winkler` picks its fluid-interface treatment, `uniform` the standard unmeshed-core condition of the GIA codes |
+| `gauged` | Eulerian, the fluid in the displacement space with a gauge shear penalty (`doc/gauged_fluid.md`) |
+| `referential` | the welded gauged REFERENTIAL formulation (`doc/gravitating_elasticity.md`): bare moduli from the exported hydrostatic pressure `p0`, equilibrium stress `-p0 I` |
+| `slip` | the slipping fluid–solid interface, single-valued potential (`doc/slip_interface.tex`): broken displacement pair, normal-jump constraint by penalty + augmented Lagrangian |
+| `slip_broken` | the same with the potential broken per region as well (no fluid extension at all) |
+
+`--solver 1 0` runs the Eulerian methods under both of their linear
+solvers (block MINRES, and the Schur-complement CG with the `_schur`
+suffix); the referential family has its own projected-MINRES solver and
+ignores the choice. The referential methods need a case made since the
+`p0` field was added (re-make older cases), solve the LOAD problems only
+for now, and support one fluid core (no inner core yet: the slipping
+machinery's nested-shell extensions are future work). At degree zero
+with a fluid, every method EXCEPT `dahlen` is comparable with the
+reference — the Dahlen treatment differs there by design, the
+compressible descriptions do not.
+
+Mind the physics when refining a cross-method ladder: on a core that is
+not neutrally stratified the compressible treatments (`gauged` and the
+referential family) differ from the Dahlen/pyslfp secular response by
+O(N²) at every degree — a genuine difference of fluid physics, not an
+error (`doc/gauged_fluid.md`). `fluid_core`'s uniform core has N² < 0,
+so its converged ladders split at l >= 1; the PREM cores are near
+Adams–Williamson but carry inner cores the slipping methods do not
+support yet. At coarse resolution (h ~ 0.3) the split sits below the
+mesh error and the cross-method agreement is a real check.
+
 ### The pieces
 
 | file | what it does |

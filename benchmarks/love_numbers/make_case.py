@@ -35,8 +35,10 @@ from pyslfp.love_numbers import LoveNumbers, love_numbers, solve_degree
 
 import models
 
-#: The fields the finite-element solver reads.
-FIELDS = ("rho", "kappa", "mu")
+#: The fields the finite-element solver reads: the material, and the
+#: hydrostatic pressure p0 that the referential methods need (bare
+#: moduli, S_e = -p0 I, the interface pressure of the slipping methods).
+FIELDS = ("rho", "kappa", "mu", "p0")
 
 #: The basename of the files of a case.
 BASENAME = "case"
@@ -207,7 +209,8 @@ def main() -> None:
     args = p.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
-    model = models.scaled(models.model(args.model), time_scale=args.time_scale)
+    model = models.with_pressure(
+        models.scaled(models.model(args.model), time_scale=args.time_scale))
 
     ref = reference(model, args.lmax, per_layer=args.profile_points)
     (args.out / "reference.json").write_text(json.dumps(ref, indent=1))

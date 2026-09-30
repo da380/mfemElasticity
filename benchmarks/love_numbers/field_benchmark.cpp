@@ -94,6 +94,9 @@ int main(int argc, char* argv[]) {
   if (root) args.PrintOptions(std::cout);
 
   Case c(options);
+  MFEM_VERIFY(c.eulerian,
+              "field_benchmark supports the Eulerian methods (dahlen, "
+              "gauged) for now.");
   Problem& problem = *c.problem;
   const auto& basis = c.Basis();
   const int n = basis.Size();

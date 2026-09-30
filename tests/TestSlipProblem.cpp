@@ -1,3 +1,5 @@
+#include <numbers>
+
 #include "SelfGravitatingTestCommon.hpp"
 #include "TestCommon.hpp"
 
@@ -115,6 +117,103 @@ void PressureTraction(const Vector& x, Vector& f) {
   f = x;
   f *= -0.01 * (1.0 + (2.0 * c * c - 1.0)) / r;
 }
+
+// Evaluate a grid function at a physical point of its mesh.
+bool EvalAt(const GridFunction& g, Mesh& m, const Vector& x, Vector& out) {
+  DenseMatrix pt(x.Size(), 1);
+  for (int d = 0; d < x.Size(); d++) {
+    pt(d, 0) = x(d);
+  }
+  Array<int> elem;
+  Array<IntegrationPoint> ips;
+  if (m.FindPoints(pt, elem, ips, false) != 1 || elem[0] < 0) {
+    return false;
+  }
+  const int vdim = g.FESpace()->GetVDim();
+  out.SetSize(vdim);
+  if (vdim == 1) {
+    out(0) = g.GetValue(elem[0], ips[0]);
+  } else {
+    g.GetVectorValue(elem[0], ips[0], out);
+  }
+  return true;
+}
+
+// The interface-fixing relabelling of the broken-zeta mapped test:
+//   xi(x) = f(r) Rot(alpha(r)) x,
+// with f = 1 + c [r (rc - r)(1 - r) / q0]^2 (identity radius at the
+// centre, the INTERFACE and the surface, so the referential mesh
+// interface is the physical one) and a twist alpha = a [r(1-r)/p0]^2
+// that is NONZERO across the interface (a non-radial F_e on Sigma);
+// both are identity on and outside the surface (C^1 there).
+struct SlipRelabelling {
+  double c = 0.02, a = 0.05;
+  static constexpr double q0 = 0.055, p0 = 0.25;
+
+  double f(double r) const {
+    if (r >= 1.0) {
+      return 1.0;
+    }
+    const double q = r * (kRc - r) * (1.0 - r) / q0;
+    return 1.0 + c * q * q;
+  }
+  double fp(double r) const {
+    if (r >= 1.0) {
+      return 0.0;
+    }
+    const double q = r * (kRc - r) * (1.0 - r) / q0;
+    const double qp =
+        ((kRc - r) * (1.0 - r) - r * (1.0 - r) - r * (kRc - r)) / q0;
+    return 2.0 * c * q * qp;
+  }
+  double alpha(double r) const {
+    if (r >= 1.0) {
+      return 0.0;
+    }
+    const double p = r * (1.0 - r) / p0;
+    return a * p * p;
+  }
+  double alphap(double r) const {
+    if (r >= 1.0) {
+      return 0.0;
+    }
+    const double p = r * (1.0 - r) / p0;
+    return 2.0 * a * p * (1.0 - 2.0 * r) / p0;
+  }
+  void Map(const Vector& x, Vector& y) const {
+    const double r = x.Norml2();
+    const double ch = std::cos(alpha(r)), sh = std::sin(alpha(r));
+    const double s = f(r);
+    y.SetSize(2);
+    y(0) = s * (ch * x(0) - sh * x(1));
+    y(1) = s * (sh * x(0) + ch * x(1));
+  }
+  void Grad(const Vector& x, DenseMatrix& F) const {
+    const double r = x.Norml2();
+    F.SetSize(2);
+    const double ch = std::cos(alpha(r)), sh = std::sin(alpha(r));
+    const double s = f(r);
+    // F = R [ f I + (f' x + f alpha' (z cross x)) otimes x-hat ].
+    DenseMatrix M(2);
+    M = 0.0;
+    M(0, 0) = M(1, 1) = s;
+    if (r > 1e-12) {
+      const double sp = fp(r), ap = alphap(r);
+      const double xh[2] = {x(0) / r, x(1) / r};
+      const double zx[2] = {-x(1), x(0)};
+      const double xx[2] = {x(0), x(1)};
+      for (int i = 0; i < 2; i++) {
+        for (int j = 0; j < 2; j++) {
+          M(i, j) += (sp * xx[i] + s * ap * zx[i]) * xh[j];
+        }
+      }
+    }
+    F(0, 0) = ch * M(0, 0) - sh * M(1, 0);
+    F(0, 1) = ch * M(0, 1) - sh * M(1, 1);
+    F(1, 0) = sh * M(0, 0) + ch * M(1, 0);
+    F(1, 1) = sh * M(0, 1) + ch * M(1, 1);
+  }
+};
 
 }  // namespace
 
@@ -561,4 +660,152 @@ TEST(SlipProblem, RigidPairsNearNull) {
     std::cout << "slip rigid pair " << i << ": residual " << res[i] << "\n";
     EXPECT_LT(res[i], 5e-2);
   }
+
+  // Broken-zeta organisation: the same rigid pairs must be near-null
+  // under the FULL four-block operator, both penalties included (the
+  // constraints vanish on rigid pairs: nu and b are physically radial
+  // against tangential rotations, and translations have no jump).
+  {
+    Array<int> outer_attr({2, 3});
+    SubMesh outer(SubMesh::CreateFromDomain(*s.parent, outer_attr));
+    auto fes_zo = SubMeshDofInjection::MakeShadowSpace(*s.fes_zeta, outer);
+    LinearQuasiStaticSlipReferentialProblem bz(
+        s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
+        s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
+    bz.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
+    bz.SetFluidGauge(mu_gauge, kEps);
+    bz.SetConstraint(kTheta, kALIterations);
+    bz.EnableBrokenZeta(fes_zo.get(), kTheta);
+    const auto res_bz = bz.SlipRigidPairResiduals();
+    ASSERT_EQ(static_cast<int>(res_bz.size()), 4);
+    for (size_t i = 0; i < res_bz.size(); i++) {
+      std::cout << "broken-zeta rigid pair " << i << ": residual "
+                << res_bz[i] << "\n";
+      EXPECT_LT(res_bz[i], 5e-2);
+    }
+  }
+}
+
+// The broken-zeta solver on a relabelled two-layer background (the
+// tier-(ii) self-benchmark of doc/mappings.md, now with a slipping
+// interface): xi = f(r) Rot(alpha(r)) x fixes the centre, the
+// interface radius and the surface, with a twist across Sigma, so the
+// referential mesh describes the SAME physical two-layer body while
+// F_e is genuinely non-radial on the interface. Every mapped piece of
+// the broken organisation acts: the per-region a-form machinery and
+// Poisson blocks, the couplings, B_Sigma, G_Sigma, b = F^{-T} grad
+// zeta0, and the scalar-jump constraint. The solution must reproduce
+// the identity-description broken solution under composition,
+// u~(x) = u(xi(x)), zeta~ = zeta o xi (modulo the 2-D constant), on
+// the solid region, at the fixed mesh's geometric-interpolation floor
+// (the exact-F-versus-interpolated-F effect of doc/mappings.md).
+TEST(SlipProblem, BrokenZetaRelabelledEquilibrium) {
+  const int order = 2;
+  const int dim = 2;
+  FunctionCoefficient sigma(SurfaceSigma);
+  ConstantCoefficient mu_gauge(kKappa);
+  Array<int> outer_attr({2, 3});
+
+  // Reference: the broken solver at phi_e = id.
+  Setting s(order);
+  auto interface = RadialBdrMarker(*s.solid, 0.9 * kRc, 1.1 * kRc);
+  auto surface_s = RadialBdrMarker(*s.solid, 0.9, 1.1);
+  SubMesh outer(SubMesh::CreateFromDomain(*s.parent, outer_attr));
+  auto fes_zo = SubMeshDofInjection::MakeShadowSpace(*s.fes_zeta, outer);
+  auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
+  LinearQuasiStaticSlipReferentialProblem ref(
+      s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
+      s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
+  ref.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
+  ref.SetFluidGauge(mu_gauge, kEps);
+  ref.SetConstraint(kTheta, kALIterations);
+  ref.EnableBrokenZeta(fes_zo.get(), kTheta);
+  ref.SetSurfaceLoad(sigma, surface_s);
+  ref.SetRelTol(1e-10);
+  ref.AssembleForce(0.0);
+  ASSERT_TRUE(ref.Solve());
+
+  // Relabelled: phi_e = xi, coefficients through the generator chain.
+  Setting s2(order);
+  auto interface2 = RadialBdrMarker(*s2.solid, 0.9 * kRc, 1.1 * kRc);
+  auto surface2 = RadialBdrMarker(*s2.solid, 0.9, 1.1);
+  SubMesh outer2(SubMesh::CreateFromDomain(*s2.parent, outer_attr));
+  auto fes_zo2 = SubMeshDofInjection::MakeShadowSpace(*s2.fes_zeta, outer2);
+  auto Evac2 =
+      NewRadialVacuumExtension(*s2.fes_s, *s2.fes_buffer, 1.0, s2.r_out);
+  SlipRelabelling xi_def;
+  CallableDiffeomorphism xi(
+      dim, [&](const Vector& x, Vector& y) { xi_def.Map(x, y); },
+      [&](const Vector& x, DenseMatrix& F) { xi_def.Grad(x, F); });
+  RelabelledBackground rel_bg(*s2.bg, xi);
+  LinearQuasiStaticSlipReferentialProblem rel(
+      s2.fes_s.get(), s2.fes_f.get(), s2.fes_zeta.get(), rel_bg.Rheology(),
+      rel_bg.Density(), rel_bg.Pressure(), interface2, kG, kDtNDegree);
+  rel.SetPrescribedVacuumExtension(*s2.fes_buffer, *Evac2);
+  rel.SetFluidGauge(mu_gauge, kEps);
+  rel.SetConstraint(kTheta, kALIterations);
+  rel.EnableBrokenZeta(fes_zo2.get(), kTheta);
+  FunctionCoefficient sigma2(SurfaceSigma);
+  rel.SetSurfaceLoad(sigma2, surface2);
+  rel.SetRelTol(1e-10);
+  rel.AssembleForce(0.0);
+  ASSERT_TRUE(rel.Solve());
+
+  // The mapped rigid pairs stay near-null under the mapped four-block
+  // operator.
+  {
+    const auto res = rel.SlipRigidPairResiduals();
+    ASSERT_EQ(static_cast<int>(res.size()), 4);
+    for (size_t i = 0; i < res.size(); i++) {
+      std::cout << "relabelled broken rigid pair " << i << ": residual "
+                << res[i] << "\n";
+      EXPECT_LT(res[i], 5e-2);
+    }
+  }
+
+  // Compare at solid sample points: u~(x) = u(xi(x)), and the
+  // potential through the same composition modulo the 2-D constant.
+  double du2 = 0.0, un2 = 0.0, zn2 = 0.0;
+  std::vector<double> dz;
+  Vector x(dim), y(dim);
+  int n_pts = 0;
+  for (int i = 0; i < 48; i++) {
+    const double r = kRc + 0.05 + (0.93 - kRc - 0.05) * (i % 8) / 7.0;
+    const double th = 2.0 * std::numbers::pi * i / 48.0 + 0.1;
+    x(0) = r * std::cos(th);
+    x(1) = r * std::sin(th);
+    xi_def.Map(x, y);
+    Vector ur, urel, zr, zrel;
+    if (!EvalAt(rel.Displacement(), *s2.solid, x, urel) ||
+        !EvalAt(ref.Displacement(), *s.solid, y, ur) ||
+        !EvalAt(rel.Potential(), *s2.parent, x, zrel) ||
+        !EvalAt(ref.Potential(), *s.parent, y, zr)) {
+      continue;
+    }
+    n_pts++;
+    for (int d = 0; d < dim; d++) {
+      du2 += (urel(d) - ur(d)) * (urel(d) - ur(d));
+      un2 += ur(d) * ur(d);
+    }
+    dz.push_back(zrel(0) - zr(0));
+    zn2 += zr(0) * zr(0);
+  }
+  ASSERT_GT(n_pts, 36);
+  double dz_mean = 0.0;
+  for (double v : dz) {
+    dz_mean += v;
+  }
+  dz_mean /= dz.size();
+  double dz2 = 0.0;
+  for (double v : dz) {
+    dz2 += (v - dz_mean) * (v - dz_mean);
+  }
+  const double u_err = std::sqrt(du2 / un2);
+  const double z_err = std::sqrt(dz2 / zn2);
+  std::cout << "relabelled broken-zeta: u " << u_err << ", zeta " << z_err
+            << "\n";
+  // Observed 5e-4 / 2e-4: two orders below the ~2-5% map amplitude,
+  // so the mapped assembly is load-bearing, not trivially passing.
+  EXPECT_LT(u_err, 5e-3);
+  EXPECT_LT(z_err, 5e-3);
 }

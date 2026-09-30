@@ -146,6 +146,9 @@ class RelabelledBackground {
   mfem::Coefficient& Density() { return rho_rel_; }
   mfem::MatrixCoefficient& ElasticTensor() { return C_rel_; }
   mfem::MatrixCoefficient& EquilibriumStress() { return S_rel_; }
+  /** @brief The referential pressure @f$\tilde\pi = p^0\circ\xi@f$ (the
+   * interface-pressure input of the slip problems). */
+  mfem::Coefficient& Pressure() { return p0_xi_; }
   Diffeomorphism& EquilibriumMapping() { return *xi_; }
 
  private:

@@ -39,7 +39,9 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Sequence
 
-from planetmodel import PREM, LayeredIsotropicElastic, Model, kappa_mu
+import numpy as np
+from planetmodel import (PREM, LayeredIsotropicElastic, Model, RadialField,
+                         gravity, kappa_mu, polynomial_fit)
 from planetmodel.units import G_SI, Scales
 
 #: The outer radius of the constructed models, in metres.
@@ -178,4 +180,53 @@ def scaled(si: Model, *, time_scale: float | None = None) -> Model:
         kappa, mu = kappa_mu(layer)
         out = (out.with_field(i, "kappa", kappa, replace=True)
                   .with_field(i, "mu", mu, replace=True))
+    return out
+
+
+def with_pressure(model: Model, *, degree: int = 12,
+                  quadrature: int = 64) -> Model:
+    """The model with its hydrostatic pressure attached to every layer as
+    the field `p0`: p(r) = int_r^a rho g dr, zero at the surface, in the
+    model's own units. The equilibrium pressure the referential solvers
+    need (bare moduli, S_e = -p0 I, and the interface pressure of the
+    slipping methods).
+
+    Per layer the integrand rho g is smooth (the enclosed-mass 1/r^2 of g
+    stays off the centre wherever it has a coefficient), so a Gauss-
+    Legendre rule of `quadrature` points per segment and a polynomial fit
+    of `degree` per layer hold it to close to machine accuracy for the
+    polynomial models here."""
+    b = np.asarray(model.skeleton.boundaries, dtype=float)
+    x_gl, w_gl = np.polynomial.legendre.leggauss(quadrature)
+
+    def integrand(i: int, r: np.ndarray) -> np.ndarray:
+        return np.asarray(model.layers[i].fields["rho"](r),
+                          dtype=float) * gravity(model, r)
+
+    def segment(i: int, lo: np.ndarray | float, hi: float) -> np.ndarray:
+        lo = np.atleast_1d(np.asarray(lo, dtype=float))
+        mid, half = 0.5 * (lo + hi), 0.5 * (hi - lo)
+        # nodes[q, j] over the segments [lo_j, hi]
+        nodes = mid[None, :] + half[None, :] * x_gl[:, None]
+        values = integrand(i, nodes.ravel()).reshape(nodes.shape)
+        return half * np.einsum("q,qj->j", w_gl, values)
+
+    # The pressure at the top of each layer, surface down.
+    n = len(model.layers)
+    p_top = np.zeros(n)
+    for i in range(n - 2, -1, -1):
+        p_top[i] = p_top[i + 1] + float(segment(i + 1, b[i + 1],
+                                                b[i + 2])[0])
+
+    out = model
+    for i in range(n):
+        lo, hi = float(b[i]), float(b[i + 1])
+        top = p_top[i]
+
+        def p(r: np.ndarray, i=i, hi=hi, top=top) -> np.ndarray:
+            return top + segment(i, r, hi)
+
+        fit = polynomial_fit((lo, hi), p, degree=degree)
+        out = out.with_field(i, "p0", RadialField((lo, hi), fit, name="p0"),
+                             replace=True)
     return out

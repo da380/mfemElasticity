@@ -126,9 +126,10 @@ int main(int argc, char* argv[]) {
                                          "lmax.");
 
   Case c(options);
-  Problem& problem = *c.problem;
   const auto& basis = c.Basis();
   const real_t a = c.radius, g = c.gravity;
+  profiles = profiles && c.SupportsProfiles();
+  tide = tide && c.SupportsTide();
 
   // The gravity of the background at the radii of the profiles.
   std::vector<Vector> profile_gravity;
@@ -150,22 +151,27 @@ int main(int argc, char* argv[]) {
     const auto t0 = Clock::now();
     r.converged = c.Solve(coefficients, load);
     r.seconds = Seconds(t0);
-    r.outer = problem.LastOuterIterations();
-    r.inner = problem.LastInnerIterations();
+    r.outer = c.OuterIterations();
+    r.inner = c.InnerIterations();
     Vector cu, cv, cphi;
     for (const auto& an : c.analyses) {
-      an.radial->Coefficients(problem.Displacement(), cu);
-      an.tangential->Coefficients(problem.Displacement(), cv);
-      an.scalar->Coefficients(problem.PotentialOnBody(), cphi);
+      an.radial->Coefficients(c.Displacement(), cu);
+      an.tangential->Coefficients(c.Displacement(), cv);
+      an.scalar->Coefficients(c.AnalysisPotential(), cphi);
       r.u.push_back(cu[i]);
       r.v.push_back(cv[i]);
-      r.phi.push_back(cphi[i]);
+      // The referential methods analyse zeta1 = phi1 + u . grad zeta0:
+      // convert with the interface's own gravity (exact, layer masses).
+      r.phi.push_back(c.PotentialIsReferential()
+                          ? cphi[i] - an.gravity * cu[i]
+                          : cphi[i]);
       if (&an == &c.Surface()) {
         r.spurious = std::max(Spurious(cu, i), Spurious(cphi, i));
       }
     }
     if (profiles) {
-      r.profiles = c.Profiles(problem.Displacement(), problem.Potential(), i);
+      r.profiles = c.Profiles(c.problem->Displacement(),
+                              c.problem->Potential(), i);
     }
     if (basis.Degree(i) == 1) {
       r.shift = r.phi[c.surface] / g;
@@ -190,7 +196,7 @@ int main(int argc, char* argv[]) {
 
   std::ostringstream degrees;
   ParGridFunction phi_direct(
-      static_cast<ParFiniteElementSpace*>(&problem.PotentialSpaceOnBody()));
+      static_cast<ParFiniteElementSpace*>(&c.AnalysisPotentialSpace()));
   if (root) {
     std::cout << std::setprecision(6)
               << "\n  l          h'          l'          k'           h"
@@ -199,7 +205,7 @@ int main(int argc, char* argv[]) {
   for (int l = lmin; l <= lmax; l++) {
     const int i = basis.Index(l, 0);
     const Response load = solve(i, true);
-    problem.SolveLoadPotential(phi_direct);
+    c.SolveLoadPotential(phi_direct);
     Vector cdirect;
     c.Surface().scalar->Coefficients(phi_direct, cdirect);
     const real_t phi_sigma = cdirect[i];

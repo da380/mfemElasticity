@@ -20,6 +20,7 @@ set(EXAMPLES
     viscoelastic_loading        # GIA-style layered load/rebound driver
     viscoelastic_schemes        # cost/accuracy table of the time integrators
     self_gravitating_relaxation # Maxwell mantle + fluid core under a Heaviside load
+    self_gravitating_solvers    # one problem, every linear-solver architecture: cost/agreement table
     love_numbers                # load and tidal Love numbers by degree, one solve each
     anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
 )

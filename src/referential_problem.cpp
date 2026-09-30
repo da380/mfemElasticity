@@ -1276,6 +1276,12 @@ LinearQuasiStaticReferentialProblem::LinearQuasiStaticReferentialProblem(
   B_zeta_ = 0.0;
 }
 
+void LinearQuasiStaticReferentialProblem::ResetSolution() {
+  if (X_block_) {
+    *X_block_ = 0.0;
+  }
+}
+
 bool LinearQuasiStaticReferentialProblem::ParallelPotential() const {
 #ifdef MFEM_USE_MPI
   return pfes_zeta_ != nullptr;
@@ -2092,6 +2098,16 @@ void LinearQuasiStaticSlipReferentialProblem::SetupSlipRigidModes() {
     n = 0.0;
     n.GetBlock(2) = ones_;
     projector3_->Add(n);
+  }
+}
+
+void LinearQuasiStaticSlipReferentialProblem::ResetSolution() {
+  LinearQuasiStaticReferentialProblem::ResetSolution();
+  if (X3_) {
+    *X3_ = 0.0;
+  }
+  if (X4_) {
+    *X4_ = 0.0;
   }
 }
 
@@ -3005,6 +3021,12 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
               "LinearQuasiStaticSlipReferentialProblem: call "
               "SetFluidGauge() before the first Solve().");
   auto& map = ref_rheology_->EquilibriumMapping();
+  MFEM_VERIFY(map.IsIdentity(),
+              "LinearQuasiStaticSlipReferentialProblem: the single-valued "
+              "organisation assembles its gravity MISMATCH pieces at "
+              "phi_e = id only; for a mapped background use the "
+              "broken-zeta organisation (EnableBrokenZeta), which is "
+              "assembled mapped throughout.");
   std::unique_ptr<SparseMatrix> Eft(Transpose(*Ef_));
 
   // Fluid elastic block with the fluid's own field: material + geometric
@@ -3173,6 +3195,12 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
               "LinearQuasiStaticSlipReferentialProblem: call "
               "SetFluidGauge() before the first Solve().");
   auto& map = ref_rheology_->EquilibriumMapping();
+  MFEM_VERIFY(map.IsIdentity(),
+              "LinearQuasiStaticSlipReferentialProblem: the single-valued "
+              "organisation assembles its gravity MISMATCH pieces at "
+              "phi_e = id only; for a mapped background use the "
+              "broken-zeta organisation (EnableBrokenZeta), which is "
+              "assembled mapped throughout.");
   Array<int> empty;
   std::unique_ptr<HypreParMatrix> Eft(pEf_->Transpose());
 
@@ -3523,11 +3551,53 @@ real_t LinearQuasiStaticSlipReferentialProblem::BlockNullPairResidual(
 
 std::vector<real_t>
 LinearQuasiStaticSlipReferentialProblem::SlipRigidPairResiduals() {
-  MFEM_VERIFY(!broken_zeta_,
-              "SlipRigidPairResiduals: not available in the broken-zeta "
-              "organisation.");
   EnsureOperator();
   std::vector<real_t> out;
+  if (broken_zeta_) {
+    // Residuals under the FULL four-block solver operator, penalties
+    // included: on the rigid pairs both constraints vanish (nu and b
+    // are physically radial against tangential rotations; translations
+    // have no jump), so near-null must survive the penalties too.
+    real_t a_max = 0.0;
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      real_t local = 0.0;
+      for (const auto& m : pbzS_) {
+        if (!m) {
+          continue;
+        }
+        SparseMatrix diag, offd;
+        HYPRE_BigInt* cmap = nullptr;
+        m->GetDiag(diag);
+        m->GetOffd(offd, cmap);
+        local = std::max(local, std::max(diag.MaxNorm(), offd.MaxNorm()));
+      }
+      MPI_Allreduce(&local, &a_max, 1, MPITypeMap<real_t>::mpi_type,
+                    MPI_MAX, pfes_->GetComm());
+    } else
+#endif
+    {
+      for (const auto& m : bzS_) {
+        if (m) {
+          a_max = std::max(a_max, m->MaxNorm());
+        }
+      }
+    }
+    BlockVector nb(offsets4_), r(offsets4_);
+    for (int i = 0; i < projector4_->Size(); i++) {
+      static_cast<Vector&>(nb) = projector4_->Basis(i);
+      // Skip the 2-D potential constant: not a (u_s, u_f) pair.
+      if (nb.GetBlock(0).Norml2() == 0.0 &&
+          nb.GetBlock(1).Norml2() == 0.0) {
+        continue;
+      }
+      block_op4_->Mult(nb, r);
+      const real_t norm = std::sqrt(Dot(nb, nb));
+      out.push_back(std::sqrt(Dot(r, r)) /
+                    (a_max * std::max(norm, real_t{1e-300})));
+    }
+    return out;
+  }
   BlockVector nb(offsets3_);
   for (int i = 0; i < projector3_->Size(); i++) {
     static_cast<Vector&>(nb) = projector3_->Basis(i);
@@ -3544,6 +3614,10 @@ void LinearQuasiStaticSlipReferentialProblem::RegisterFields(
     DataCollection& dc) {
   LinearQuasiStaticReferentialProblem::RegisterFields(dc);
   dc.RegisterField("fluid_displacement", u_f_.get());
+  if (broken_zeta_) {
+    dc.RegisterField("zeta_outer", zeta_o_gf_.get());
+    dc.RegisterField("zeta_fluid", zeta_f_gf_.get());
+  }
 }
 
 }  // namespace mfemElasticity

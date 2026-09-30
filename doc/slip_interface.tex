@@ -970,10 +970,34 @@ $5\times10^{-5}$ in the solid-region potential, essentially at
 AL/solver precision, with both constraints contracting by
 $\sim\!10^2$; serial and parallel builds of the four-block system
 agree at $10^{-5}$ on 1/2/4 ranks at orders 1 and 2
-(\texttt{TestReferentialProblemPar.cpp}). Remaining: the mapped
-($\varphi_e \neq \mathrm{id}$) discrete gravity \emph{mismatch} pieces
-of the single-valued solver (unchanged; the broken organisation now
-provides the mapped route), and a mapped-background solver-level
-exercise of either organisation.
+(\texttt{TestReferentialProblemPar.cpp}).
+
+\textbf{Mapped backgrounds: the broken organisation is the primary.}
+By decision, the mapped ($\varphi_e \neq \mathrm{id}$) forms of the
+single-valued \emph{mismatch} pieces are not implemented: the broken
+organisation is assembled mapped throughout and is the route for
+mapped and aspherical backgrounds. The single-valued assembly now
+\emph{refuses} a non-identity mapping outright
+(\texttt{Diffeomorphism::IsIdentity}, pointing at
+\texttt{EnableBrokenZeta}) instead of silently assembling the
+$\varphi_e = \mathrm{id}$ mismatch forms. The mapped broken solver is
+verified at solution level by the relabelled tier-(ii) self-benchmark
+of \texttt{doc/mappings.md}, extended to the slipping interface
+(\texttt{TestSlipProblem.cpp}): an interface-fixing relabelling
+$\xi = f(r)\,\mathrm{Rot}(\alpha(r))\,x$ --- identity radius at the
+centre, the interface and the surface, with an angular twist
+\emph{across} $\Sigma$, so the same physical two-layer body is
+described with a genuinely non-radial $F_e$ on the interface ---
+reproduces the identity-description broken solution under composition
+to $5\times10^{-4}$ in the solid displacement and $2\times10^{-4}$ in
+the solid-region potential: two orders below the map amplitude, so
+every mapped piece (per-region $a$-forms and Poisson blocks,
+couplings, $B_\Sigma$, $G_\Sigma$, $\mathbf{b}$, the jump constraint)
+is load-bearing and correct. The rigid pairs (common translations,
+independent shell/core rotations) are near-null under the \emph{full}
+four-block operator, both penalties included --- $\bnu$ and
+$\mathbf{b}$ are physically radial against tangential rotations, so
+the constraints vanish on rigid pairs --- at the identity and under
+the relabelling alike.
 
 \end{document}

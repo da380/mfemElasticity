@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <optional>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -96,6 +97,24 @@ inline Vector FluidSideDensity(const MeshManifest& manifest, int size) {
   }
   return rho;
 }
+
+// A scalar field carried on two SubMeshes at once: the slipping methods
+// evaluate one set of constitutive coefficients on both the solid and
+// the fluid spaces, and a GridFunctionCoefficient is bound to one mesh.
+// Dispatched on the mesh of the transformation.
+class TwoRegionCoefficient : public Coefficient {
+ public:
+  TwoRegionCoefficient(GridFunction& a, GridFunction& b)
+      : a_(&a), ca_(&a), cb_(&b) {}
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    return T.mesh == a_->FESpace()->GetMesh() ? ca_.Eval(T, ip)
+                                              : cb_.Eval(T, ip);
+  }
+
+ private:
+  GridFunction* a_;
+  GridFunctionCoefficient ca_, cb_;
+};
 
 // The radial functions of one harmonic in one layer: for a field f and the
 // harmonic Y_i, the polynomial a(r) of degree modes - 1 that is closest to
@@ -213,8 +232,27 @@ struct CaseOptions {
   real_t gauge_eps = 1e-2;
   int gauge_refinements = 3;
   const char* cmb = "full";
+  const char* method = "dahlen";
+  real_t slip_theta = 1e2;
+  int al_iterations = 8;
 
   void Add(OptionsParser& args) {
+    args.AddOption(&method, "-method", "--method",
+                   "The formulation solved: 'dahlen' (Eulerian, fluid "
+                   "eliminated; -cmb picks its interface treatment), "
+                   "'gauged' (Eulerian, gauged fluid in the displacement "
+                   "space), 'referential' (welded gauged referential: bare "
+                   "moduli from p0, S_e = -p0 I), 'slip' (broken "
+                   "displacement pair, single-valued zeta) or "
+                   "'slip_broken' (broken zeta as well; "
+                   "doc/slip_interface.tex). The referential methods need "
+                   "a case with the p0 field.");
+    args.AddOption(&slip_theta, "-theta", "--slip-theta",
+                   "Constraint penalty of the slipping methods (both the "
+                   "normal and, broken, the scalar jump).");
+    args.AddOption(&al_iterations, "-al", "--al-iterations",
+                   "Augmented-Lagrangian iterations per solve (slipping "
+                   "methods).");
     args.AddOption(&cmb, "-cmb", "--cmb-approximation",
                    "Fluid-interface treatment of the Dahlen path: 'full' "
                    "(stratified, F1+F2+F3), 'nomass' (drop the fluid mass "
@@ -285,12 +323,17 @@ class Case {
       rho = read("rho");
       kappa = read("kappa");
       mu = read("mu");
+      if (manifest.HasField("p0")) {
+        p0 = read("p0");
+      }
     } else {
       Mesh serial = manifest.LoadMesh();
       elements = serial.GetNE();
       auto rho_s = manifest.LoadField(serial, "rho");
       auto kappa_s = manifest.LoadField(serial, "kappa");
       auto mu_s = manifest.LoadField(serial, "mu");
+      auto p0_s = manifest.HasField("p0") ? manifest.LoadField(serial, "p0")
+                                          : nullptr;
       std::unique_ptr<int[]> partitioning(
           serial.GeneratePartitioning(Mpi::WorldSize()));
       parent = std::make_unique<ParMesh>(MPI_COMM_WORLD, serial,
@@ -302,17 +345,33 @@ class Case {
       rho = distribute(*rho_s);
       kappa = distribute(*kappa_s);
       mu = distribute(*mu_s);
+      if (p0_s) {
+        p0 = distribute(*p0_s);
+      }
     }
     dim = parent->Dimension();
     MFEM_VERIFY(dim == 3, "The benchmark is for balls.");
 
-    // The displacement regions and the material on them: the solid layers,
-    // and with the gauged fluid treatment the fluid layers as well (the
-    // member keeps the name `solid` as "the displacement SubMesh").
+    // The method solved: the Eulerian pair share the
+    // LinearQuasiStaticSelfGravitatingProblem, the referential family
+    // its own construction below.
+    method = options.gauged ? "gauged" : options.method;
+    MFEM_VERIFY(method == "dahlen" || method == "gauged" ||
+                    method == "referential" || method == "slip" ||
+                    method == "slip_broken",
+                "-method must be dahlen, gauged, referential, slip or "
+                "slip_broken.");
+    eulerian = method == "dahlen" || method == "gauged";
+
+    // The displacement regions and the material on them: the solid
+    // layers, and for the welded treatments of the fluid (gauged,
+    // referential) the fluid layers as well (the member keeps the name
+    // `solid` as "the displacement SubMesh"; the slipping methods give
+    // the fluid its own SubMesh).
     solid_attributes = manifest.SolidAttributes();
     fluid_attributes = manifest.FluidAttributes();
     Array<int> u_attributes(solid_attributes);
-    if (options.gauged) {
+    if (method == "gauged" || method == "referential") {
       u_attributes.Append(fluid_attributes);
       u_attributes.Sort();
     }
@@ -359,11 +418,11 @@ class Case {
     MFEM_VERIFY(cmb == "full" || cmb == "nomass" || cmb == "uniform" ||
                     cmb == "winkler",
                 "-cmb must be full, nomass, uniform or winkler.");
-    MFEM_VERIFY(!options.gauged || cmb == "full",
+    MFEM_VERIFY(method == "dahlen" || cmb == "full",
                 "-cmb applies to the Dahlen path only.");
     const int n_bdr = solid->bdr_attributes.Max();
     std::vector<FluidRegion> fluids;
-    if (!options.gauged) {
+    if (method == "dahlen") {
       fluid_side_ = FluidSideDensity(manifest, n_bdr);
       rho_interface_c_ = std::make_unique<PWConstCoefficient>(fluid_side_);
       for (const int attribute : fluid_attributes) {
@@ -402,52 +461,57 @@ class Case {
       }
     }
 
-    rheology_ = std::make_unique<IsotropicElasticRheology>(dim, *kappa_c_,
-                                                           *mu_c_);
-    problem = std::make_unique<Problem>(fes_u.get(), fes_phi.get(),
-                                        *rheology_, *rho_c_, G,
-                                        options.dtn_degree, nullptr, fluids);
-    if (options.gauged && fluid_attributes.Size() > 0) {
-      // The gauge shear scale is the model's own bulk modulus (the fluid's
-      // kappa on the fluid layers).
-      gauge_marker_.SetSize(solid->attributes.Max());
-      gauge_marker_ = 0;
-      for (const int a : fluid_attributes) {
-        gauge_marker_[a - 1] = 1;
-      }
-      problem->SetGaugedFluid(gauge_marker_, *kappa_c_, options.gauge_eps,
-                              options.gauge_refinements);
-      if (root) {
-        std::cout << "Gauged fluid: eps " << options.gauge_eps << ", "
-                  << options.gauge_refinements << " refinements.\n";
-      }
-    }
-    // A solid layer with fluid all around it turns freely in a spherical
-    // model; with the gauged fluid the penalty owns those modes and they
-    // must not be projected (doc/gauged_fluid.md).
-    if (!options.gauged) {
-      for (const int attribute : solid_attributes) {
-        bool enclosed = true;
-        for (const auto& f : manifest.Interfaces()) {
-          if (f.below == attribute || f.above == attribute) {
-            const int other = f.below == attribute ? f.above : f.below;
-            enclosed = enclosed && fluid_attributes.Find(other) >= 0;
-          }
+    if (eulerian) {
+      rheology_ = std::make_unique<IsotropicElasticRheology>(dim, *kappa_c_,
+                                                             *mu_c_);
+      problem = std::make_unique<Problem>(fes_u.get(), fes_phi.get(),
+                                          *rheology_, *rho_c_, G,
+                                          options.dtn_degree, nullptr,
+                                          fluids);
+      if (method == "gauged" && fluid_attributes.Size() > 0) {
+        // The gauge shear scale is the model's own bulk modulus (the
+        // fluid's kappa on the fluid layers).
+        gauge_marker_.SetSize(solid->attributes.Max());
+        gauge_marker_ = 0;
+        for (const int a : fluid_attributes) {
+          gauge_marker_[a - 1] = 1;
         }
-        if (enclosed) {
-          problem->AddRegionRotations(Array<int>({attribute}));
-          if (root) {
-            std::cout << "Layer " << attribute
-                      << " is enclosed by fluid: its rotations are "
-                         "projected.\n";
-          }
+        problem->SetGaugedFluid(gauge_marker_, *kappa_c_, options.gauge_eps,
+                                options.gauge_refinements);
+        if (root) {
+          std::cout << "Gauged fluid: eps " << options.gauge_eps << ", "
+                    << options.gauge_refinements << " refinements.\n";
         }
       }
+      // A solid layer with fluid all around it turns freely in a
+      // spherical model; with the gauged fluid the penalty owns those
+      // modes and they must not be projected (doc/gauged_fluid.md).
+      if (method == "dahlen") {
+        for (const int attribute : solid_attributes) {
+          bool enclosed = true;
+          for (const auto& f : manifest.Interfaces()) {
+            if (f.below == attribute || f.above == attribute) {
+              const int other = f.below == attribute ? f.above : f.below;
+              enclosed = enclosed && fluid_attributes.Find(other) >= 0;
+            }
+          }
+          if (enclosed) {
+            problem->AddRegionRotations(Array<int>({attribute}));
+            if (root) {
+              std::cout << "Layer " << attribute
+                        << " is enclosed by fluid: its rotations are "
+                           "projected.\n";
+            }
+          }
+        }
+      }
+      problem->SetSolverType(options.solver == 0
+                                 ? Problem::SolverType::SchurCG
+                                 : Problem::SolverType::BlockMINRES);
+      problem->SetRelTol(options.rel_tol);
+    } else {
+      BuildReferential(options);
     }
-    problem->SetSolverType(options.solver == 0
-                               ? Problem::SolverType::SchurCG
-                               : Problem::SolverType::BlockMINRES);
-    problem->SetRelTol(options.rel_tol);
 
     // Harmonic analysis on every interface bounding a solid layer, the
     // surface among them.
@@ -464,8 +528,8 @@ class Case {
                                         BHC::Component::Radial);
       an.tangential = std::make_unique<BHC>(*fes_u, marker, options.lmax,
                                             BHC::Component::Tangential);
-      an.scalar = std::make_unique<BHC>(problem->PotentialSpaceOnBody(),
-                                        marker, options.lmax,
+      an.scalar = std::make_unique<BHC>(AnalysisPotentialSpace(), marker,
+                                        options.lmax,
                                         BHC::Component::Scalar);
       if (f.attribute == manifest.SurfaceAttribute()) {
         surface = static_cast<int>(analyses.size());
@@ -504,10 +568,15 @@ class Case {
     zero = 0.0;
     sigma = analyses[surface].radial->Expansion(zero, false);
     psi = analyses[surface].scalar->Expansion(zero, true);
-    problem->SetSurfaceLoad(*sigma, analyses[surface].radial->Marker());
-    problem->SetTidalPotential(*psi);
+    if (eulerian) {
+      problem->SetSurfaceLoad(*sigma, analyses[surface].radial->Marker());
+      problem->SetTidalPotential(*psi);
+    } else {
+      ref_problem->SetSurfaceLoad(*sigma,
+                                  analyses[surface].radial->Marker());
+    }
 
-    if (options.diagnostics) {
+    if (options.diagnostics && eulerian) {
       const auto residuals = problem->RigidModeResiduals();
       real_t hi = 0.0;
       const real_t lo = fluids.empty()
@@ -534,6 +603,42 @@ class Case {
   const InterfaceAnalysis& Surface() const { return analyses[surface]; }
   bool HasFluid() const { return fluid_attributes.Size() > 0; }
 
+  // What the method supports: the referential family solves the load
+  // problems only for now, and its potential is meaningful (an
+  // observable) on the displacement region, not by layer.
+  bool SupportsTide() const { return eulerian; }
+  bool SupportsProfiles() const { return eulerian; }
+
+  int OuterIterations() const {
+    return eulerian ? problem->LastOuterIterations()
+                    : ref_problem->LastOuterIterations();
+  }
+  int InnerIterations() const {
+    return eulerian ? problem->LastInnerIterations() : 0;
+  }
+
+  const GridFunction& Displacement() const {
+    return eulerian ? problem->Displacement() : ref_problem->Displacement();
+  }
+
+  // The potential field analysed on the interfaces: the Eulerian
+  // methods' own phi1, or the REFERENTIAL zeta1 on the body, whose
+  // interface coefficients the driver converts by the change of
+  // variables phi_l = zeta_l - g u_l with the interface's own gravity
+  // (exact from the layer masses; a projected grad-zeta0 trace loses an
+  // order).
+  const GridFunction& AnalysisPotential() const {
+    return eulerian ? problem->PotentialOnBody()
+                    : ref_problem->PotentialOnBody();
+  }
+  FiniteElementSpace& AnalysisPotentialSpace() {
+    return eulerian ? problem->PotentialSpaceOnBody()
+                    : ref_problem->PotentialSpaceOnBody();
+  }
+  // True when AnalysisPotential() is the referential zeta1, whose
+  // coefficients want the change of variables.
+  bool PotentialIsReferential() const { return !eulerian; }
+
   // Solve for the surface load or the tidal potential of the given
   // coefficients; returns the solver's convergence.
   bool Solve(const Vector& coefficients, bool load) {
@@ -541,8 +646,46 @@ class Case {
     zero = 0.0;
     sigma->SetCoefficients(load ? coefficients : zero);
     psi->SetCoefficients(load ? zero : coefficients);
-    problem->AssembleForce(0.0);
-    return problem->Solve();
+    if (eulerian) {
+      problem->AssembleForce(0.0);
+      return problem->Solve();
+    }
+    MFEM_VERIFY(load,
+                "The referential methods solve the load problems only.");
+    // Independent forcings: do not warm-start across degrees (the gauge
+    // refinement would carry the previous gauge component forward).
+    ref_problem->ResetSolution();
+    ref_problem->AssembleForce(0.0);
+    return ref_problem->Solve();
+  }
+
+  // The load's own potential on the displacement region, for the k'
+  // normalisation: the Eulerian classes' member solve, or the same
+  // Laplace-DtN problem assembled standalone (identical forms, the
+  // fluid mass never enters either).
+  bool SolveLoadPotential(GridFunction& phi_body) {
+    if (eulerian) {
+      return problem->SolveLoadPotential(phi_body);
+    }
+    if (!load_cg_) {
+      SetupLoadPotential();
+    }
+    ParLinearForm b(fes_phi.get());
+    Array<int> marker(parent->bdr_attributes.Max());
+    marker = 0;
+    marker[manifest.SurfaceAttribute() - 1] = 1;
+    b.AddBoundaryIntegrator(new BoundaryLFIntegrator(*sigma), marker);
+    b.Assemble();
+    Vector B(fes_phi->GetTrueVSize()), Phi(fes_phi->GetTrueVSize());
+    b.ParallelAssemble(B);
+    B *= -1.0;
+    Phi = 0.0;
+    load_cg_->Mult(B, Phi);
+    load_phi_ball_->SetFromTrueDofs(Phi);
+    auto* body = dynamic_cast<ParGridFunction*>(&phi_body);
+    MFEM_VERIFY(body, "SolveLoadPotential: a parallel field.");
+    ParSubMesh::Transfer(*load_phi_ball_, *body);
+    return load_cg_->GetConverged();
   }
 
   // The rigid translation that takes the solution to the frame of the
@@ -654,10 +797,16 @@ class Case {
        << ",\n  \"rel_tol\": " << Num(options_.rel_tol)
        << ",\n  \"solver\": \""
        << (options_.solver == 0 ? "schur_cg" : "block_minres")
+       << "\",\n  \"method\": \"" << method
        << "\",\n  \"fluid_treatment\": \""
-       << (options_.gauged ? "gauged" : "dahlen") << "\""
+       << (method == "gauged" ? "gauged" : "dahlen") << "\""
        << ",\n  \"cmb\": \"" << options_.cmb << "\""
-       << (options_.gauged
+       << (method == "slip" || method == "slip_broken"
+               ? ",\n  \"slip_theta\": " + Num(options_.slip_theta) +
+                     ",\n  \"al_iterations\": " +
+                     std::to_string(options_.al_iterations)
+               : std::string())
+       << (method != "dahlen"
                ? ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps) +
                      ",\n  \"gauge_refinements\": " +
                      std::to_string(options_.gauge_refinements)
@@ -688,6 +837,205 @@ class Case {
     return g;
   }
 
+  std::unique_ptr<ParGridFunction> OnMesh(const ParGridFunction& f,
+                                          ParSubMesh& sub) {
+    spaces_.push_back(std::make_unique<ParFiniteElementSpace>(
+        &sub, f.ParFESpace()->FEColl()));
+    auto g = std::make_unique<ParGridFunction>(spaces_.back().get());
+    ParSubMesh::Transfer(f, *g);
+    return g;
+  }
+
+  // The welded referential and the two slipping methods
+  // (doc/gravitating_elasticity.md, doc/slip_interface.tex): bare moduli
+  // from the hydrostatic pressure p0, S_e = -p0 I, phi_e = id.
+  void BuildReferential(const CaseOptions& options) {
+    const bool root = Mpi::Root();
+    MFEM_VERIFY(p0,
+                "The referential methods need the p0 field: re-make the "
+                "case (make_case.py now exports it).");
+    const bool slip = method == "slip" || method == "slip_broken";
+
+    // The buffer: every parent attribute that is not a model layer.
+    Array<int> buffer_attributes;
+    for (int a = 1; a <= parent->attributes.Max(); a++) {
+      if (solid_attributes.Find(a) < 0 && fluid_attributes.Find(a) < 0) {
+        buffer_attributes.Append(a);
+      }
+    }
+    MFEM_VERIFY(buffer_attributes.Size() > 0,
+                "The referential methods need the buffer shell.");
+    buffer_sub_ = std::make_unique<ParSubMesh>(
+        ParSubMesh::CreateFromDomain(*parent, buffer_attributes));
+    fes_buffer_ = std::make_unique<ParFiniteElementSpace>(
+        buffer_sub_.get(), fec_.get(), dim);
+    Vector bb_min, bb_max;
+    parent->GetBoundingBox(bb_min, bb_max);
+    const real_t r_out = bb_max.Normlinf();
+
+    // The constitutive coefficients: on the displacement SubMesh for the
+    // welded method, on the solid AND fluid SubMeshes (mesh-dispatched)
+    // for the slipping ones.
+    p0_solid_ = OnSolid(*p0);
+    p0_c_ = std::make_unique<GridFunctionCoefficient>(p0_solid_.get());
+    Coefficient *kappa_use = kappa_c_.get(), *mu_use = mu_c_.get(),
+                *p0_use = p0_c_.get(), *rho_use = rho_c_.get();
+    if (slip) {
+      MFEM_VERIFY(
+          fluid_attributes.Size() == 1 &&
+              manifest.FluidSolidInterfaces(fluid_attributes[0]).Size() == 1,
+          "The slipping methods support one fluid core inside a solid "
+          "shell for now (the nested-shell extensions are future work).");
+      fluid_sub_ = std::make_unique<ParSubMesh>(
+          ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
+      fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
+                                                       fec_.get(), dim);
+      rho_fluid_ = OnMesh(*rho, *fluid_sub_);
+      kappa_fluid_ = OnMesh(*kappa, *fluid_sub_);
+      mu_fluid_ = OnMesh(*mu, *fluid_sub_);
+      p0_fluid_ = OnMesh(*p0, *fluid_sub_);
+      two_rho_ = std::make_unique<TwoRegionCoefficient>(*rho_solid_,
+                                                        *rho_fluid_);
+      two_kappa_ = std::make_unique<TwoRegionCoefficient>(*kappa_solid_,
+                                                          *kappa_fluid_);
+      two_mu_ = std::make_unique<TwoRegionCoefficient>(*mu_solid_,
+                                                       *mu_fluid_);
+      two_p0_ = std::make_unique<TwoRegionCoefficient>(*p0_solid_,
+                                                       *p0_fluid_);
+      kappa_use = two_kappa_.get();
+      mu_use = two_mu_.get();
+      p0_use = two_p0_.get();
+      rho_use = two_rho_.get();
+      kappa_fluid_c_ =
+          std::make_unique<GridFunctionCoefficient>(kappa_fluid_.get());
+    }
+
+    id_map_ = std::make_unique<IdentityDiffeomorphism>(dim);
+    C_eff_.emplace(IsotropicElasticTensorCoefficient::FromBulkModulus(
+        dim, *kappa_use, *mu_use));
+    C_bare_ = std::make_unique<BareElasticTensorCoefficient>(dim, *C_eff_,
+                                                             *p0_use);
+    neg_p0_ = std::make_unique<ProductCoefficient>(minus_one_, *p0_use);
+    id_mat_ = std::make_unique<IdentityMatrixCoefficient>(dim);
+    S_e_ = std::make_unique<ScalarMatrixProductCoefficient>(*neg_p0_,
+                                                            *id_mat_);
+    ref_rheology_ = std::make_unique<ReferentialElasticRheology>(
+        dim, *C_bare_, *S_e_, *id_map_);
+
+    if (!slip) {
+      ref_problem = std::make_unique<LinearQuasiStaticReferentialProblem>(
+          fes_u.get(), fes_phi.get(), *ref_rheology_, *rho_use, G,
+          options.dtn_degree);
+      Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
+      ref_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
+      if (fluid_attributes.Size() > 0) {
+        gauge_marker_.SetSize(solid->attributes.Max());
+        gauge_marker_ = 0;
+        for (const int a : fluid_attributes) {
+          gauge_marker_[a - 1] = 1;
+        }
+        ref_problem->SetGaugedFluid(gauge_marker_, *kappa_c_,
+                                    options.gauge_eps,
+                                    options.gauge_refinements);
+      }
+      if (root) {
+        std::cout << "Referential (welded, gauged fluid): eps "
+                  << options.gauge_eps << ", "
+                  << options.gauge_refinements << " refinements.\n";
+      }
+    } else {
+      // The interface pressure and the interface marker on the solid
+      // SubMesh, from the manifest's one-sided values.
+      const int fluid_attr = fluid_attributes[0];
+      const int b_itf = manifest.FluidSolidInterfaces(fluid_attr)[0];
+      const int first = manifest.Interfaces().front().attribute;
+      const auto& itf = manifest.Interfaces()[b_itf - first];
+      const int n_bdr = solid->bdr_attributes.Max();
+      Vector pi_values(n_bdr);
+      pi_values = 0.0;
+      pi_values[b_itf - 1] = itf.ValueBeside("p0", fluid_attr);
+      pi_c_ = std::make_unique<PWConstCoefficient>(pi_values);
+      interface_marker_ =
+          MeshManifest::Marker(Array<int>({b_itf}), n_bdr);
+      if (root) {
+        std::cout << "Slipping interface " << itf.name << " at r = "
+                  << itf.radius << ", pi = " << pi_values[b_itf - 1]
+                  << ", theta = " << options.slip_theta << ", "
+                  << options.al_iterations << " AL iterations"
+                  << (method == "slip_broken" ? ", broken zeta" : "")
+                  << ".\n";
+      }
+
+      auto slip_problem =
+          std::make_unique<LinearQuasiStaticSlipReferentialProblem>(
+              fes_u.get(), fes_f_.get(), fes_phi.get(), *ref_rheology_,
+              *rho_use, *pi_c_, interface_marker_, G, options.dtn_degree);
+      Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
+      slip_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
+      slip_problem->SetFluidGauge(*kappa_fluid_c_, options.gauge_eps);
+      slip_problem->SetConstraint(options.slip_theta,
+                                  options.al_iterations);
+      if (method == "slip") {
+        Ef_ = NewRadialFluidExtension(*fes_u, *fes_f_, itf.radius);
+        slip_problem->SetFluidExtension(*Ef_);
+      } else {
+        Array<int> outer_attributes(solid_attributes);
+        outer_attributes.Append(buffer_attributes);
+        outer_attributes.Sort();
+        outer_sub_ = std::make_unique<ParSubMesh>(
+            ParSubMesh::CreateFromDomain(*parent, outer_attributes));
+        fes_zo_ = SubMeshDofInjection::MakeShadowSpace(
+            *static_cast<ParFiniteElementSpace*>(fes_phi.get()),
+            *outer_sub_);
+        slip_problem->EnableBrokenZeta(fes_zo_.get(), options.slip_theta);
+      }
+      ref_problem = std::move(slip_problem);
+    }
+    ref_problem->SetRelTol(options.rel_tol);
+  }
+
+  // The Laplace-DtN solve of the load's own potential, standalone (the
+  // referential classes have no member for it): (K + DtN) Phi / 4 pi G
+  // = -(sigma, chi)_surface, as the Eulerian classes solve it.
+  void SetupLoadPotential() {
+    auto* pfes = static_cast<ParFiniteElementSpace*>(fes_phi.get());
+    load_dtn_ = std::make_unique<PoissonDtNOperator>(
+        pfes->GetComm(), pfes, options_.dtn_degree);
+    load_dtn_->Assemble();
+    load_dtn_rap_ = std::make_unique<RAPOperator>(load_dtn_->RAP());
+    load_k_ = std::make_unique<ParBilinearForm>(pfes);
+    load_k_->AddDomainIntegrator(new DiffusionIntegrator());
+    load_k_->Assemble();
+    Array<int> empty;
+    load_k_->FormSystemMatrix(empty, load_K_);
+    const real_t c = 1.0 / (4.0 * kPi * G);
+    load_A_ = std::make_unique<SumOperator>(load_K_.Ptr(), c,
+                                            load_dtn_rap_.get(), c, false,
+                                            false);
+    // Precondition with the SHIFTED Laplacian: AMG on the singular K
+    // alone can go indefinite (a failed k' normalisation looks like
+    // phi_s = 0 and infinite Love numbers).
+    load_kshift_ = std::make_unique<ParBilinearForm>(pfes);
+    load_kshift_->AddDomainIntegrator(new DiffusionIntegrator());
+    load_shift_.constant = 1e-3;
+    load_kshift_->AddDomainIntegrator(new MassIntegrator(load_shift_));
+    load_kshift_->Assemble();
+    load_kshift_->FormSystemMatrix(empty, load_Kshift_);
+    auto amg = std::make_unique<HypreBoomerAMG>(
+        *load_Kshift_.As<HypreParMatrix>());
+    amg->SetPrintLevel(0);
+    load_prec_ = std::move(amg);
+    load_cg_ = std::make_unique<CGSolver>(pfes->GetComm());
+    load_cg_->SetOperator(*load_A_);
+    load_cg_->SetPreconditioner(*load_prec_);
+    load_cg_->SetRelTol(1e-12);
+    load_cg_->SetAbsTol(0.0);
+    load_cg_->SetMaxIter(10000);
+    load_cg_->SetPrintLevel(0);
+    load_cg_->iterative_mode = false;
+    load_phi_ball_ = std::make_unique<ParGridFunction>(pfes);
+  }
+
   CaseOptions options_;
 
  public:
@@ -698,11 +1046,14 @@ class Case {
   HYPRE_BigInt displacement_unknowns = 0, potential_unknowns = 0;
   double setup_seconds = 0.0;
   Array<int> solid_attributes, fluid_attributes;
+  std::string method;
+  bool eulerian = true;
   std::unique_ptr<ParMesh> parent;
   std::unique_ptr<ParSubMesh> solid;
-  std::unique_ptr<ParGridFunction> rho, kappa, mu;
+  std::unique_ptr<ParGridFunction> rho, kappa, mu, p0;
   std::unique_ptr<ParFiniteElementSpace> fes_u, fes_phi;
   std::unique_ptr<Problem> problem;
+  std::unique_ptr<LinearQuasiStaticReferentialProblem> ref_problem;
   std::vector<InterfaceAnalysis> analyses;
   int surface = -1;
   std::unique_ptr<HarmonicExpansionCoefficient> sigma, psi;
@@ -719,6 +1070,37 @@ class Case {
   ConstantCoefficient zero_{0.0};
   std::unique_ptr<H1_FECollection> fec_;
   std::unique_ptr<IsotropicElasticRheology> rheology_;
+
+  // The referential family (BuildReferential).
+  std::unique_ptr<ParSubMesh> buffer_sub_, fluid_sub_, outer_sub_;
+  std::unique_ptr<ParFiniteElementSpace> fes_buffer_, fes_f_, fes_zo_;
+  std::unique_ptr<ParGridFunction> p0_solid_, p0_fluid_, rho_fluid_,
+      kappa_fluid_, mu_fluid_;
+  std::unique_ptr<GridFunctionCoefficient> p0_c_, kappa_fluid_c_;
+  std::unique_ptr<TwoRegionCoefficient> two_rho_, two_kappa_, two_mu_,
+      two_p0_;
+  std::unique_ptr<IdentityDiffeomorphism> id_map_;
+  std::optional<IsotropicElasticTensorCoefficient> C_eff_;
+  std::unique_ptr<BareElasticTensorCoefficient> C_bare_;
+  ConstantCoefficient minus_one_{-1.0};
+  std::unique_ptr<ProductCoefficient> neg_p0_;
+  std::unique_ptr<IdentityMatrixCoefficient> id_mat_;
+  std::unique_ptr<ScalarMatrixProductCoefficient> S_e_;
+  std::unique_ptr<ReferentialElasticRheology> ref_rheology_;
+  std::unique_ptr<PWConstCoefficient> pi_c_;
+  Array<int> interface_marker_;
+  std::unique_ptr<HypreParMatrix> Evac_, Ef_;
+
+  // The standalone load-potential solve (SetupLoadPotential).
+  std::unique_ptr<PoissonDtNOperator> load_dtn_;
+  std::unique_ptr<RAPOperator> load_dtn_rap_;
+  std::unique_ptr<ParBilinearForm> load_k_, load_kshift_;
+  OperatorHandle load_K_, load_Kshift_;
+  ConstantCoefficient load_shift_{1e-3};
+  std::unique_ptr<SumOperator> load_A_;
+  std::unique_ptr<Solver> load_prec_;
+  std::unique_ptr<CGSolver> load_cg_;
+  std::unique_ptr<ParGridFunction> load_phi_ball_;
 };
 
 }  // namespace benchmark
