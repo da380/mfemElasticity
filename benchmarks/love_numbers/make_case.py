@@ -46,6 +46,11 @@ BASENAME = "case"
 #: The file of radial solutions the field driver reads.
 FIELDS_FILE = "reference_fields.txt"
 
+#: The exact radial profiles of the model's fields, for the relabelled
+#: (mapped) benchmark: composing a radial coefficient with a mapping
+#: needs its value at |xi(x)|, which the L2 fields cannot give.
+PROFILES_FILE = "radial_profiles.txt"
+
 #: The forcings whose radial solutions are kept, for plotting.
 PROFILE_FORCINGS = ("load", "tide")
 
@@ -145,6 +150,32 @@ def write_reference_fields(model: Model, lmax: int, path: Path, *,
                         f"{line(phi[part])}\n")
 
 
+def write_radial_profiles(model: Model, path: Path, *,
+                          nodes: int = 33) -> None:
+    """The model's fields (and p0) at Chebyshev points of the second kind
+    in each layer, exactly, for the relabelled benchmark
+    (relabelling.hpp): per layer a line `layer <attribute> <r_lo> <r_hi>
+    <nodes>`, the radii, then one line per field of FIELDS. The end
+    points sit just inside the layer."""
+    b = np.asarray(model.skeleton.boundaries, dtype=float)
+    nudge = 1e-12 * b[-1]
+    x = np.cos(np.pi * np.arange(nodes) / (nodes - 1))[::-1]  # -1 .. 1
+
+    def line(values: np.ndarray) -> str:
+        return " ".join(f"{v:.17e}" for v in np.asarray(values, dtype=float))
+
+    with path.open("w") as f:
+        f.write(f"layers {len(model.layers)} nodes {nodes} fields "
+                + " ".join(FIELDS) + "\n")
+        for i, layer in enumerate(model.layers):
+            lo, hi = b[i], b[i + 1]
+            r = 0.5 * (lo + hi) + 0.5 * (hi - lo - 2.0 * nudge) * x
+            f.write(f"layer {i + 1} {lo:.17e} {hi:.17e} {nodes}\n"
+                    f"{line(r)}\n")
+            for name in FIELDS:
+                f.write(f"{line(layer.fields[name](r))}\n")
+
+
 def reference(model: Model, lmax: int, *, per_layer: int) -> dict:
     """What pyslfp gives for the model, in the model's units."""
     love: LoveNumbers = love_numbers(model, lmax)
@@ -218,6 +249,7 @@ def main() -> None:
           f"g = {ref['surface_gravity']:.6g}")
     write_reference_fields(model, args.lmax, args.out / FIELDS_FILE,
                            nodes=args.field_nodes)
+    write_radial_profiles(model, args.out / PROFILES_FILE)
     if args.reference_only:
         return
 

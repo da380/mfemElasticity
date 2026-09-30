@@ -284,3 +284,33 @@ and the whole follows.
    variant 2a (machine precision), then 2b against pyslfp through the
    mapping. The `meshes/aspherical_body.py` family provides
    independently-generated aspherical meshes where 2b wants them.
+
+   *Done (30 Sep 2026), with one finding.* Both variants live in the
+   Love-number campaign (`benchmarks/README.md`, "The relabelled 3-D
+   benchmark"): `love_benchmark -map` is 2b (interior relabelling of
+   `relabelling.hpp`, pointwise identity with identity gradient on every
+   interface, exact-F; referential and broken-ζ methods), and
+   `relabelled_identity` is 2a at the level of the full coupled solve.
+   The solver-level identity holds to ~1e-6 — bounded only by the DtN
+   centring itself on the (shifted) mesh centroid, superlinear in the
+   amplitude — wherever every assembled term is covariant, which
+   certifies the whole mapped chain at once: stiffness, equilibrium
+   stress, gravity couplings, Poisson block, loads, extensions and
+   projectors. The finding: the fluid *gauge penalty* is the one
+   non-covariant assembly piece (a stock integrator on each side's own
+   fluid geometry), and because the gauge subspace has stiffness
+   `O(ε)`, an `O(εA)` penalty difference produces `O(A)` differences in
+   the gauge representative (measured: `u` 4e-3 for the welded gauged
+   fluid, 1e-1 through the slipping interface forms, at `A` = 0.02 and
+   `h` = 0.35, while ζ stays at 1e-4). Physics is unaffected — the
+   penalty is gauge, and the exact-F benchmark against pyslfp is
+   insensitive to it — but a mapping-aware gauge penalty (the
+   deviatoric form through `MaterialStiffnessIntegrator` with a
+   pulled-back tensor) would make the identity strict on gauge-bearing
+   cases too, and is the natural follow-up. Two prerequisites of the
+   identity that the driver documents: the two sides must share one
+   vacuum-extension matrix (gauge *data*; the builder samples the body
+   side of the surface, which differs at `O(A)` between the meshes),
+   and a nodal-interpolant mapping must be transplanted onto every
+   SubMesh the classes assemble on (`MultiMeshDiffeomorphism` in the
+   benchmark; a cross-mesh `GridFunction` evaluation is garbage).

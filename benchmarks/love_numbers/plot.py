@@ -107,6 +107,7 @@ def read_run(path: Path, *, fluid: bool) -> Run:
                    else "dahlen")
     cmb = r.get("cmb", "full")
     schur = r.get("solver") == "schur_cg"
+    map_amplitude = r.get("map_amplitude", 0.0)
     values: dict[str, dict[int, float]] = {key: {} for key, *_ in QUANTITIES}
     seconds = r["setup_seconds"]
     solve_seconds: dict[int, float] = {}
@@ -146,6 +147,9 @@ def read_run(path: Path, *, fluid: bool) -> Run:
     if schur:
         tag += "_schur"
         label += " (schur)"
+    if map_amplitude:
+        tag += f"_map{map_amplitude:g}"
+        label += f" (map {map_amplitude:g})"
     return Run(h=h, order=r["order"], ranks=r["ranks"], seconds=seconds,
                unknowns=r["displacement_unknowns"] + r["potential_unknowns"],
                values=values, label=label, method=method, tag=tag,

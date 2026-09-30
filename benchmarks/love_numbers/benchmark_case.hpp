@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "mfemElasticity.hpp"
+#include "relabelling.hpp"
 
 namespace benchmark {
 
@@ -235,6 +236,8 @@ struct CaseOptions {
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   int al_iterations = 8;
+  real_t map_amplitude = 0.0;
+  bool map_interp = false;
 
   void Add(OptionsParser& args) {
     args.AddOption(&method, "-method", "--method",
@@ -247,6 +250,19 @@ struct CaseOptions {
                    "'slip_broken' (broken zeta as well; "
                    "doc/slip_interface.tex). The referential methods need "
                    "a case with the p0 field.");
+    args.AddOption(&map_amplitude, "-map", "--map-amplitude",
+                   "Amplitude of the interior relabelling of the "
+                   "relabelled 3-D benchmark (relabelling.hpp): the same "
+                   "spherical physical problem described from laterally "
+                   "relabelled coordinates, so the reference stays exact "
+                   "while every mapped code path acts. Referential "
+                   "methods only (referential, slip_broken); needs the "
+                   "case's radial_profiles.txt. Zero (default): off.");
+    args.AddOption(&map_interp, "-map-interp", "--map-interpolated-f",
+                   "-map-exact", "--map-exact-f",
+                   "Use the nodal interpolant of the relabelling (the "
+                   "discrete change-of-variables mode) instead of the "
+                   "exact analytic mapping.");
     args.AddOption(&slip_theta, "-theta", "--slip-theta",
                    "Constraint penalty of the slipping methods (both the "
                    "normal and, broken, the scalar jump).");
@@ -801,6 +817,11 @@ class Case {
        << "\",\n  \"fluid_treatment\": \""
        << (method == "gauged" ? "gauged" : "dahlen") << "\""
        << ",\n  \"cmb\": \"" << options_.cmb << "\""
+       << (options_.map_amplitude != 0.0
+               ? ",\n  \"map_amplitude\": " + Num(options_.map_amplitude) +
+                     ",\n  \"map_mode\": \"" +
+                     (options_.map_interp ? "interpolated" : "exact") + "\""
+               : std::string())
        << (method == "slip" || method == "slip_broken"
                ? ",\n  \"slip_theta\": " + Num(options_.slip_theta) +
                      ",\n  \"al_iterations\": " +
@@ -873,13 +894,100 @@ class Case {
     parent->GetBoundingBox(bb_min, bb_max);
     const real_t r_out = bb_max.Normlinf();
 
+    // The relabelling of the mapped benchmark: built before the
+    // coefficients, which it composes.
+    const bool mapped = options.map_amplitude != 0.0;
+    Diffeomorphism* map_use = nullptr;
+    if (mapped) {
+      MFEM_VERIFY(method == "referential" || method == "slip_broken",
+                  "-map: the mapped benchmark runs through the "
+                  "referential organisations that are assembled mapped "
+                  "(referential, slip_broken); the single-valued slip "
+                  "refuses maps by design and the Eulerian classes are "
+                  "unmapped.");
+      const std::string& mpath = manifest.Path();
+      const auto slash = mpath.find_last_of('/');
+      profiles_ = std::make_unique<RadialProfiles>(
+          (slash == std::string::npos ? std::string()
+                                      : mpath.substr(0, slash + 1)) +
+          "radial_profiles.txt");
+      xi_analytic_ = std::make_unique<CallableDiffeomorphism>(
+          InteriorRelabelling(dim, profiles_->Boundaries(),
+                              options.map_amplitude));
+      if (options.map_interp) {
+        xi_interp_ = std::make_unique<MultiMeshDiffeomorphism>(
+            *xi_analytic_, *parent);
+        xi_interp_->AddMesh(*solid);
+        xi_interp_->AddMesh(*buffer_sub_);
+        map_use = xi_interp_.get();
+      } else {
+        map_use = xi_analytic_.get();
+      }
+      map_use_ = map_use;
+      // Seatbelts: identity on and outside the DtN sphere (the layer's
+      // convention) and on every interface (this benchmark's own: the
+      // physical problem must stay the referenced spherical one and the
+      // interface analyses untouched).
+      {
+        auto outer_marker = ExternalBoundaryMarker(parent.get());
+        const real_t d_out =
+            MaxIdentityDeviation(*xi_analytic_, *parent, outer_marker);
+        Array<int> itf_marker(parent->bdr_attributes.Max());
+        itf_marker = 0;
+        for (const auto& f : manifest.Interfaces()) {
+          itf_marker[f.attribute - 1] = 1;
+        }
+        const real_t d_itf =
+            MaxIdentityDeviation(*xi_analytic_, *parent, itf_marker);
+        // The interface check sees the DISCRETE facets: their
+        // quadrature points sit off the exact sphere by the geometric
+        // interpolation error, and the bump vanishes quadratically, so
+        // the deviation there is that error SQUARED — the geometric
+        // floor, not a defect of the mapping.
+        MFEM_VERIFY(d_out < 1e-12 && d_itf < 1e-6,
+                    "-map: the relabelling must be the identity on the "
+                    "sphere and on every interface (deviations "
+                        << d_out << ", " << d_itf << ").");
+        if (Mpi::Root()) {
+          std::cout << "Relabelled: amplitude " << options.map_amplitude
+                    << (options.map_interp ? ", interpolated F"
+                                           : ", exact F")
+                    << ", interface identity to " << d_itf << "\n";
+        }
+      }
+    }
+
     // The constitutive coefficients: on the displacement SubMesh for the
     // welded method, on the solid AND fluid SubMeshes (mesh-dispatched)
-    // for the slipping ones.
+    // for the slipping ones; in the mapped benchmark, the exact radial
+    // profiles composed with the relabelling (position-based, valid on
+    // every SubMesh) with the density carrying the Jacobian.
     p0_solid_ = OnSolid(*p0);
     p0_c_ = std::make_unique<GridFunctionCoefficient>(p0_solid_.get());
     Coefficient *kappa_use = kappa_c_.get(), *mu_use = mu_c_.get(),
                 *p0_use = p0_c_.get(), *rho_use = rho_c_.get();
+    if (mapped) {
+      auto profile = [this](const char* name) {
+        return [this, name](const Vector& y) {
+          return profiles_->Eval(name, y.Norml2());
+        };
+      };
+      comp_rho_ = std::make_unique<TransformedFunctionCoefficient>(
+          *map_use, profile("rho"));
+      comp_kappa_ = std::make_unique<TransformedFunctionCoefficient>(
+          *map_use, profile("kappa"));
+      comp_mu_ = std::make_unique<TransformedFunctionCoefficient>(
+          *map_use, profile("mu"));
+      comp_p0_ = std::make_unique<TransformedFunctionCoefficient>(
+          *map_use, profile("p0"));
+      map_jac_ = std::make_unique<JacobianCoefficient>(*map_use);
+      rho_tilde_ =
+          std::make_unique<ProductCoefficient>(*map_jac_, *comp_rho_);
+      kappa_use = comp_kappa_.get();
+      mu_use = comp_mu_.get();
+      p0_use = comp_p0_.get();
+      rho_use = rho_tilde_.get();
+    }
     if (slip) {
       MFEM_VERIFY(
           fluid_attributes.Size() == 1 &&
@@ -890,6 +998,14 @@ class Case {
           ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
       fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
                                                        fec_.get(), dim);
+    }
+    if (slip && mapped) {
+      kappa_fluid_c_dispatch_ = comp_kappa_.get();
+      if (xi_interp_) {
+        xi_interp_->AddMesh(*fluid_sub_);
+      }
+    }
+    if (slip && !mapped) {
       rho_fluid_ = OnMesh(*rho, *fluid_sub_);
       kappa_fluid_ = OnMesh(*kappa, *fluid_sub_);
       mu_fluid_ = OnMesh(*mu, *fluid_sub_);
@@ -908,6 +1024,7 @@ class Case {
       rho_use = two_rho_.get();
       kappa_fluid_c_ =
           std::make_unique<GridFunctionCoefficient>(kappa_fluid_.get());
+      kappa_fluid_c_dispatch_ = kappa_fluid_c_.get();
     }
 
     id_map_ = std::make_unique<IdentityDiffeomorphism>(dim);
@@ -919,8 +1036,22 @@ class Case {
     id_mat_ = std::make_unique<IdentityMatrixCoefficient>(dim);
     S_e_ = std::make_unique<ScalarMatrixProductCoefficient>(*neg_p0_,
                                                             *id_mat_);
+    MatrixCoefficient* C_final = C_bare_.get();
+    MatrixCoefficient* S_final = S_e_.get();
+    Diffeomorphism* phi_e = id_map_.get();
+    if (mapped) {
+      // The pulled-back constitutive state: C~ and S~ from the composed
+      // (bare) tensors, phi_e the relabelling (doc/mappings.md).
+      C_rel_ = std::make_unique<RelabelledElasticTensorCoefficient>(
+          dim, *C_bare_, *map_use);
+      S_rel_ = std::make_unique<PullbackStressCoefficient>(dim, *S_e_,
+                                                           *map_use);
+      C_final = C_rel_.get();
+      S_final = S_rel_.get();
+      phi_e = map_use;
+    }
     ref_rheology_ = std::make_unique<ReferentialElasticRheology>(
-        dim, *C_bare_, *S_e_, *id_map_);
+        dim, *C_final, *S_final, *phi_e);
 
     if (!slip) {
       ref_problem = std::make_unique<LinearQuasiStaticReferentialProblem>(
@@ -972,7 +1103,8 @@ class Case {
               *rho_use, *pi_c_, interface_marker_, G, options.dtn_degree);
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       slip_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
-      slip_problem->SetFluidGauge(*kappa_fluid_c_, options.gauge_eps);
+      slip_problem->SetFluidGauge(*kappa_fluid_c_dispatch_,
+                                  options.gauge_eps);
       slip_problem->SetConstraint(options.slip_theta,
                                   options.al_iterations);
       if (method == "slip") {
@@ -984,6 +1116,9 @@ class Case {
         outer_attributes.Sort();
         outer_sub_ = std::make_unique<ParSubMesh>(
             ParSubMesh::CreateFromDomain(*parent, outer_attributes));
+        if (xi_interp_) {
+          xi_interp_->AddMesh(*outer_sub_);
+        }
         fes_zo_ = SubMeshDofInjection::MakeShadowSpace(
             *static_cast<ParFiniteElementSpace*>(fes_phi.get()),
             *outer_sub_);
@@ -1077,6 +1212,18 @@ class Case {
   std::unique_ptr<ParGridFunction> p0_solid_, p0_fluid_, rho_fluid_,
       kappa_fluid_, mu_fluid_;
   std::unique_ptr<GridFunctionCoefficient> p0_c_, kappa_fluid_c_;
+  Coefficient* kappa_fluid_c_dispatch_ = nullptr;
+  // The relabelled (mapped) benchmark.
+  std::unique_ptr<RadialProfiles> profiles_;
+  std::unique_ptr<CallableDiffeomorphism> xi_analytic_;
+  std::unique_ptr<MultiMeshDiffeomorphism> xi_interp_;
+  Diffeomorphism* map_use_ = nullptr;
+  std::unique_ptr<TransformedFunctionCoefficient> comp_rho_, comp_kappa_,
+      comp_mu_, comp_p0_;
+  std::unique_ptr<JacobianCoefficient> map_jac_;
+  std::unique_ptr<ProductCoefficient> rho_tilde_;
+  std::unique_ptr<RelabelledElasticTensorCoefficient> C_rel_;
+  std::unique_ptr<PullbackStressCoefficient> S_rel_;
   std::unique_ptr<TwoRegionCoefficient> two_rho_, two_kappa_, two_mu_,
       two_p0_;
   std::unique_ptr<IdentityDiffeomorphism> id_map_;

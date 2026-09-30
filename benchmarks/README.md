@@ -99,6 +99,47 @@ with a fluid, every method EXCEPT `dahlen` is comparable with the
 reference — the Dahlen treatment differs there by design, the
 compressible descriptions do not.
 
+### The relabelled 3-D benchmark
+
+The flagship of the aspherical verification (doc/mappings.md): the SAME
+spherical physical problem described from laterally relabelled
+coordinates, so the pyslfp reference stays exact while every mapped
+code path acts. The interior relabelling (`relabelling.hpp`) is the
+pointwise identity — with identity gradient — on every interface and on
+and outside the surface, and genuinely three-dimensional in between:
+every pulled-back coefficient carries full lateral variation, F is
+non-radial everywhere between the interfaces, and the pulled-back
+elastic tensor has no minor symmetry. Two modes:
+
+```
+./run fluid_core --h 0.3 --order 2 --np 8 \
+    --method referential slip_broken --map 0.02
+mpiexec -np 8 ./relabelled_identity -c runs/two_solid/h0.3/case.json \
+    -o 2 -map 0.02
+```
+
+- `--map A` (exact analytic F): the mapped solve must reproduce the
+  same pyslfp numbers as the unmapped one, at the discretisation level
+  plus the geometric floor — variant 2b of the plan. Referential
+  methods only (`referential`, `slip_broken`; the single-valued slip
+  refuses maps by design, the Eulerian classes are unmapped). Needs a
+  case with `radial_profiles.txt` (re-make older cases); the mapped
+  runs' `spurious` column now measures lateral leakage, a free check
+  that the lateral machinery cancels exactly.
+- `relabelled_identity` (interpolated F): the discrete
+  change-of-variables identity at the level of the full coupled SOLVE —
+  the mapped assembly on the reference mesh against the standard
+  assembly on the nodal-image mesh, entrywise. STRICT on gauge-free
+  cases (solid models, welded): agreement to ~1e-6, bounded only by the
+  DtN centring on the shifted mesh centroid, with any unmapped assembly
+  term showing up linearly in the amplitude. On gauge-bearing cases
+  (gauged fluid, slipping interface) the stock gauge penalty is the one
+  non-covariant assembly piece and bounds the agreement (measured u
+  4e-3 welded-gauged, 1e-1 through the slip interface forms at
+  A = 0.02, h = 0.35, zeta 1e-4): the run is informational there, the
+  covariant terms being certified by the strict solid runs; a
+  mapping-aware gauge penalty is the noted follow-up.
+
 Mind the physics when refining a cross-method ladder: on a core that is
 not neutrally stratified the compressible treatments (`gauged` and the
 referential family) differ from the Dahlen/pyslfp secular response by

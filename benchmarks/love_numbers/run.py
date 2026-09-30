@@ -117,6 +117,12 @@ def main() -> None:
     p.add_argument("--fluid", choices=("dahlen", "gauged"), default=None,
                    help="deprecated alias: --fluid gauged adds gauged to "
                         "--method")
+    p.add_argument("--map", type=float, default=0.0, metavar="A",
+                   help="amplitude of the interior relabelling: the 3-D "
+                        "relabelled benchmark (relabelling.hpp) — the same "
+                        "spherical physics described from laterally mapped "
+                        "coordinates, referential methods only; results "
+                        "carry a _map<A> suffix")
     p.add_argument("--cmb", choices=("full", "nomass", "uniform", "winkler"),
                    default="full",
                    help="Dahlen-path fluid-interface approximation "
@@ -201,14 +207,20 @@ def main() -> None:
                                       for s in args.solver):
             if method not in ("dahlen", "gauged") and solver != args.solver[0]:
                 continue  # the referential solvers ignore the choice
+            mapped = args.map != 0.0
+            if mapped and method not in ("referential", "slip_broken"):
+                continue  # the mapped benchmark runs the mapped methods
             suffix = "" if method == "dahlen" else f"_{method}"
             if args.cmb != "full" and method == "dahlen":
                 suffix += f"_{args.cmb}"
+            if mapped:
+                suffix += f"_map{args.map:g}"
             if solver == 0:
                 suffix += "_schur"
             common = ["-c", str(case / "case.json"), "-o", str(order),
                       "-rt", f"{args.rel_tol:g}", "-s", str(solver),
                       "-method", method,
+                      *(["-map", f"{args.map:g}"] if mapped else []),
                       *(["-cmb", args.cmb]
                         if args.cmb != "full" and method == "dahlen"
                         else []),
