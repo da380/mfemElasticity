@@ -10,7 +10,10 @@
 // stable there); the table reports, per run,
 //
 //   error   relative max-norm error of the internal variables at t_final
-//   u-error relative max-norm error of the displacement at t_final
+//   u-error relative max-norm error of the displacement over the HISTORY:
+//           the worst of t_final and four interior checkpoints, so that a
+//           coarse step cannot alias a fast load and still score well on
+//           the final state (the checkpoint solves are not counted as cost)
 //   solves  elastic solves (the cost unit: one linear system each)
 //   asm     operator assemblies (a change of effective modulus)
 //   pc      preconditioner setups (the expensive part of an assembly)
@@ -77,9 +80,11 @@
 
 #include <chrono>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <numbers>
 #include <string>
 #include <vector>
 
@@ -165,9 +170,13 @@ int main(int argc, char* argv[]) {
   real_t tau_ratio = 1.0;
   real_t t_final = 4.0;
   real_t p0 = 0.05;
+  // The default period pi tau keeps the historical pull sin(2 t / tau).
+  real_t load_period = std::numbers::pi_v<real_t>;
+  real_t load_phase = 0.0;
   int n_ref = 400;  // reference RK4 steps
   const char* steps_arg = "1,2,4,8,16";
   const char* targets_arg = "";
+  const char* out_file = "";
   int max_steps_per_tau = 4096;
 
   OptionsParser args(argc, argv);
@@ -194,6 +203,17 @@ int main(int argc, char* argv[]) {
                  "none).");
   args.AddOption(&max_steps_per_tau, "-kmax", "--max-steps-per-tau",
                  "Give up on a target beyond this many steps per tau.");
+  args.AddOption(&load_period, "-tp", "--load-period",
+                 "Period of the pull's oscillation, in units of tau: "
+                 "small is a load-controlled run, large a "
+                 "relaxation-controlled one.");
+  args.AddOption(&load_phase, "-ph", "--load-phase",
+                 "Phase of the pull (radians): keep the checkpoint "
+                 "times off the load's nodes, or a coarse step can "
+                 "sample an aliased trajectory at matching phases and "
+                 "score well stroboscopically.");
+  args.AddOption(&out_file, "-out", "--output",
+                 "Write the cost-to-target table as JSON (with -targets).");
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
@@ -238,10 +258,14 @@ int main(int argc, char* argv[]) {
 
   // Loads: attribute 1 clamped, a pull on attribute 2 varying on the tau
   // scale.
+  const real_t omega =
+      2.0 * std::numbers::pi_v<real_t> / (load_period * tau0);
   VectorFunctionCoefficient pull(
-      dim, [p0, tau0](const Vector& /*x*/, real_t t, Vector& f) {
+      dim, [p0, omega, load_phase](const Vector& /*x*/, real_t t,
+                                   Vector& f) {
         f = 0.0;
-        f[f.Size() - 1] = -p0 * (1.0 + 0.5 * std::sin(2.0 * t / tau0));
+        f[f.Size() - 1] =
+            -p0 * (1.0 + 0.5 * std::sin(omega * t + load_phase));
       });
   Array<int> ess_bdr(mesh.bdr_attributes.Max()), marker(mesh.bdr_attributes.Max());
   ess_bdr = 0;
@@ -265,10 +289,16 @@ int main(int argc, char* argv[]) {
          << "\n";
   }
 
-  // One problem per run, so that the counters and warm starts are clean.
+  // One problem per run, so that the counters and warm starts are
+  // clean. The displacement is recorded at n_check interior checkpoints
+  // as well as t_final: the error is judged against the HISTORY, or a
+  // coarse step could alias a fast load and still land the final state.
+  // The checkpoint solves are pure output and are taken out of the cost.
+  const int n_check = 4;
   auto run = [&](const std::string& name, ODESolver& ode, int n_steps,
                  bool adaptive, real_t rtol, Vector& m_out, Vector& u_out,
-                 Cost& cost, int& steps_taken, int corrector = 1) {
+                 std::vector<Vector>& checks_out, Cost& cost,
+                 int& steps_taken, int corrector = 1) {
     LinearQuasiStaticClampedProblem problem(&fes, rheology, ess_bdr, pull,
                                             marker);
     ViscoelasticOperator visco(problem);
@@ -278,22 +308,41 @@ int main(int argc, char* argv[]) {
     m = 0.0;
     real_t t = 0.0;
     real_t dt = t_final * tau0 / n_steps;
+    checks_out.clear();
+    bool ok = true;
+    auto checkpoint = [&]() {
+      ok = visco.SolveElastic(m, t) && ok;
+      Vector& u = checks_out.emplace_back();
+      problem.Displacement().GetTrueDofs(u);
+    };
     const Counters c0(problem);
     const auto w0 = chrono::steady_clock::now();
     if (adaptive) {
       auto* ad = dynamic_cast<AdaptiveExponentialTrapezoidSolver*>(&ode);
       ad->SetTolerances(rtol, 1e-12);
-      steps_taken = ad->Integrate(m, t, t_final * tau0, dt);
+      steps_taken = 0;
+      for (int c = 1; c <= n_check; c++) {
+        const real_t t_end = t_final * tau0 * c / n_check;
+        steps_taken += ad->Integrate(m, t, t_end, dt);
+        if (c < n_check) {
+          checkpoint();
+        }
+      }
     } else {
       for (int s = 0; s < n_steps; s++) {
         ode.Step(m, t, dt);
+        if (s + 1 < n_steps &&
+            static_cast<long>(s + 1) * n_check % n_steps == 0) {
+          checkpoint();
+        }
       }
       steps_taken = n_steps;
     }
-    const bool ok = visco.SolveElastic(m, t);
+    ok = visco.SolveElastic(m, t) && ok;
     const auto w1 = chrono::steady_clock::now();
     const Counters c1(problem);
-    cost.solves = c1.solves - c0.solves;
+    cost.solves = c1.solves - c0.solves -
+                  static_cast<int>(checks_out.size());
     cost.assemblies = c1.assemblies - c0.assemblies;
     cost.setups = c1.setups - c0.setups;
     cost.its = c1.its - c0.its;
@@ -310,6 +359,7 @@ int main(int argc, char* argv[]) {
   // Reference: RK4 at a small step (explicit, so every step costs four
   // solves; stable since dt << tau_min).
   Vector m_ref, u_ref;
+  std::vector<Vector> checks_ref;
   {
     RK4Solver rk4;
     Cost c;
@@ -318,7 +368,13 @@ int main(int argc, char* argv[]) {
       n_ref = std::max(n_ref, static_cast<int>(std::round(
                                   100.0 * t_final * tau0 / tau_min)));
     }
-    run("reference", rk4, n_ref, false, 0.0, m_ref, u_ref, c, n);
+    // A fast load must be resolved by the reference as well, and the
+    // step count lands on the checkpoints.
+    n_ref = std::max(n_ref, static_cast<int>(std::round(
+                                100.0 * t_final / load_period)));
+    n_ref = ((n_ref + n_check - 1) / n_check) * n_check;
+    run("reference", rk4, n_ref, false, 0.0, m_ref, u_ref, checks_ref, c,
+        n);
     if (Root()) {
       cout << "Reference: RK4, " << n_ref << " steps, " << c.solves
            << " solves, " << std::fixed << std::setprecision(2) << c.seconds
@@ -355,12 +411,25 @@ int main(int argc, char* argv[]) {
          << std::setw(6) << "asm" << std::setw(5) << "pc" << std::setw(8)
          << "its" << std::setw(9) << "time\n";
   }
+  // The displacement error over the HISTORY: the worst of the final
+  // state and the common checkpoints.
+  auto history_error = [&](const Vector& u,
+                           const std::vector<Vector>& checks) {
+    double e = RelMaxDiff(u, u_ref);
+    if (checks.size() == checks_ref.size()) {
+      for (size_t i = 0; i < checks.size(); i++) {
+        e = std::max(e, RelMaxDiff(checks[i], checks_ref[i]));
+      }
+    }
+    return e;
+  };
   auto report = [&](const std::string& name, const std::string& dt_label,
-                    const Vector& m, const Vector& u, const Cost& c) {
+                    const Vector& m, const Vector& u,
+                    const std::vector<Vector>& checks, const Cost& c) {
     // The metrics reduce over ranks; every rank calls them, root prints.
     const bool finite = m.Size() > 1 && IsFinite(m);
     const double e_m = finite ? RelMaxDiff(m, m_ref) : 0.0;
-    const double e_u = finite ? RelMaxDiff(u, u_ref) : 0.0;
+    const double e_u = finite ? history_error(u, checks) : 0.0;
     if (!Root()) {
       return;
     }
@@ -407,22 +476,25 @@ int main(int argc, char* argv[]) {
       }
       auto ode = sc.make();
       Vector m, u;
+      std::vector<Vector> checks;
       Cost c;
       int n;
-      run(sc.name, *ode, n_steps, false, 0.0, m, u, c, n, sc.corrector);
-      report(sc.name, "1/" + std::to_string(k), m, u, c);
+      run(sc.name, *ode, n_steps, false, 0.0, m, u, checks, c, n,
+          sc.corrector);
+      report(sc.name, "1/" + std::to_string(k), m, u, checks, c);
     }
   }
   for (real_t rtol : {1e-2, 1e-3, 1e-4}) {
     AdaptiveExponentialTrapezoidSolver ode;
     Vector m, u;
+    std::vector<Vector> checks;
     Cost c;
     int n;
-    run("Adaptive", ode, 4, true, rtol, m, u, c, n);
+    run("Adaptive", ode, 4, true, rtol, m, u, checks, c, n);
     std::ostringstream label;
     label << n << " st";
     report("Adaptive " + std::to_string(rtol).substr(0, 6), label.str(), m, u,
-           c);
+           checks, c);
   }
   if (Root()) {
     cout << "\nThe reference is RK4 at dt = tau/" << n_ref / t_final
@@ -440,11 +512,18 @@ int main(int argc, char* argv[]) {
          << std::setw(11) << "u-error" << std::setw(8) << "solves"
          << std::setw(6) << "asm" << std::setw(5) << "pc" << std::setw(8)
          << "its" << std::setw(9) << "time\n";
+    struct TargetRow {
+      std::string scheme, dt;
+      double target, err;
+      Cost c;
+    };
+    std::vector<TargetRow> table;
     auto row = [&](const std::string& name, double target,
                    const std::string& dt_label, double err, const Cost& c) {
       if (!Root()) {
         return;
       }
+      table.push_back({name, dt_label, target, err, c});
       cout << std::left << std::setw(14) << name << std::right << std::setw(9)
            << std::scientific << std::setprecision(0) << target
            << std::setw(9) << dt_label;
@@ -470,11 +549,13 @@ int main(int argc, char* argv[]) {
           }
           auto ode = sc.make();
           Vector m, u;
+          std::vector<Vector> checks;
           Cost c;
           int n;
-          run(sc.name, *ode, n_steps, false, 0.0, m, u, c, n, sc.corrector);
+          run(sc.name, *ode, n_steps, false, 0.0, m, u, checks, c, n,
+              sc.corrector);
           if (m.Size() > 1 && IsFinite(m)) {
-            const double err = RelMaxDiff(u, u_ref);
+            const double err = history_error(u, checks);
             if (err <= target) {
               row(sc.name, target, "1/" + std::to_string(k), err, c);
               found = true;
@@ -491,10 +572,11 @@ int main(int argc, char* argv[]) {
         for (double rtol = 0.1; rtol > 1e-8; rtol *= 0.5) {
           AdaptiveExponentialTrapezoidSolver ode;
           Vector m, u;
+          std::vector<Vector> checks;
           Cost c;
           int n;
-          run("Adaptive", ode, 4, true, rtol, m, u, c, n);
-          const double err = RelMaxDiff(u, u_ref);
+          run("Adaptive", ode, 4, true, rtol, m, u, checks, c, n);
+          const double err = history_error(u, checks);
           if (err <= target) {
             std::ostringstream label;
             label << n << " st";
@@ -513,6 +595,29 @@ int main(int argc, char* argv[]) {
       if (Root()) {
         cout << "\n";
       }
+    }
+    if (Root() && out_file[0] != '\0') {
+      std::ofstream os(out_file);
+      os << "{\n  \"tau_ratio\": " << tau_ratio
+         << ",\n  \"gamma\": " << gamma0
+         << ",\n  \"load_period\": " << load_period
+         << ",\n  \"t_final\": " << t_final
+         << ",\n  \"reference_steps\": " << n_ref
+         << ",\n  \"unknowns\": " << n_u << ",\n  \"rows\": [\n";
+      for (size_t i = 0; i < table.size(); i++) {
+        const auto& r = table[i];
+        os << "    {\"scheme\": \"" << r.scheme << "\", \"target\": "
+           << std::scientific << r.target << ", \"dt\": \"" << r.dt
+           << "\", \"reached\": " << (r.err >= 0.0 ? "true" : "false")
+           << ", \"u_error\": " << (r.err >= 0.0 ? r.err : -1.0)
+           << ", \"solves\": " << r.c.solves << ", \"assemblies\": "
+           << r.c.assemblies << ", \"setups\": " << r.c.setups
+           << ", \"iterations\": " << r.c.its << ", \"seconds\": "
+           << std::fixed << std::setprecision(3) << r.c.seconds << "}"
+           << (i + 1 < table.size() ? "," : "") << "\n";
+      }
+      os << "  ]\n}\n";
+      cout << "Wrote " << out_file << "\n";
     }
   }
   return 0;

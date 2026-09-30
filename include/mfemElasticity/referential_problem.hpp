@@ -378,6 +378,16 @@ class LinearQuasiStaticReferentialProblem
                           mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
                           int refinements = 3);
 
+  /** @brief As the base, but the Deviatoric penalty is assembled
+   * covariantly through the rheology's equilibrium mapping when the
+   * caller passes no map of its own, so that a relabelled problem's
+   * penalty is the exact pull-back of the unmapped one. */
+  void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
+                      mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
+                      int refinements = 2,
+                      GaugePenalty penalty = GaugePenalty::Deviatoric,
+                      Diffeomorphism* map = nullptr) override;
+
   /**
    * @brief SubMesh mode: supply the buffer's gravity terms through a
    * *prescribed* extension @f$u_{\mathrm{ext}} = E\,u@f$ on a buffer
@@ -753,7 +763,8 @@ class LinearQuasiStaticSlipReferentialProblem
   /** @brief The base-class gauged fluid is not meaningful here (the fluid
    * has its own space); use SetFluidGauge(). */
   void SetGaugedFluid(const mfem::Array<int>&, mfem::Coefficient&,
-                      mfem::real_t, int, GaugePenalty) override;
+                      mfem::real_t, int, GaugePenalty,
+                      Diffeomorphism*) override;
 
   void RegisterFields(mfem::DataCollection& dc) override;
 

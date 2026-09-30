@@ -10,6 +10,7 @@
 #include <numbers>
 
 #include "mfemElasticity/detail/fem_factory.hpp"
+#include "mfemElasticity/elastic_tensor.hpp"
 #include "mfemElasticity/mesh.hpp"
 
 namespace mfemElasticity {
@@ -1676,6 +1677,16 @@ void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
 }
 #endif
 
+void LinearQuasiStaticReferentialProblem::SetGaugedFluid(
+    const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
+    int refinements, GaugePenalty penalty, Diffeomorphism* map) {
+  if (map == nullptr && penalty == GaugePenalty::Deviatoric) {
+    map = &ref_rheology_->EquilibriumMapping();
+  }
+  LinearQuasiStaticProblemBase::SetGaugedFluid(
+      fluid_marker, mu_gauge, epsilon, refinements, penalty, map);
+}
+
 void LinearQuasiStaticReferentialProblem::SetVacuumExtension(
     const Array<int>& buffer_marker, Coefficient& mu_gauge, real_t epsilon,
     int refinements) {
@@ -2156,7 +2167,8 @@ void LinearQuasiStaticSlipReferentialProblem::SetConstraint(
 }
 
 void LinearQuasiStaticSlipReferentialProblem::SetGaugedFluid(
-    const Array<int>&, Coefficient&, real_t, int, GaugePenalty) {
+    const Array<int>&, Coefficient&, real_t, int, GaugePenalty,
+    Diffeomorphism*) {
   MFEM_ABORT(
       "LinearQuasiStaticSlipReferentialProblem: the fluid has its own "
       "space here; use SetFluidGauge().");
@@ -2453,8 +2465,15 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocks(
   {
     ConstantCoefficient eps_c(fluid_gauge_eps_);
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
+    IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
+    auto& gmap = ref_rheology_->EquilibriumMapping();
     BilinearForm qf(fes_f_);
-    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    // The covariant penalty: the pulled-back deviatoric tensor, so the
+    // mapped problem's gauge is the pull-back of the unmapped one (the
+    // identity map included, for one integrator class on both sides of
+    // a change-of-variables identity).
+    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     Qf_ = std::make_unique<SparseMatrix>(qf.SpMat());
@@ -2692,8 +2711,12 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocksPar(
     OperatorHandle H(Operator::Hypre_ParCSR);
     ConstantCoefficient eps_c(fluid_gauge_eps_);
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
+    IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
+    auto& gmap = ref_rheology_->EquilibriumMapping();
     ParBilinearForm qf(pfes_f_);
-    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    // The covariant penalty (see the serial block).
+    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     qf.FormSystemMatrix(empty, H);
@@ -2911,7 +2934,8 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
   jump_history_.clear();
   zeta_jump_history_.clear();
   *w_al4_ = 0.0;
-  if (std::sqrt(Dot(*B4_, *B4_)) == 0.0) {
+  const real_t norm_b = std::sqrt(Dot(*B4_, *B4_));
+  if (norm_b == 0.0) {
     *X4_ = 0.0;
     X = 0.0;
     Zeta_true_ = 0.0;
@@ -2921,6 +2945,14 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
     DistributePotential(Zeta_true_);
     return true;
   }
+  // The first sweep runs on the usual relative tolerance; the later
+  // ones warm-start from the previous solution, so their target is
+  // made ABSOLUTE below, anchored to the first sweep's initial
+  // residual (in the solver's own norm) — a relative tolerance would
+  // be measured against each sweep's shrinking initial residual and
+  // over-solve without bound.
+  minres4_->SetRelTol(rel_tol_);
+  minres4_->SetAbsTol(0.0);
 
   // Augmented-Lagrangian iterations for BOTH interface constraints
   // (normal jump and scalar jump), interleaved with the Tikhonov
@@ -2942,6 +2974,10 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
     projected4_->Mult(rhs, *X4_);
     ok = minres4_->GetConverged() && ok;
     outer += minres4_->GetNumIterations();
+    if (k == 0) {
+      minres4_->SetAbsTol(rel_tol_ * minres4_->GetInitialNorm());
+      minres4_->SetRelTol(0.0);
+    }
 
     // Normal jump: js = u_s - J u_f.
     js = X4_->GetBlock(0);
@@ -3115,8 +3151,15 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
   {
     ConstantCoefficient eps_c(fluid_gauge_eps_);
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
+    IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
+    auto& gmap = ref_rheology_->EquilibriumMapping();
     BilinearForm qf(fes_f_);
-    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    // The covariant penalty: the pulled-back deviatoric tensor, so the
+    // mapped problem's gauge is the pull-back of the unmapped one (the
+    // identity map included, for one integrator class on both sides of
+    // a change-of-variables identity).
+    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     Qf_ = std::make_unique<SparseMatrix>(qf.SpMat());
@@ -3306,8 +3349,12 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
     OperatorHandle QfH(Operator::Hypre_ParCSR);
     ConstantCoefficient eps_c(fluid_gauge_eps_);
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
+    IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
+    auto& gmap = ref_rheology_->EquilibriumMapping();
     ParBilinearForm qf(pfes_f_);
-    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    // The covariant penalty (see the serial block).
+    qf.AddDomainIntegrator(new MaterialStiffnessIntegrator(Cdev, gmap));
     qf.Assemble();
     qf.Finalize();
     qf.FormSystemMatrix(empty, QfH);
@@ -3468,7 +3515,8 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
   B3_->GetBlock(2) = B_zeta_;
   jump_history_.clear();
   *w_al_ = 0.0;
-  if (std::sqrt(Dot(*B3_, *B3_)) == 0.0) {
+  const real_t norm_b = std::sqrt(Dot(*B3_, *B3_));
+  if (norm_b == 0.0) {
     *X3_ = 0.0;
     X = 0.0;
     Zeta_true_ = 0.0;
@@ -3476,6 +3524,10 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
     DistributePotential(Zeta_true_);
     return true;
   }
+  // First sweep relative, later warm-started sweeps absolute on the
+  // first sweep's initial residual (see the broken-zeta loop).
+  minres3_->SetRelTol(rel_tol_);
+  minres3_->SetAbsTol(0.0);
 
   // Augmented-Lagrangian iterations for the normal-jump constraint,
   // interleaved with the Tikhonov refinement of the fluid gauge (the
@@ -3493,6 +3545,10 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
     projected3_->Mult(rhs, *X3_);
     ok = minres3_->GetConverged() && ok;
     outer += minres3_->GetNumIterations();
+    if (k == 0) {
+      minres3_->SetAbsTol(rel_tol_ * minres3_->GetInitialNorm());
+      minres3_->SetRelTol(0.0);
+    }
 
     // js = u_s - J u_f; w += theta [Bn js; -J^T Bn js].
     js = X3_->GetBlock(0);

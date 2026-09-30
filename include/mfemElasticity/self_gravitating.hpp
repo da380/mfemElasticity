@@ -385,7 +385,8 @@ class LinearQuasiStaticSelfGravitatingProblem
   void SetGaugedFluid(
       const mfem::Array<int>& fluid_marker, mfem::Coefficient& mu_gauge,
       mfem::real_t epsilon, int refinements = 2,
-      GaugePenalty penalty = GaugePenalty::Deviatoric) override;
+      GaugePenalty penalty = GaugePenalty::Deviatoric,
+      Diffeomorphism* map = nullptr) override;
 
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;

@@ -22,6 +22,8 @@
 
 namespace mfemElasticity {
 
+class Diffeomorphism;
+
 /**
  * @brief Abstract interface for linear quasi-static problems.
  *
@@ -210,10 +212,17 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * @f$\epsilon\mu_g\nabla u:\nabla v@f$). */
   enum class GaugePenalty { Deviatoric, Harmonic };
 
+  /** With @p map non-null and not the identity, the Deviatoric penalty
+   * is assembled COVARIANTLY — through the mapped material stiffness
+   * with the pulled-back deviatoric tensor — so that a relabelled
+   * problem's penalty is the exact pull-back of the unmapped one (the
+   * Harmonic form is vacuum-extension gauge data, shared rather than
+   * mapped, and refuses a map). */
   virtual void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
                               mfem::Coefficient& mu_gauge,
                               mfem::real_t epsilon, int refinements = 2,
-                              GaugePenalty penalty = GaugePenalty::Deviatoric);
+                              GaugePenalty penalty = GaugePenalty::Deviatoric,
+                              Diffeomorphism* map = nullptr);
 
   /** @brief Remove the gauge penalty and the refinement loop. */
   void ClearGaugedFluid();
@@ -384,6 +393,9 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::Array<int> gauge_marker_;
   std::unique_ptr<mfem::ConstantCoefficient> gauge_eps_coef_;
   std::unique_ptr<mfem::ProductCoefficient> gauge_mu_eps_;
+  // The mapped Deviatoric penalty's pulled-back tensor (lambda = -2mu/d).
+  std::unique_ptr<mfem::Coefficient> gauge_lambda_eps_;
+  std::unique_ptr<mfem::MatrixCoefficient> gauge_Cdev_;
   std::unique_ptr<mfem::BilinearForm> gauge_integrators_;
   mfem::BilinearFormIntegrator* gauge_integ_ = nullptr;
   int gauge_refinements_ = 2;

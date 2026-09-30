@@ -77,6 +77,40 @@ with the weak-scaling timings collated in `<out>/scaling_summary.md`
 and the CMB cost-accuracy tables in
 `<out>/love_numbers/cmb_summary.md`.
 
+## What the campaign shows
+
+The standing assessment, from the measured campaigns (details in the
+family READMEs and `doc/BenchmarkPapers/cmb_conditions.md`):
+
+- **The methods are sound.** Every formulation agrees with the radial
+  reference at the discretisation level on its domain of validity, the
+  mapped assembly passes a solver-level change-of-variables identity to
+  ~1e-6, and the cross-method spread at coarse resolution is mesh
+  error, not physics. The open items are cost, not correctness — the
+  gauged fluid runs ~8× the Dahlen path (in part preconditioner
+  maturity), the slipping interface's augmented Lagrangian ~10× and
+  semi-convergent — and point to solver and preconditioner refinement
+  (gauge-block preconditioning, AL warm starts). Two localised
+  formulation questions are parked with their evidence: the
+  mapping-aware gauge penalty (`relabelling/README.md`) and the
+  outward-shifted slipping interface (`perturbation/README.md`).
+- **Dahlen is fine for most things; doing better costs.** For loading
+  at l >= 1 the Dahlen path is the cheapest and as accurate as
+  anything here. What the dearer formulations buy is physics it cannot
+  represent: the compressible fluid at degree zero, non-neutral core
+  stratification (O(N²) in the secular response), the slipping
+  interface, and the referential family's aspherical/topography and
+  adjoint machinery.
+- **The CMB approximations buy a little and cost accuracy where the
+  deep interior is sampled.** Loading-safe (`uniform`/`nomass`
+  <= 0.1 % at l >= 2), ~10× worse on tides, and the tidal column is
+  what governs ROTATIONAL FEEDBACKS (the (2,1) inertia route is a
+  degree-2 tidal-type response): scaled by the feedback's ~10 % share
+  of the sea-level signal, `uniform`/`nomass` contribute ~0.1–0.3 % of
+  total — harmless — while `winkler` contributes ~3–4 % — not
+  harmless. `cmb_report.py` keeps the cost side of this ledger current
+  (§4.2 of the doc note has the arithmetic).
+
 ## The shared pieces (`common/`)
 
 | file | what it does |

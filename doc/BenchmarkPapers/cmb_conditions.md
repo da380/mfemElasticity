@@ -165,3 +165,29 @@ Readings:
   context where it is safe; reusing the same operator for tidal
   computations (e.g. combined GIA + body-tide inversions) imports a
   percent-level systematic that the full or gauged treatments remove.
+
+### 4.2 Rotational feedbacks
+
+The rotational feedback in sea-level calculations runs through the
+(2,1) components: the load perturbs the inertia tensor (through the
+degree-2 potential or displacement, depending on how the inertia
+perturbation is formed), the rotation vector shifts, and the
+centrifugal potential perturbation — itself a degree-2, order-1
+tidal-type forcing — feeds back through the degree-2 TIDAL response.
+So the tidal column above, not the loading one, is the relevant error
+budget for the feedback, and the ~10× tidal amplification of the CMB
+approximation error applies to it directly.
+
+Scaled by the feedback's share of the signal (rotational feedback is of
+order 10 % of the barystatic/GMSL signal):
+
+- `uniform`/`nomass`: 1.1–2.5 % on tidal (h₂, k₂) → of order 0.1–0.3 %
+  of the total signal through the feedback. Harmless.
+- `winkler`: 28–42 % on tidal (h₂, k₂) → of order 3–4 % of the total
+  signal. Not harmless for modern sea-level precision, despite sitting
+  on a "small" term.
+
+The record to carry: the standard unmeshed-core condition is safe for
+the loading response AND its rotational feedback; the Winkler variant
+is safe for neither; and any precision statement about the feedback
+should be made against the tidal, not loading, error table.

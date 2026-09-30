@@ -104,6 +104,10 @@ benchmark_launcher(perturbation perturbation perturbation_check
     ${BENCHMARK_LAUNCHER_ARGUMENTS})
 benchmark_launcher(perturbation perturbation plot)
 
+# --- Viscoelastic -----------------------------------------------------------
+
+benchmark_launcher(viscoelastic viscoelastic survey)
+
 # --- The master script ------------------------------------------------------
 
 benchmark_launcher(. . campaign ${BENCHMARK_LAUNCHER_ARGUMENTS})

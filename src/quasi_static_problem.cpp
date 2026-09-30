@@ -8,7 +8,10 @@
 
 #include <cmath>
 
+#include "mfemElasticity/bilininteg.hpp"
 #include "mfemElasticity/detail/fem_factory.hpp"
+#include "mfemElasticity/elastic_tensor.hpp"
+#include "mfemElasticity/mappings.hpp"
 
 namespace mfemElasticity {
 
@@ -185,11 +188,20 @@ bool LinearQuasiStaticProblemBase::Solve() {
 
 void LinearQuasiStaticProblemBase::SetGaugedFluid(
     const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
-    int refinements, GaugePenalty penalty) {
+    int refinements, GaugePenalty penalty, Diffeomorphism* map) {
   MFEM_VERIFY(fluid_marker.Size() == fes_->GetMesh()->attributes.Max(),
               "SetGaugedFluid: the fluid marker must be sized to "
               "attributes.Max().");
   MFEM_VERIFY(epsilon > 0.0, "SetGaugedFluid: epsilon must be positive.");
+  // A supplied map — the identity included — switches the Deviatoric
+  // branch to the mapped material-stiffness integrator, so that the two
+  // sides of a change-of-variables identity assemble with the SAME
+  // integrator class and quadrature rule.
+  const bool mapped = map != nullptr;
+  MFEM_VERIFY(!(mapped && !map->IsIdentity()) ||
+                  penalty == GaugePenalty::Deviatoric,
+              "SetGaugedFluid: the Harmonic penalty is gauge data, "
+              "shared rather than mapped.");
   gauge_marker_ = fluid_marker;
   gauge_eps_coef_ = std::make_unique<ConstantCoefficient>(epsilon);
   gauge_mu_eps_ =
@@ -197,7 +209,17 @@ void LinearQuasiStaticProblemBase::SetGaugedFluid(
   const int dim = fes_->GetMesh()->Dimension();
   gauge_integrators_ = detail::MakeBilinearForm(fes_);
   BilinearFormIntegrator* integ;
-  if (penalty == GaugePenalty::Deviatoric) {
+  if (mapped && penalty == GaugePenalty::Deviatoric) {
+    // The covariant form of the Deviatoric branch: the pulled-back
+    // deviatoric tensor through the mapped material stiffness, so the
+    // penalty of a relabelled problem is the exact pull-back of the
+    // unmapped one.
+    gauge_lambda_eps_ =
+        std::make_unique<ProductCoefficient>(-2.0 / dim, *gauge_mu_eps_);
+    gauge_Cdev_ = std::make_unique<IsotropicElasticTensorCoefficient>(
+        dim, *gauge_lambda_eps_, *gauge_mu_eps_);
+    integ = new MaterialStiffnessIntegrator(*gauge_Cdev_, *map);
+  } else if (penalty == GaugePenalty::Deviatoric) {
     integ = new ElasticityIntegrator(*gauge_mu_eps_, -2.0 / dim, 1.0);
   } else {
     integ = new VectorDiffusionIntegrator(*gauge_mu_eps_);
