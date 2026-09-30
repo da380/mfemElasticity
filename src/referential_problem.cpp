@@ -442,6 +442,298 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
 
 
 #ifdef MFEM_USE_MPI
+std::unique_ptr<mfem::HypreParMatrix> NewRadialFluidExtension(
+    ParFiniteElementSpace& solid_fes, ParFiniteElementSpace& fluid_fes,
+    real_t r_interface, real_t taper_power, real_t pushout) {
+  MFEM_VERIFY(solid_fes.FEColl() == fluid_fes.FEColl() &&
+                  solid_fes.GetVDim() == fluid_fes.GetVDim(),
+              "NewRadialFluidExtension: the spaces must share a "
+              "collection and vdim.");
+  auto* solid_sub = dynamic_cast<ParSubMesh*>(solid_fes.GetParMesh());
+  auto* fluid_sub = dynamic_cast<ParSubMesh*>(fluid_fes.GetParMesh());
+  MFEM_VERIFY(solid_sub && fluid_sub &&
+                  solid_sub->GetParent() == fluid_sub->GetParent(),
+              "NewRadialFluidExtension: both spaces must live on "
+              "ParSubMeshes of one parent.");
+  MPI_Comm comm = solid_fes.GetComm();
+  const int dim = solid_sub->Dimension();
+  const int vdim = solid_fes.GetVDim();
+
+  ParFiniteElementSpace parent_fes(
+      const_cast<ParMesh*>(static_cast<const ParMesh*>(solid_sub->GetParent())),
+      const_cast<FiniteElementCollection*>(solid_fes.FEColl()), vdim,
+      solid_fes.GetOrdering());
+  SubMeshDofInjection inj_solid(solid_fes, parent_fes);
+  SubMeshDofInjection inj_fluid(fluid_fes, parent_fes);
+  auto J = NewSubMeshPairingTrueDofMatrix(inj_fluid, inj_solid);
+
+  // Paired (interface trace) rows of the owned fluid true dofs.
+  const int nrows = fluid_fes.GetTrueVSize();
+  std::vector<char> paired(nrows, 0);
+  {
+    SparseMatrix diag, offd;
+    HYPRE_BigInt* cmap = nullptr;
+    J->GetDiag(diag);
+    J->GetOffd(offd, cmap);
+    for (int t = 0; t < nrows; t++) {
+      if (diag.RowSize(t) + offd.RowSize(t) > 0) {
+        paired[t] = 1;
+      }
+    }
+  }
+
+  // Scalar nodal coordinates of the fluid space (local).
+  const int ns_flu = fluid_fes.GetNDofs();
+  DenseMatrix coords(dim, ns_flu);
+  {
+    Array<int> dofs;
+    Vector x(dim);
+    for (int e = 0; e < fluid_sub->GetNE(); e++) {
+      const auto* fe = fluid_fes.GetFE(e);
+      auto* T = fluid_sub->GetElementTransformation(e);
+      fluid_fes.GetElementDofs(e, dofs);
+      const auto& nodes = fe->GetNodes();
+      for (int i = 0; i < dofs.Size(); i++) {
+        T->Transform(nodes.IntPoint(i), x);
+        for (int d = 0; d < dim; d++) {
+          coords(d, dofs[i]) = x(d);
+        }
+      }
+    }
+  }
+
+  // The owned, unpaired scalar nodes with a live taper: the queries.
+  // Centre nodes (undefined radial direction) keep zero rows -- gauge.
+  struct Query {
+    int sdof;
+    real_t t, r;
+  };
+  std::vector<Query> queries;
+  for (int sb = 0; sb < ns_flu; sb++) {
+    const int lt0 = fluid_fes.GetLocalTDofNumber(fluid_fes.DofToVDof(sb, 0));
+    if (lt0 < 0 || paired[lt0]) {
+      continue;
+    }
+    real_t r = 0.0;
+    for (int d = 0; d < dim; d++) {
+      r += coords(d, sb) * coords(d, sb);
+    }
+    r = std::sqrt(r);
+    real_t t = r / r_interface;
+    t = std::min(real_t(1), std::max(real_t(0), t));
+    t = std::pow(t, taper_power);
+    if (t == 0.0 || r <= 1e-12 * r_interface) {
+      continue;
+    }
+    queries.push_back({sb, t, r});
+  }
+
+  // Interpolation rows, resolved over retry rounds pushing OUTWARD into
+  // the solid (its discrete inner boundary can bulge above the nominal
+  // radius); the query-reply exchange as in NewRadialVacuumExtension.
+  std::vector<std::vector<HYPRE_BigInt>> row_cols(queries.size());
+  std::vector<std::vector<real_t>> row_vals(queries.size());
+  std::vector<char> resolved(queries.size(), 0);
+  int ranks = 0, rank = 0;
+  MPI_Comm_size(comm, &ranks);
+  MPI_Comm_rank(comm, &rank);
+
+  for (real_t factor : {1.0, 1.01, 1.03, 1.1}) {
+    std::vector<real_t> my_pts;
+    std::vector<int> my_qid;
+    for (std::size_t q = 0; q < queries.size(); q++) {
+      if (resolved[q]) {
+        continue;
+      }
+      const int sb = queries[q].sdof;
+      const real_t scale = factor * pushout * r_interface / queries[q].r;
+      for (int d = 0; d < dim; d++) {
+        my_pts.push_back(scale * coords(d, sb));
+      }
+      my_qid.push_back(static_cast<int>(q));
+    }
+    int my_n = static_cast<int>(my_qid.size());
+    std::vector<int> counts(ranks), displs(ranks + 1, 0);
+    MPI_Allgather(&my_n, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+    long long total = 0;
+    for (int p = 0; p < ranks; p++) {
+      displs[p + 1] = displs[p] + counts[p];
+      total += counts[p];
+    }
+    if (total == 0) {
+      break;
+    }
+    std::vector<real_t> all_pts(static_cast<std::size_t>(total) * dim);
+    {
+      std::vector<int> ccnt(ranks), cdis(ranks);
+      for (int p = 0; p < ranks; p++) {
+        ccnt[p] = counts[p] * dim;
+        cdis[p] = displs[p] * dim;
+      }
+      MPI_Allgatherv(my_pts.data(), my_n * dim, MPITypeMap<real_t>::mpi_type,
+                     all_pts.data(), ccnt.data(), cdis.data(),
+                     MPITypeMap<real_t>::mpi_type, comm);
+    }
+
+    DenseMatrix pts(dim, static_cast<int>(total));
+    for (long long i = 0; i < total; i++) {
+      for (int d = 0; d < dim; d++) {
+        pts(d, static_cast<int>(i)) = all_pts[i * dim + d];
+      }
+    }
+    Array<int> elem;
+    Array<IntegrationPoint> ips;
+    solid_sub->Mesh::FindPoints(pts, elem, ips, false);
+
+    std::vector<int> r_meta;
+    std::vector<HYPRE_BigInt> r_cols;
+    std::vector<real_t> r_vals;
+    {
+      Array<int> dofs;
+      Vector shape;
+      for (long long i = 0; i < total; i++) {
+        if (elem[static_cast<int>(i)] < 0) {
+          continue;
+        }
+        const int el = elem[static_cast<int>(i)];
+        const auto* fe = solid_fes.GetFE(el);
+        shape.SetSize(fe->GetDof());
+        fe->CalcShape(ips[static_cast<int>(i)], shape);
+        solid_fes.GetElementDofs(el, dofs);
+        r_meta.push_back(static_cast<int>(i));
+        r_meta.push_back(dofs.Size());
+        for (int a = 0; a < dofs.Size(); a++) {
+          r_vals.push_back(shape(a));
+          for (int k = 0; k < vdim; k++) {
+            r_cols.push_back(solid_fes.GetGlobalTDofNumber(
+                solid_fes.DofToVDof(dofs[a], k)));
+          }
+        }
+      }
+    }
+    auto allgather_var = [&](auto& mine, auto mpi_type, auto& all) {
+      int n = static_cast<int>(mine.size());
+      std::vector<int> cnt(ranks), dis(ranks + 1, 0);
+      MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+      for (int p = 0; p < ranks; p++) {
+        dis[p + 1] = dis[p] + cnt[p];
+      }
+      all.resize(dis[ranks]);
+      MPI_Allgatherv(mine.data(), n, mpi_type, all.data(), cnt.data(),
+                     dis.data(), mpi_type, comm);
+    };
+    std::vector<int> all_meta;
+    std::vector<HYPRE_BigInt> all_cols;
+    std::vector<real_t> all_vals;
+    allgather_var(r_meta, MPI_INT, all_meta);
+    allgather_var(r_cols,
+                  sizeof(HYPRE_BigInt) == sizeof(long long) ? MPI_LONG_LONG
+                                                            : MPI_INT,
+                  all_cols);
+    allgather_var(r_vals, MPITypeMap<real_t>::mpi_type, all_vals);
+
+    std::size_t cpos = 0, vpos = 0;
+    for (std::size_t m = 0; m + 1 < all_meta.size(); m += 2) {
+      const int gpt = all_meta[m];
+      const int nsh = all_meta[m + 1];
+      const std::size_t c0 = cpos, v0 = vpos;
+      cpos += static_cast<std::size_t>(nsh) * vdim;
+      vpos += nsh;
+      if (gpt < displs[rank] || gpt >= displs[rank + 1]) {
+        continue;
+      }
+      const int q = my_qid[gpt - displs[rank]];
+      if (resolved[q]) {
+        continue;  // first reply wins
+      }
+      resolved[q] = 1;
+      row_cols[q].assign(
+          all_cols.begin() + c0,
+          all_cols.begin() + c0 + static_cast<std::size_t>(nsh) * vdim);
+      row_vals[q].assign(all_vals.begin() + v0, all_vals.begin() + v0 + nsh);
+    }
+  }
+  for (std::size_t q = 0; q < queries.size(); q++) {
+    MFEM_VERIFY(resolved[q],
+                "NewRadialFluidExtension: an interface projection was not "
+                "found on any rank.");
+  }
+
+  // Assemble the interior rows (paired rows stay empty; J is added).
+  Array<int> I(nrows + 1);
+  I = 0;
+  std::vector<int> row_query(nrows, -1);
+  std::vector<int> row_comp(nrows, 0);
+  for (std::size_t q = 0; q < queries.size(); q++) {
+    const int sb = queries[q].sdof;
+    for (int k = 0; k < vdim; k++) {
+      const int lt = fluid_fes.GetLocalTDofNumber(fluid_fes.DofToVDof(sb, k));
+      MFEM_VERIFY(lt >= 0, "component ownership mismatch");
+      row_query[lt] = static_cast<int>(q);
+      row_comp[lt] = k;
+      I[lt + 1] = static_cast<int>(row_vals[q].size());
+    }
+  }
+  for (int i = 0; i < nrows; i++) {
+    I[i + 1] += I[i];
+  }
+  const int nnz = I[nrows];
+  Array<HYPRE_BigInt> Jc(std::max(nnz, 1));
+  Vector data(std::max(nnz, 1));
+  for (int i = 0; i < nrows; i++) {
+    const int q = row_query[i];
+    if (q < 0) {
+      continue;
+    }
+    const int k = row_comp[i];
+    const int nsh = static_cast<int>(row_vals[q].size());
+    for (int a = 0; a < nsh; a++) {
+      Jc[I[i] + a] = row_cols[q][static_cast<std::size_t>(a) * vdim + k];
+      data[I[i] + a] = queries[q].t * row_vals[q][a];
+    }
+  }
+  HypreParMatrix E_int(comm, nrows, fluid_fes.GlobalTrueVSize(),
+                       solid_fes.GlobalTrueVSize(), I.GetData(), Jc.GetData(),
+                       data.GetData(), fluid_fes.GetTrueDofOffsets(),
+                       solid_fes.GetTrueDofOffsets());
+  return std::unique_ptr<HypreParMatrix>(ParAdd(J.get(), &E_int));
+}
+
+
+ParSlipInterfaceBlocks NewSlipInterfaceMatrix(ParFiniteElementSpace& fes_s,
+                                              const HypreParMatrix& J,
+                                              const Array<int>& interface_marker,
+                                              Coefficient& pi,
+                                              Diffeomorphism& map) {
+  // The one-sided kernel G on the solid side, on true dofs.
+  Array<int> marker(interface_marker);
+  ParBilinearForm g(&fes_s);
+  g.AddBoundaryIntegrator(new SlipInterfacePressureIntegrator(pi, map),
+                          marker);
+  g.Assemble();
+  g.Finalize();
+  std::unique_ptr<HypreParMatrix> G(g.ParallelAssemble());
+  std::unique_ptr<HypreParMatrix> Gt(G->Transpose());
+
+  std::unique_ptr<HypreParMatrix> Gsym(
+      mfem::Add(0.5, *G, 0.5, *Gt));
+  std::unique_ptr<HypreParMatrix> Gskew(
+      mfem::Add(0.5, *Gt, -0.5, *G));
+  auto* Jnc = const_cast<HypreParMatrix*>(&J);
+
+  // Normal convention as in the serial builder: the minus because the
+  // solid-side assembly supplies -N of the derivation.
+  ParSlipInterfaceBlocks B;
+  B.ss = std::make_unique<HypreParMatrix>(*Gsym);
+  *B.ss *= -1.0;
+  B.sf.reset(ParMult(Gskew.get(), Jnc));
+  *B.sf *= -1.0;
+  B.fs.reset(B.sf->Transpose());
+  B.ff.reset(mfem::RAP(Gsym.get(), Jnc));
+  return B;
+}
+
+
 std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
     ParFiniteElementSpace& body_fes, ParFiniteElementSpace& buffer_fes,
     real_t r_body, real_t r_outer, real_t taper_power, real_t pullback) {
@@ -1468,6 +1760,822 @@ std::vector<real_t> LinearQuasiStaticReferentialProblem::RigidPairResiduals() {
     out.push_back(NullPairResidual(projector_u_->Basis(i)));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// LinearQuasiStaticSlipReferentialProblem
+
+namespace {
+
+/// rho * sym(D g0_h): the discrete grad-grad-zeta0 matrix coefficient of
+/// the mismatch mass term, from the *projected* g0 field so that no
+/// density or second potential derivatives are ever taken
+/// (doc/slip_interface.tex, discrete realisation). Symmetrised pointwise
+/// so the assembled mass matrix is exactly symmetric.
+class RhoSymJacobianCoefficient : public MatrixCoefficient {
+ public:
+  RhoSymJacobianCoefficient(Coefficient& rho, const GridFunction& g0)
+      : MatrixCoefficient(g0.FESpace()->GetMesh()->Dimension()),
+        rho_(&rho),
+        g0_(&g0) {}
+
+  void Eval(DenseMatrix& M, ElementTransformation& T,
+            const IntegrationPoint& ip) override {
+    T.SetIntPoint(&ip);
+    g0_->GetVectorGradient(T, D_);
+    const real_t r = rho_->Eval(T, ip);
+    M.SetSize(height);
+    for (int i = 0; i < height; i++) {
+      for (int j = 0; j < height; j++) {
+        M(i, j) = 0.5 * r * (D_(i, j) + D_(j, i));
+      }
+    }
+  }
+
+ private:
+  Coefficient* rho_;
+  const GridFunction* g0_;
+  DenseMatrix D_;
+};
+
+}  // namespace
+
+LinearQuasiStaticSlipReferentialProblem::
+    LinearQuasiStaticSlipReferentialProblem(
+        FiniteElementSpace* fes_s, FiniteElementSpace* fes_f,
+        FiniteElementSpace* fes_zeta, const ReferentialElasticRheology& rheology,
+        Coefficient& density, Coefficient& interface_pressure,
+        const Array<int>& interface_marker, real_t gravitational_constant,
+        int dtn_degree, Coefficient* background_zeta0)
+    : LinearQuasiStaticReferentialProblem(fes_s, fes_zeta, rheology, density,
+                                          gravitational_constant, dtn_degree,
+                                          background_zeta0),
+      fes_f_(fes_f),
+      pi_(&interface_pressure),
+      interface_marker_(interface_marker) {
+  MFEM_VERIFY(!ball_wide_,
+              "LinearQuasiStaticSlipReferentialProblem: the solid space "
+              "must live on a SubMesh of the ball.");
+  MFEM_VERIFY(fes_f_->FEColl() == fes_->FEColl() &&
+                  fes_f_->GetVDim() == dim_ &&
+                  fes_f_->GetOrdering() == fes_->GetOrdering(),
+              "LinearQuasiStaticSlipReferentialProblem: the fluid space "
+              "must share the solid space's collection, vdim and ordering.");
+  MFEM_VERIFY(
+      interface_marker_.Size() == fes_->GetMesh()->bdr_attributes.Max(),
+      "LinearQuasiStaticSlipReferentialProblem: the interface marker must "
+      "be sized to the solid SubMesh's bdr_attributes.Max().");
+#ifdef MFEM_USE_MPI
+  pfes_f_ = dynamic_cast<ParFiniteElementSpace*>(fes_f_);
+  MFEM_VERIFY((pfes_ != nullptr) == (pfes_f_ != nullptr),
+              "LinearQuasiStaticSlipReferentialProblem: the solid and "
+              "fluid spaces must both be serial or both be parallel.");
+#endif
+
+  u_f_ = detail::MakeGridFunction(fes_f_);
+  *u_f_ = 0.0;
+
+  // The interface pairing J = Pi_s^T Pi_f (solid x fluid; vdofs in
+  // serial, true dofs in parallel) through a parent vector space, as for
+  // the extension builders; and the fluid shadow of the potential space.
+#ifdef MFEM_USE_MPI
+  if (pfes_f_) {
+    auto* fluid_sub = dynamic_cast<ParSubMesh*>(pfes_f_->GetParMesh());
+    MFEM_VERIFY(fluid_sub &&
+                    fluid_sub->GetParent() == pfes_zeta_->GetParMesh(),
+                "LinearQuasiStaticSlipReferentialProblem: the fluid space "
+                "must live on a ParSubMesh of the ball.");
+    auto* solid_sub = dynamic_cast<ParSubMesh*>(pfes_->GetParMesh());
+    ParFiniteElementSpace parent_fes(
+        const_cast<ParMesh*>(
+            static_cast<const ParMesh*>(solid_sub->GetParent())),
+        const_cast<FiniteElementCollection*>(fes_->FEColl()), dim_,
+        fes_->GetOrdering());
+    SubMeshDofInjection inj_s(*pfes_, parent_fes);
+    SubMeshDofInjection inj_f(*pfes_f_, parent_fes);
+    pJ_ = NewSubMeshPairingTrueDofMatrix(inj_s, inj_f);
+    pJt_.reset(pJ_->Transpose());
+    op_J_ = pJ_.get();
+    op_Jt_ = pJt_.get();
+    shadow_zeta_fluid_ =
+        SubMeshDofInjection::MakeShadowSpace(*pfes_zeta_, *fluid_sub);
+  } else
+#endif
+  {
+    auto* fluid_sub = dynamic_cast<SubMesh*>(fes_f_->GetMesh());
+    MFEM_VERIFY(fluid_sub && fluid_sub->GetParent() == fes_zeta_->GetMesh(),
+                "LinearQuasiStaticSlipReferentialProblem: the fluid space "
+                "must live on a SubMesh of the ball.");
+    auto* solid_sub = dynamic_cast<SubMesh*>(fes_->GetMesh());
+    FiniteElementSpace parent_fes(
+        const_cast<Mesh*>(static_cast<const Mesh*>(solid_sub->GetParent())),
+        const_cast<FiniteElementCollection*>(fes_->FEColl()), dim_,
+        fes_->GetOrdering());
+    SubMeshDofInjection inj_s(*fes_, parent_fes);
+    SubMeshDofInjection inj_f(*fes_f_, parent_fes);
+    J_ = NewSubMeshPairingMatrix(inj_s, inj_f);
+    Jt_.reset(Transpose(*J_));
+    op_J_ = J_.get();
+    op_Jt_ = Jt_.get();
+    shadow_zeta_fluid_ =
+        SubMeshDofInjection::MakeShadowSpace(*fes_zeta_, *fluid_sub);
+  }
+
+  // zeta0 and its gradient on the fluid.
+  injection_fluid_ =
+      std::make_unique<SubMeshDofInjection>(*shadow_zeta_fluid_, *fes_zeta_);
+  zeta0_fluid_ = detail::MakeGridFunction(shadow_zeta_fluid_.get());
+  grad_zeta0_fluid_ =
+      std::make_unique<GradientGridFunctionCoefficient>(zeta0_fluid_.get());
+
+  // The base class solved the background with the solid mass only; redo
+  // it with the fluid included (unless zeta0 was prescribed).
+  if (!background_zeta0) {
+    RecomputeBackgroundPotential();
+  }
+  injection_fluid_->MultTranspose(*zeta0_, *zeta0_fluid_);
+
+  SetupSlipRigidModes();
+}
+
+void LinearQuasiStaticSlipReferentialProblem::RecomputeBackgroundPotential() {
+  // As the base class's background solve, with the fluid's referential
+  // mass added to the source.
+  Vector bL(fes_zeta_->GetVSize()), tmp(fes_zeta_->GetVSize()), B;
+  {
+    auto rho_form = detail::MakeLinearForm(shadow_zeta_.get());
+    rho_form->AddDomainIntegrator(new DomainLFIntegrator(*rho_));
+    rho_form->Assemble();
+    injection_->Mult(*rho_form, bL);
+  }
+  {
+    auto rho_form = detail::MakeLinearForm(shadow_zeta_fluid_.get());
+    rho_form->AddDomainIntegrator(new DomainLFIntegrator(*rho_));
+    rho_form->Assemble();
+    injection_fluid_->Mult(*rho_form, tmp);
+    bL += tmp;
+  }
+  ToTrueDofs(*fes_zeta_, bL, B);
+  B *= -1.0;
+  MakeCompatible(B);
+  Vector Zeta0(B.Size());
+  Zeta0 = 0.0;
+  zeta_solver_->Mult(B, Zeta0);
+  MFEM_VERIFY(cg_zeta_->GetConverged(),
+              "LinearQuasiStaticSlipReferentialProblem: the background "
+              "potential solve did not converge.");
+  zeta0_->SetFromTrueDofs(Zeta0);
+  injection_->MultTranspose(*zeta0_, *zeta0_shadow_);
+  // The solid coupling was assembled from the solid-only zeta0: rebuild.
+  SetupCoupling();
+}
+
+void LinearQuasiStaticSlipReferentialProblem::SetupSlipRigidModes() {
+  offsets3_.SetSize(4);
+  offsets3_[0] = 0;
+  offsets3_[1] = fes_->GetTrueVSize();
+  offsets3_[2] = fes_f_->GetTrueVSize();
+  offsets3_[3] = fes_zeta_->GetTrueVSize();
+  offsets3_.PartialSum();
+
+  // Common translations, independent mapped rotations of shell and core
+  // (a frictionless axisymmetric interface transmits no torque), the 2-D
+  // potential constant; all with zero potential partners (near-null with
+  // the tapered extensions, as for the vacuum extension).
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    projector3_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
+  } else
+#endif
+  {
+    projector3_ = std::make_unique<NullSpaceProjector>();
+  }
+  auto gf_s = detail::MakeGridFunction(fes_);
+  auto gf_f = detail::MakeGridFunction(fes_f_);
+  Vector ts, tf;
+  BlockVector n(offsets3_);
+  for (int c = 0; c < dim_; c++) {
+    Vector e(dim_);
+    e = 0.0;
+    e[c] = 1.0;
+    VectorConstantCoefficient tc(e);
+    gf_s->ProjectCoefficient(tc);
+    gf_s->GetTrueDofs(ts);
+    gf_f->ProjectCoefficient(tc);
+    gf_f->GetTrueDofs(tf);
+    n = 0.0;
+    n.GetBlock(0) = ts;
+    n.GetBlock(1) = tf;
+    projector3_->Add(n);
+  }
+  auto& map = ref_rheology_->EquilibriumMapping();
+  const int nrot = (dim_ == 2) ? 1 : 3;
+  for (int c = 0; c < nrot; c++) {
+    MappedRotation rot(map, dim_ == 2 ? 2 : c);
+    gf_s->ProjectCoefficient(rot);
+    gf_s->GetTrueDofs(ts);
+    n = 0.0;
+    n.GetBlock(0) = ts;
+    projector3_->Add(n);
+    gf_f->ProjectCoefficient(rot);
+    gf_f->GetTrueDofs(tf);
+    n = 0.0;
+    n.GetBlock(1) = tf;
+    projector3_->Add(n);
+  }
+  if (dim_ == 2) {
+    n = 0.0;
+    n.GetBlock(2) = ones_;
+    projector3_->Add(n);
+  }
+}
+
+void LinearQuasiStaticSlipReferentialProblem::SetFluidExtension(
+    const SparseMatrix& E) {
+  MFEM_VERIFY(!ParallelPotential(),
+              "SetFluidExtension: the sparse overload is for the serial "
+              "problem.");
+  MFEM_VERIFY(E.Height() == fes_f_->GetVSize() && E.Width() == fes_->GetVSize(),
+              "SetFluidExtension: E must map solid vdofs to fluid vdofs.");
+  Ef_ = std::make_unique<SparseMatrix>(E);
+  operator_dirty_ = true;
+}
+
+#ifdef MFEM_USE_MPI
+void LinearQuasiStaticSlipReferentialProblem::SetFluidExtension(
+    const HypreParMatrix& E) {
+  MFEM_VERIFY(ParallelPotential(),
+              "SetFluidExtension: the hypre overload is for the parallel "
+              "problem.");
+  MFEM_VERIFY(E.Height() == pfes_f_->GetTrueVSize() &&
+                  E.Width() == pfes_->GetTrueVSize(),
+              "SetFluidExtension: E must map solid true dofs to fluid "
+              "true dofs.");
+  pEf_ = std::make_unique<HypreParMatrix>(E);
+  operator_dirty_ = true;
+}
+#endif
+
+void LinearQuasiStaticSlipReferentialProblem::SetFluidGauge(
+    Coefficient& mu_gauge, real_t epsilon) {
+  MFEM_VERIFY(epsilon > 0.0, "SetFluidGauge: epsilon must be positive.");
+  fluid_mu_gauge_ = &mu_gauge;
+  fluid_gauge_eps_ = epsilon;
+  operator_dirty_ = true;
+}
+
+void LinearQuasiStaticSlipReferentialProblem::SetConstraint(
+    real_t theta, int al_iterations) {
+  MFEM_VERIFY(theta > 0.0 && al_iterations >= 1,
+              "SetConstraint: theta must be positive and al_iterations at "
+              "least one.");
+  theta_ = theta;
+  al_iterations_ = al_iterations;
+  operator_dirty_ = true;
+}
+
+void LinearQuasiStaticSlipReferentialProblem::SetGaugedFluid(
+    const Array<int>&, Coefficient&, real_t, int, GaugePenalty) {
+  MFEM_ABORT(
+      "LinearQuasiStaticSlipReferentialProblem: the fluid has its own "
+      "space here; use SetFluidGauge().");
+}
+
+void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
+    OperatorHandle& A) {
+  MFEM_VERIFY(Ef_,
+              "LinearQuasiStaticSlipReferentialProblem: call "
+              "SetFluidExtension() before the first Solve().");
+  MFEM_VERIFY(fluid_mu_gauge_,
+              "LinearQuasiStaticSlipReferentialProblem: call "
+              "SetFluidGauge() before the first Solve().");
+  auto& map = ref_rheology_->EquilibriumMapping();
+  std::unique_ptr<SparseMatrix> Eft(Transpose(*Ef_));
+
+  // Fluid elastic block with the fluid's own field: material + geometric
+  // (the dictionary mu_b = pi is the rheology's business).
+  BilinearForm a_f(fes_f_);
+  {
+    auto stiffness = ref_rheology_->MakeStiffness();
+    stiffness->AddIntegrators(a_f, nullptr);
+  }
+  a_f.Assemble();
+  a_f.Finalize();
+
+  // Fluid-region a'' gravity with the extension field, folded: E^T G_F E.
+  BilinearForm g_f(fes_f_);
+  g_f.AddDomainIntegrator(new ReferentialGravityIntegrator(
+      map, *grad_zeta0_fluid_, 1.0 / (2.0 * four_pi_G_)));
+  g_f.Assemble();
+  g_f.Finalize();
+  std::unique_ptr<SparseMatrix> GfE(mfem::Mult(g_f.SpMat(), *Ef_));
+  std::unique_ptr<SparseMatrix> EtGfE(mfem::Mult(*Eft, *GfE));
+
+  // Fluid-region a' coupling with the extension field: E^T C_F.
+  SubMeshMixedBilinearForm c_f(fes_zeta_, fes_f_);
+  c_f.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
+      map, *grad_zeta0_fluid_, 1.0 / four_pi_G_));
+  c_f.Assemble();
+  std::unique_ptr<SparseMatrix> EtCf(mfem::Mult(*Eft, c_f.SpMat()));
+
+  // The mismatch pieces (doc/slip_interface.tex, discrete realisation;
+  // phi_e = id for now — the mapped variants are deferred with the
+  // mapped discrete-gravity unit). K_c = int_Bf rho w . grad zeta1:
+  SubMeshMixedBilinearForm kc(fes_zeta_, fes_f_);
+  kc.AddDomainIntegrator(new DomainVectorGradScalarIntegrator(*rho_));
+  kc.Assemble();
+  const SparseMatrix& Kc = kc.SpMat();
+  std::unique_ptr<SparseMatrix> EtKc(mfem::Mult(*Eft, Kc));
+
+  // The projected g0 field, its rho sym(D g0) mass matrix, and the
+  // product-rule form G_c = int rho w . grad(g0 . u).
+  g0_fluid_gf_ = detail::MakeGridFunction(fes_f_);
+  g0_fluid_gf_->ProjectDiscCoefficient(*grad_zeta0_fluid_,
+                                       GridFunction::ARITHMETIC);
+  RhoSymJacobianCoefficient hess_c(*rho_, *g0_fluid_gf_);
+  BilinearForm m_f(fes_f_);
+  m_f.AddDomainIntegrator(new VectorMassIntegrator(hess_c));
+  m_f.Assemble();
+  m_f.Finalize();
+  const SparseMatrix& Mt = m_f.SpMat();
+  VectorGridFunctionCoefficient g0_c(g0_fluid_gf_.get());
+  BilinearForm gc_f(fes_f_);
+  gc_f.AddDomainIntegrator(new DomainVectorGradVectorIntegrator(g0_c, *rho_));
+  gc_f.Assemble();
+  gc_f.Finalize();
+  const SparseMatrix& Gc = gc_f.SpMat();
+
+  // Gravity-mismatch folds: the Hessian contribution
+  //   w^T Mt w - 2 w^T (Gc - Mt) vtil,   w = u_f - E u_s, vtil = E u_s,
+  // collapses to the blocks
+  //   (1,1) += Mt,  (1,0) += -Gc E,  (0,0) += E^T (Gc + Gc^T - Mt) E.
+  std::unique_ptr<SparseMatrix> GcE(mfem::Mult(Gc, *Ef_));
+  std::unique_ptr<SparseMatrix> fold00;
+  {
+    std::unique_ptr<SparseMatrix> Gct(Transpose(Gc));
+    std::unique_ptr<SparseMatrix> S1(Add(1.0, Gc, 1.0, *Gct));
+    std::unique_ptr<SparseMatrix> S2(Add(1.0, *S1, -1.0, Mt));
+    std::unique_ptr<SparseMatrix> SE(mfem::Mult(*S2, *Ef_));
+    fold00.reset(mfem::Mult(*Eft, *SE));
+  }
+
+  // The interface pressure form B_Sigma and the constraint penalty
+  // pieces theta [Bn, -Bn J; -J^T Bn, J^T Bn J].
+  auto B = NewSlipInterfaceMatrix(*fes_, *J_, interface_marker_, *pi_, map);
+  {
+    Array<int> marker(interface_marker_);
+    BilinearForm bn(fes_);
+    bn.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(map), marker);
+    bn.Assemble();
+    bn.Finalize();
+    Bn_ = std::make_unique<SparseMatrix>(bn.SpMat());
+  }
+  std::unique_ptr<SparseMatrix> BnJ(mfem::Mult(*Bn_, *J_));
+  std::unique_ptr<SparseMatrix> JtBn(Transpose(*BnJ));
+  std::unique_ptr<SparseMatrix> JtBnJ(mfem::Mult(*Jt_, *BnJ));
+
+  // The fluid gauge penalty eps Q (solver operator only).
+  {
+    ConstantCoefficient eps_c(fluid_gauge_eps_);
+    ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    BilinearForm qf(fes_f_);
+    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    qf.Assemble();
+    qf.Finalize();
+    Qf_ = std::make_unique<SparseMatrix>(qf.SpMat());
+  }
+
+  // Physical blocks. Solid row: base stiffness (with the vacuum-extension
+  // fold, as the base SetupSolver would apply it) + the fluid folds + the
+  // interface form.
+  {
+    std::unique_ptr<SparseMatrix> acc(new SparseMatrix(*A.As<SparseMatrix>()));
+    if (ext_EtGE_) {
+      acc.reset(Add(1.0, *acc, 1.0, *ext_EtGE_));
+    }
+    acc.reset(Add(1.0, *acc, 1.0, *EtGfE));
+    acc.reset(Add(1.0, *acc, 1.0, *fold00));
+    acc.reset(Add(1.0, *acc, 1.0, *B.ss));
+    A00_ = std::move(acc);
+  }
+  {
+    std::unique_ptr<SparseMatrix> acc(new SparseMatrix(*B.fs));
+    acc.reset(Add(1.0, *acc, -1.0, *GcE));
+    A10_ = std::move(acc);
+    A01_.reset(Transpose(*A10_));
+  }
+  {
+    std::unique_ptr<SparseMatrix> acc(new SparseMatrix(a_f.SpMat()));
+    acc.reset(Add(1.0, *acc, 1.0, Mt));
+    acc.reset(Add(1.0, *acc, 1.0, *B.ff));
+    A11_ = std::move(acc);
+  }
+  {
+    const SparseMatrix& C_solid =
+        ext_C_total_ ? *ext_C_total_ : *C_.As<SparseMatrix>();
+    std::unique_ptr<SparseMatrix> acc(new SparseMatrix(C_solid));
+    acc.reset(Add(1.0, *acc, 1.0, *EtCf));
+    acc.reset(Add(1.0, *acc, -1.0, *EtKc));
+    A02_ = std::move(acc);
+    A20_.reset(Transpose(*A02_));
+  }
+  A12_ = std::make_unique<SparseMatrix>(Kc);
+  A21_.reset(Transpose(*A12_));
+
+  // Solver blocks: physical + penalty (+ eps Q on the fluid diagonal).
+  S00_.reset(Add(1.0, *A00_, theta_, *Bn_));
+  S10_.reset(Add(1.0, *A10_, -theta_, *JtBn));
+  S01_.reset(Transpose(*S10_));
+  {
+    std::unique_ptr<SparseMatrix> acc(Add(1.0, *A11_, theta_, *JtBnJ));
+    A11_solve_.reset(Add(1.0, *acc, 1.0, *Qf_));
+  }
+
+  op_A00_ = A00_.get();
+  op_A01_ = A01_.get();
+  op_A10_ = A10_.get();
+  op_A11_ = A11_.get();
+  op_A02_ = A02_.get();
+  op_A20_ = A20_.get();
+  op_A12_ = A12_.get();
+  op_A21_ = A21_.get();
+  op_S00_ = S00_.get();
+  op_S01_ = S01_.get();
+  op_S10_ = S10_.get();
+  op_S11_ = A11_solve_.get();
+  op_Qf_ = Qf_.get();
+  op_Bn_ = Bn_.get();
+  prec11_ = std::make_unique<GSSmoother>(*A11_solve_);
+}
+
+#ifdef MFEM_USE_MPI
+void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
+    OperatorHandle& A) {
+  MFEM_VERIFY(pEf_,
+              "LinearQuasiStaticSlipReferentialProblem: call "
+              "SetFluidExtension() before the first Solve().");
+  MFEM_VERIFY(fluid_mu_gauge_,
+              "LinearQuasiStaticSlipReferentialProblem: call "
+              "SetFluidGauge() before the first Solve().");
+  auto& map = ref_rheology_->EquilibriumMapping();
+  Array<int> empty;
+  std::unique_ptr<HypreParMatrix> Eft(pEf_->Transpose());
+
+  // Fluid elastic block with the fluid's own field.
+  OperatorHandle Aff(Operator::Hypre_ParCSR);
+  ParBilinearForm a_f(pfes_f_);
+  {
+    auto stiffness = ref_rheology_->MakeStiffness();
+    stiffness->AddIntegrators(a_f, nullptr);
+  }
+  a_f.Assemble();
+  a_f.Finalize();
+  a_f.FormSystemMatrix(empty, Aff);
+
+  // Fluid-region a'' gravity with the extension field, folded E^T G_F E.
+  std::unique_ptr<HypreParMatrix> EtGfE;
+  {
+    OperatorHandle Gf(Operator::Hypre_ParCSR);
+    ParBilinearForm g_f(pfes_f_);
+    g_f.AddDomainIntegrator(new ReferentialGravityIntegrator(
+        map, *grad_zeta0_fluid_, 1.0 / (2.0 * four_pi_G_)));
+    g_f.Assemble();
+    g_f.Finalize();
+    g_f.FormSystemMatrix(empty, Gf);
+    EtGfE.reset(mfem::RAP(Gf.As<HypreParMatrix>(), pEf_.get()));
+  }
+
+  // Fluid-region a' coupling with the extension field: E^T C_F.
+  std::unique_ptr<HypreParMatrix> EtCf;
+  {
+    OperatorHandle Cf(Operator::Hypre_ParCSR);
+    ParSubMeshMixedBilinearForm c_f(pfes_zeta_, pfes_f_);
+    c_f.AddDomainIntegrator(new ReferentialGravityCouplingIntegrator(
+        map, *grad_zeta0_fluid_, 1.0 / four_pi_G_));
+    c_f.Assemble();
+    c_f.FormRectangularSystemMatrix(empty, empty, Cf);
+    EtCf.reset(ParMult(Eft.get(), Cf.As<HypreParMatrix>()));
+  }
+
+  // Mismatch coupling K_c (phi_e = id, as in serial).
+  std::unique_ptr<HypreParMatrix> Kc, EtKc;
+  {
+    OperatorHandle KcH(Operator::Hypre_ParCSR);
+    ParSubMeshMixedBilinearForm kc(pfes_zeta_, pfes_f_);
+    kc.AddDomainIntegrator(new DomainVectorGradScalarIntegrator(*rho_));
+    kc.Assemble();
+    kc.FormRectangularSystemMatrix(empty, empty, KcH);
+    Kc = std::make_unique<HypreParMatrix>(*KcH.As<HypreParMatrix>());
+    EtKc.reset(ParMult(Eft.get(), Kc.get()));
+  }
+
+  // The projected g0 field and the two w-term matrices.
+  g0_fluid_gf_ = detail::MakeGridFunction(fes_f_);
+  g0_fluid_gf_->ProjectDiscCoefficient(*grad_zeta0_fluid_,
+                                       GridFunction::ARITHMETIC);
+  OperatorHandle Mt(Operator::Hypre_ParCSR), Gc(Operator::Hypre_ParCSR);
+  RhoSymJacobianCoefficient hess_c(*rho_, *g0_fluid_gf_);
+  ParBilinearForm m_f(pfes_f_);
+  m_f.AddDomainIntegrator(new VectorMassIntegrator(hess_c));
+  m_f.Assemble();
+  m_f.Finalize();
+  m_f.FormSystemMatrix(empty, Mt);
+  VectorGridFunctionCoefficient g0_c(g0_fluid_gf_.get());
+  ParBilinearForm gc_f(pfes_f_);
+  gc_f.AddDomainIntegrator(new DomainVectorGradVectorIntegrator(g0_c, *rho_));
+  gc_f.Assemble();
+  gc_f.Finalize();
+  gc_f.FormSystemMatrix(empty, Gc);
+
+  // Gravity-mismatch folds, as in serial:
+  //   (1,1) += Mt, (1,0) += -Gc E, (0,0) += E^T (Gc + Gc^T - Mt) E.
+  std::unique_ptr<HypreParMatrix> GcE(
+      ParMult(Gc.As<HypreParMatrix>(), pEf_.get()));
+  std::unique_ptr<HypreParMatrix> fold00;
+  {
+    std::unique_ptr<HypreParMatrix> Gct(Gc.As<HypreParMatrix>()->Transpose());
+    std::unique_ptr<HypreParMatrix> S1(
+        mfem::Add(1.0, *Gc.As<HypreParMatrix>(), 1.0, *Gct));
+    std::unique_ptr<HypreParMatrix> S2(
+        mfem::Add(1.0, *S1, -1.0, *Mt.As<HypreParMatrix>()));
+    std::unique_ptr<HypreParMatrix> EtS2(ParMult(Eft.get(), S2.get()));
+    fold00.reset(ParMult(EtS2.get(), pEf_.get()));
+  }
+
+  // The interface pressure form and the constraint penalty pieces.
+  auto B = NewSlipInterfaceMatrix(*pfes_, *pJ_, interface_marker_, *pi_, map);
+  {
+    OperatorHandle BnH(Operator::Hypre_ParCSR);
+    Array<int> marker(interface_marker_);
+    ParBilinearForm bn(pfes_);
+    bn.AddBoundaryIntegrator(new BoundaryNormalNormalIntegrator(map), marker);
+    bn.Assemble();
+    bn.Finalize();
+    bn.FormSystemMatrix(empty, BnH);
+    pBn_ = std::make_unique<HypreParMatrix>(*BnH.As<HypreParMatrix>());
+  }
+  std::unique_ptr<HypreParMatrix> BnJ(ParMult(pBn_.get(), pJ_.get()));
+  std::unique_ptr<HypreParMatrix> JtBn(BnJ->Transpose());
+  std::unique_ptr<HypreParMatrix> JtBnJ(mfem::RAP(pBn_.get(), pJ_.get()));
+
+  // The fluid gauge penalty eps Q.
+  {
+    OperatorHandle QfH(Operator::Hypre_ParCSR);
+    ConstantCoefficient eps_c(fluid_gauge_eps_);
+    ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
+    ParBilinearForm qf(pfes_f_);
+    qf.AddDomainIntegrator(new ElasticityIntegrator(mu_eps, -2.0 / dim_, 1.0));
+    qf.Assemble();
+    qf.Finalize();
+    qf.FormSystemMatrix(empty, QfH);
+    pQf_ = std::make_unique<HypreParMatrix>(*QfH.As<HypreParMatrix>());
+  }
+
+  // Physical blocks (solid row with the vacuum-extension fold as the
+  // base SetupSolver would apply it), then the solver blocks.
+  {
+    std::unique_ptr<HypreParMatrix> acc(
+        mfem::Add(1.0, *A.As<HypreParMatrix>(), 1.0, *EtGfE));
+    if (pext_EtGE_) {
+      acc.reset(mfem::Add(1.0, *acc, 1.0, *pext_EtGE_));
+    }
+    acc.reset(mfem::Add(1.0, *acc, 1.0, *fold00));
+    pA00_.reset(mfem::Add(1.0, *acc, 1.0, *B.ss));
+  }
+  {
+    std::unique_ptr<HypreParMatrix> acc(mfem::Add(1.0, *B.fs, -1.0, *GcE));
+    pA10_ = std::move(acc);
+    pA01_.reset(pA10_->Transpose());
+  }
+  {
+    std::unique_ptr<HypreParMatrix> acc(
+        mfem::Add(1.0, *Aff.As<HypreParMatrix>(), 1.0,
+                  *Mt.As<HypreParMatrix>()));
+    pA11_.reset(mfem::Add(1.0, *acc, 1.0, *B.ff));
+  }
+  {
+    const HypreParMatrix& C_solid =
+        pext_C_total_ ? *pext_C_total_ : *C_.As<HypreParMatrix>();
+    std::unique_ptr<HypreParMatrix> acc(mfem::Add(1.0, C_solid, 1.0, *EtCf));
+    pA02_.reset(mfem::Add(1.0, *acc, -1.0, *EtKc));
+    pA20_.reset(pA02_->Transpose());
+  }
+  pA12_ = std::move(Kc);
+  pA21_.reset(pA12_->Transpose());
+
+  pS00_.reset(mfem::Add(1.0, *pA00_, theta_, *pBn_));
+  pS10_.reset(mfem::Add(1.0, *pA10_, -theta_, *JtBn));
+  pS01_.reset(pS10_->Transpose());
+  {
+    std::unique_ptr<HypreParMatrix> acc(
+        mfem::Add(1.0, *pA11_, theta_, *JtBnJ));
+    pA11_solve_.reset(mfem::Add(1.0, *acc, 1.0, *pQf_));
+  }
+
+  op_A00_ = pA00_.get();
+  op_A01_ = pA01_.get();
+  op_A10_ = pA10_.get();
+  op_A11_ = pA11_.get();
+  op_A02_ = pA02_.get();
+  op_A20_ = pA20_.get();
+  op_A12_ = pA12_.get();
+  op_A21_ = pA21_.get();
+  op_S00_ = pS00_.get();
+  op_S01_ = pS01_.get();
+  op_S10_ = pS10_.get();
+  op_S11_ = pA11_solve_.get();
+  op_Qf_ = pQf_.get();
+  op_Bn_ = pBn_.get();
+  {
+    auto amg = std::make_unique<HypreBoomerAMG>(*pA11_solve_);
+    amg->SetSystemsOptions(dim_);
+    amg->SetPrintLevel(0);
+    prec11_ = std::move(amg);
+  }
+}
+#endif
+
+void LinearQuasiStaticSlipReferentialProblem::SetupSolver(OperatorHandle& A) {
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    AssembleSlipBlocksPar(A);
+  } else
+#endif
+  {
+    AssembleSlipBlocks(A);
+  }
+
+  block_op3_ = std::make_unique<BlockOperator>(offsets3_);
+  block_op3_->SetBlock(0, 0, const_cast<Operator*>(op_S00_));
+  block_op3_->SetBlock(0, 1, const_cast<Operator*>(op_S01_));
+  block_op3_->SetBlock(1, 0, const_cast<Operator*>(op_S10_));
+  block_op3_->SetBlock(1, 1, const_cast<Operator*>(op_S11_));
+  block_op3_->SetBlock(0, 2, const_cast<Operator*>(op_A02_));
+  block_op3_->SetBlock(2, 0, const_cast<Operator*>(op_A20_));
+  block_op3_->SetBlock(1, 2, const_cast<Operator*>(op_A12_));
+  block_op3_->SetBlock(2, 1, const_cast<Operator*>(op_A21_));
+  block_op3_->SetBlock(2, 2, const_cast<Operator*>(A_zeta_));
+
+  // Block-diagonal preconditioner: the base class's default on the solid
+  // solver block (GS serial, elasticity BoomerAMG parallel), GS/AMG on
+  // the fluid block (built by the assembly path), the shifted mapped
+  // Laplacian on the potential.
+  {
+    OperatorHandle S00h;
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      S00h.Reset(pS00_.get(), false);
+    } else
+#endif
+    {
+      S00h.Reset(S00_.get(), false);
+    }
+    prec_stale_ = true;  // the solver block changes with every assembly
+    SetupDefaultPreconditioner(S00h);
+  }
+  block_prec3_ = std::make_unique<BlockDiagonalPreconditioner>(offsets3_);
+  block_prec3_->SetDiagonalBlock(0, prec_.get());
+  block_prec3_->SetDiagonalBlock(1, prec11_.get());
+  block_prec3_->SetDiagonalBlock(2, prec_zeta_.get());
+
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    minres3_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+  } else
+#endif
+  {
+    minres3_ = std::make_unique<MINRESSolver>();
+  }
+  projected_op3_ =
+      std::make_unique<ProjectedOperator>(*block_op3_, *projector3_);
+  minres3_->SetOperator(*projected_op3_);
+  projected_prec3_ = std::make_unique<ProjectedSolver>(*projector3_);
+  projected_prec3_->SetSolver(*block_prec3_);
+  minres3_->SetPreconditioner(*projected_prec3_);
+  minres3_->SetRelTol(rel_tol_);
+  minres3_->SetAbsTol(0.0);
+  minres3_->SetMaxIter(10000);
+  minres3_->SetPrintLevel(print_level_);
+  minres3_->iterative_mode = true;
+
+  projected3_ = std::make_unique<ProjectedSolver>(*projector3_);
+  projected3_->SetSolver(*minres3_);
+  projected3_->iterative_mode = true;
+
+  if (!X3_ || X3_->Size() != offsets3_.Last()) {
+    X3_ = std::make_unique<BlockVector>(offsets3_);
+    *X3_ = 0.0;
+  }
+  B3_ = std::make_unique<BlockVector>(offsets3_);
+  w_al_ = std::make_unique<BlockVector>(offsets3_);
+  *w_al_ = 0.0;
+}
+
+bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
+    const Vector& B, Vector& X) {
+  B3_->GetBlock(0) = B;
+  B3_->GetBlock(1) = 0.0;
+  B3_->GetBlock(2) = B_zeta_;
+  jump_history_.clear();
+  *w_al_ = 0.0;
+  if (std::sqrt(Dot(*B3_, *B3_)) == 0.0) {
+    *X3_ = 0.0;
+    X = 0.0;
+    Zeta_true_ = 0.0;
+    *u_f_ = 0.0;
+    DistributePotential(Zeta_true_);
+    return true;
+  }
+
+  // Augmented-Lagrangian iterations for the normal-jump constraint,
+  // interleaved with the Tikhonov refinement of the fluid gauge (the
+  // sliding-interface scheme of doc/gauge_penalty_iteration.tex §4):
+  //   S U_{k+1} = F - w_k + eps Q u_{f,k},   w_{k+1} = w_k + theta P U.
+  bool ok = true;
+  int outer = 0;
+  BlockVector rhs(offsets3_);
+  Vector js(offsets3_[1]), tmp_s(offsets3_[1]), Bjs(offsets3_[1]);
+  Vector tmp_f(fes_f_->GetTrueVSize());
+  for (int k = 0; k < al_iterations_; k++) {
+    rhs = *B3_;
+    rhs -= *w_al_;
+    op_Qf_->AddMult(X3_->GetBlock(1), rhs.GetBlock(1));
+    projected3_->Mult(rhs, *X3_);
+    ok = minres3_->GetConverged() && ok;
+    outer += minres3_->GetNumIterations();
+
+    // js = u_s - J u_f; w += theta [Bn js; -J^T Bn js].
+    js = X3_->GetBlock(0);
+    op_J_->Mult(X3_->GetBlock(1), tmp_s);
+    js -= tmp_s;
+    op_Bn_->Mult(js, Bjs);
+    jump_history_.push_back(std::sqrt(std::abs(Dot(js, Bjs))));
+    w_al_->GetBlock(0).Add(theta_, Bjs);
+    op_Jt_->Mult(Bjs, tmp_f);
+    w_al_->GetBlock(1).Add(-theta_, tmp_f);
+  }
+  outer_its_ = outer;
+  NoteIterations(outer);
+
+  X = X3_->GetBlock(0);
+  Zeta_true_ = X3_->GetBlock(2);
+  u_f_->SetFromTrueDofs(X3_->GetBlock(1));
+  DistributePotential(Zeta_true_);
+  return ok;
+}
+
+real_t LinearQuasiStaticSlipReferentialProblem::BlockNullPairResidual(
+    const Vector& us_true, const Vector& uf_true) {
+  EnsureOperator();
+  real_t a_max = 0.0;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto* hyp = A_.As<HypreParMatrix>();
+    SparseMatrix diag, offd;
+    HYPRE_BigInt* cmap = nullptr;
+    hyp->GetDiag(diag);
+    hyp->GetOffd(offd, cmap);
+    real_t local = std::max(diag.MaxNorm(), offd.MaxNorm());
+    MPI_Allreduce(&local, &a_max, 1, MPITypeMap<real_t>::mpi_type, MPI_MAX,
+                  pfes_->GetComm());
+  } else
+#endif
+  {
+    a_max = A_.As<SparseMatrix>()->MaxNorm();
+  }
+  const real_t norm = std::sqrt(Dot(us_true, us_true) + Dot(uf_true, uf_true));
+
+  // Physical residual (penalty and eps Q excluded).
+  BlockVector r(offsets3_);
+  op_A00_->Mult(us_true, r.GetBlock(0));
+  op_A01_->AddMult(uf_true, r.GetBlock(0));
+  op_A10_->Mult(us_true, r.GetBlock(1));
+  op_A11_->AddMult(uf_true, r.GetBlock(1));
+  op_A20_->Mult(us_true, r.GetBlock(2));
+  op_A21_->AddMult(uf_true, r.GetBlock(2));
+  return std::sqrt(Dot(r, r)) / (a_max * std::max(norm, real_t{1e-300}));
+}
+
+std::vector<real_t>
+LinearQuasiStaticSlipReferentialProblem::SlipRigidPairResiduals() {
+  EnsureOperator();
+  std::vector<real_t> out;
+  BlockVector nb(offsets3_);
+  for (int i = 0; i < projector3_->Size(); i++) {
+    static_cast<Vector&>(nb) = projector3_->Basis(i);
+    // Skip the 2-D potential constant: it is not a (u_s, u_f) pair.
+    if (nb.GetBlock(0).Norml2() == 0.0 && nb.GetBlock(1).Norml2() == 0.0) {
+      continue;
+    }
+    out.push_back(BlockNullPairResidual(nb.GetBlock(0), nb.GetBlock(1)));
+  }
+  return out;
+}
+
+void LinearQuasiStaticSlipReferentialProblem::RegisterFields(
+    DataCollection& dc) {
+  LinearQuasiStaticReferentialProblem::RegisterFields(dc);
+  dc.RegisterField("fluid_displacement", u_f_.get());
 }
 
 }  // namespace mfemElasticity

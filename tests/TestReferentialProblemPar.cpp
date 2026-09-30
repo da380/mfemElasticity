@@ -162,6 +162,119 @@ void RunCase(int order, const std::string& label) {
         label + " potential norm");
 }
 
+// Serial-vs-parallel agreement of the three-block slip solver on the
+// two-layer disc (fluid core, solid mantle): the parallel pairing,
+// fluid extension, B_Sigma blocks and mismatch folds build the same
+// discrete system as the serial path, so the global L2 norms of the
+// solid displacement, the fluid displacement and the potential are
+// compared directly (the fluid field is gauge, but the discrete system
+// pins it too).
+void RunSlipCase(int order, const std::string& label) {
+  const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  const double r_cmb = 3483.0 / 6371.0;
+  Array<int> fluid_attr({1}), solid_attr({2}), buffer_attr({3});
+
+  Vector bb_min, bb_max;
+  smesh.GetBoundingBox(bb_min, bb_max);
+  const double r_out = bb_max.Normlinf();
+
+  RadialHydrostaticBackground bg(
+      dim, [](double) { return kRho; }, [](double) { return kKappa; },
+      [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
+  FunctionCoefficient sigma(SurfaceLoad);
+  ConstantCoefficient mu_gauge(kKappa);
+
+  auto interface_marker = [r_cmb](Mesh& solid) {
+    Array<int> marker(solid.bdr_attributes.Max());
+    marker = 0;
+    for (int i = 0; i < solid.GetNBE(); i++) {
+      auto* tr = solid.GetBdrElementTransformation(i);
+      Vector c(solid.Dimension());
+      tr->Transform(Geometries.GetCenter(solid.GetBdrElementGeometry(i)), c);
+      const double r = c.Norml2();
+      if (r > 0.9 * r_cmb && r < 1.1 * r_cmb) {
+        marker[solid.GetBdrAttribute(i) - 1] = 1;
+      }
+    }
+    return marker;
+  };
+  auto surface_marker = [](Mesh& solid) {
+    Array<int> marker(solid.bdr_attributes.Max());
+    marker = 0;
+    for (int i = 0; i < solid.GetNBE(); i++) {
+      auto* tr = solid.GetBdrElementTransformation(i);
+      Vector c(solid.Dimension());
+      tr->Transform(Geometries.GetCenter(solid.GetBdrElementGeometry(i)), c);
+      if (c.Norml2() > 0.9) {
+        marker[solid.GetBdrAttribute(i) - 1] = 1;
+      }
+    }
+    return marker;
+  };
+
+  // Serial reference on every rank.
+  double us_ref = 0.0, uf_ref = 0.0, z_ref = 0.0;
+  {
+    SubMesh solid(SubMesh::CreateFromDomain(smesh, solid_attr));
+    SubMesh fluid(SubMesh::CreateFromDomain(smesh, fluid_attr));
+    SubMesh buffer(SubMesh::CreateFromDomain(smesh, buffer_attr));
+    H1_FECollection fec(order, dim);
+    FiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
+    FiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&smesh, &fec);
+    auto marker = interface_marker(solid);
+    LinearQuasiStaticSlipReferentialProblem problem(
+        &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
+        marker, kG, kDtNDegree);
+    auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);
+    problem.SetPrescribedVacuumExtension(fes_buffer, *Evac);
+    auto Ef = NewRadialFluidExtension(fes_s, fes_f, r_cmb);
+    problem.SetFluidExtension(*Ef);
+    problem.SetFluidGauge(mu_gauge, 1e-2);
+    problem.SetConstraint(1e2, 6);
+    auto surface = surface_marker(solid);
+    problem.SetSurfaceLoad(sigma, surface);
+    problem.SetRelTol(1e-11);
+    problem.AssembleForce(0.0);
+    Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " serial slip solve");
+    us_ref = L2Norm(problem.Displacement());
+    uf_ref = L2Norm(problem.FluidDisplacement());
+    z_ref = L2Norm(problem.Potential());
+  }
+
+  // Parallel problem.
+  ParMesh pmesh(MPI_COMM_WORLD, smesh);
+  ParSubMesh solid(ParSubMesh::CreateFromDomain(pmesh, solid_attr));
+  ParSubMesh fluid(ParSubMesh::CreateFromDomain(pmesh, fluid_attr));
+  ParSubMesh buffer(ParSubMesh::CreateFromDomain(pmesh, buffer_attr));
+  H1_FECollection fec(order, dim);
+  ParFiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
+  ParFiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&pmesh, &fec);
+  auto marker = interface_marker(solid);
+  LinearQuasiStaticSlipReferentialProblem problem(
+      &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
+      marker, kG, kDtNDegree);
+  auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);
+  problem.SetPrescribedVacuumExtension(fes_buffer, *Evac);
+  auto Ef = NewRadialFluidExtension(fes_s, fes_f, r_cmb);
+  problem.SetFluidExtension(*Ef);
+  problem.SetFluidGauge(mu_gauge, 1e-2);
+  problem.SetConstraint(1e2, 6);
+  auto surface = surface_marker(solid);
+  FunctionCoefficient sigma2(SurfaceLoad);
+  problem.SetSurfaceLoad(sigma2, surface);
+  problem.SetRelTol(1e-11);
+  problem.AssembleForce(0.0);
+  Check(problem.Solve() ? 0.0 : 1.0, 0.0, label + " parallel slip solve");
+  Check(RelErr(L2Norm(problem.Displacement()), us_ref), 1e-5,
+        label + " slip solid displacement norm");
+  Check(RelErr(L2Norm(problem.FluidDisplacement()), uf_ref), 1e-4,
+        label + " slip fluid displacement norm");
+  Check(RelErr(L2Norm(problem.Potential()), z_ref), 1e-5,
+        label + " slip potential norm");
+}
+
 // Serial-vs-parallel agreement of the harmonic buffer extension of a
 // mapping that is non-trivial on the physical surface.
 void RunHarmonicExtensionCase() {
@@ -235,6 +348,8 @@ int main(int argc, char* argv[]) {
 
   RunCase(1, "o1");
   RunCase(2, "o2");
+  RunSlipCase(1, "slip o1");
+  RunSlipCase(2, "slip o2");
   RunHarmonicExtensionCase();
   RunEquilibriumStressCase();
 

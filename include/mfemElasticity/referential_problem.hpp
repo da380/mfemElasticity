@@ -94,6 +94,21 @@ std::unique_ptr<mfem::SparseMatrix> NewRadialFluidExtension(
     mfem::real_t r_interface, mfem::real_t taper_power = 2.0,
     mfem::real_t pushout = 1.001);
 
+#ifdef MFEM_USE_MPI
+/**
+ * @brief Parallel radial fluid extension on true dofs: trace rows through
+ * NewSubMeshPairingTrueDofMatrix (cross-rank), interior rows through the
+ * same query–reply exchange as the parallel vacuum extension, with the
+ * interface projections pushed *outward* into the solid (retry factors
+ * above one, mirroring the serial overload). Semantics as the serial
+ * overload; returns fluid true dofs by solid true dofs.
+ */
+std::unique_ptr<mfem::HypreParMatrix> NewRadialFluidExtension(
+    mfem::ParFiniteElementSpace& solid_fes,
+    mfem::ParFiniteElementSpace& fluid_fes, mfem::real_t r_interface,
+    mfem::real_t taper_power = 2.0, mfem::real_t pushout = 1.001);
+#endif
+
 /**
  * @brief The symmetrised slip-interface pressure blocks
  * (doc/slip_interface.tex, Proposition 1): with @f$G@f$ the one-sided
@@ -129,6 +144,25 @@ SlipInterfaceBlocks NewSlipInterfaceMatrix(
     mfem::FiniteElementSpace& fes_s, const mfem::SparseMatrix& J,
     const mfem::Array<int>& interface_marker, mfem::Coefficient& pi,
     Diffeomorphism& map);
+
+#ifdef MFEM_USE_MPI
+/** @brief The slip-interface blocks on true dofs. */
+struct ParSlipInterfaceBlocks {
+  std::unique_ptr<mfem::HypreParMatrix> ss, sf, fs, ff;
+};
+
+/**
+ * @brief Parallel overload of NewSlipInterfaceMatrix: the one-sided
+ * kernel is assembled by a ParBilinearForm on the solid side and the
+ * blocks are formed by hypre products with the true-dof pairing
+ * @p J (NewSubMeshPairingTrueDofMatrix, solid x fluid). Semantics and
+ * the normal-convention minus as the serial builder.
+ */
+ParSlipInterfaceBlocks NewSlipInterfaceMatrix(
+    mfem::ParFiniteElementSpace& fes_s, const mfem::HypreParMatrix& J,
+    const mfem::Array<int>& interface_marker, mfem::Coefficient& pi,
+    Diffeomorphism& map);
+#endif
 
 /**
  * @brief The constitutive state of the linearised referential problem as a
@@ -367,7 +401,9 @@ class LinearQuasiStaticReferentialProblem
    * accumulates alongside the displacement. */
   bool GaugeRefine(mfem::Vector& X) override;
 
- private:
+ protected:
+  // Protected (not private) so that the slip-interface subclass can reuse
+  // the potential machinery, the coupling and the extension folds.
   void SetupPotentialOperators();
   void SetupCoupling();
   void SetupGravityIntegrators();
@@ -458,6 +494,222 @@ class LinearQuasiStaticReferentialProblem
   std::unique_ptr<mfem::BlockVector> X_block_, B_block_;
   mfem::real_t shift_ = 1e-3;
   int outer_its_ = 0;
+};
+
+/**
+ * @brief The linearised quasi-static problem with a genuinely *slipping*
+ * fluid–solid interface in the referential formulation
+ * (doc/slip_interface.tex): the broken displacement pair
+ * @f$(u_s, u_f)@f$ on solid and fluid SubMeshes of the ball and the
+ * single-valued referential potential @f$\zeta^1@f$ on the ball — the
+ * three-block system of the note's §"collected operator".
+ *
+ * **Blocks.**
+ * - Solid row: the base class's material + geometric + referential-gravity
+ *   operators on @f$u_s@f$ and the prescribed vacuum-extension folds,
+ *   *plus* the fluid-region gravity assembled with the extension field
+ *   @f$\tilde v = E_f u_s@f$ (the @f$a''@f$ and @f$a'@f$ forms folded
+ *   through @f$E_f@f$) and the mismatch folds.
+ * - Fluid row: the fluid's own material + geometric stiffness (the
+ *   dictionary @f$\mu_b = \pi@f$ is the rheology's/background module's
+ *   business, the note's @f$\mu_b = \pi@f$ lemma) and the mismatch
+ *   gravity pieces in
+ *   @f$w = u_f - E_f u_s@f$: the @f$\rho\,\mathrm{sym}(D\mathbf{g}_0)@f$
+ *   mass term, the compensated @f$\tilde v@f$-coupling @f$G - M@f$, and
+ *   the mismatch–potential coupling @f$\int\rho\,w\cdot\nabla\zeta^1@f$.
+ * - Potential row: the base class's mapped Poisson + DtN block.
+ * - Interface: the pressure form @f$B_\Sigma@f$ (NewSlipInterfaceMatrix)
+ *   plus the penalty @f$\theta[B_n, -B_nJ; -J^TB_n, J^TB_nJ]@f$ on the
+ *   normal-jump constraint @f$\nu\cdot[\![u]\!] = 0@f$, with
+ *   augmented-Lagrangian iterations driving the jump to zero,
+ *   interleaved with the Tikhonov refinement of the fluid gauge penalty
+ *   (the fluid displacement is determined only up to linearised
+ *   relabellings, exactly as in the welded gauged formulation).
+ *
+ * **Null space**: common translations @f$(t, t, 0)@f$ and *independent*
+ * mapped rotations of shell and core (a frictionless axisymmetric
+ * interface transmits no torque), plus the 2-D potential constant. With
+ * the tapered extensions the translations are near-null rather than
+ * exact (as for the vacuum extension).
+ *
+ * Serial and parallel in one class, as throughout: in parallel the
+ * blocks are hypre products on true dofs with the cross-rank pairing
+ * and extension operators.
+ *
+ * **Limitations** (deliberate, per the work plan): the *mismatch*
+ * gravity pieces are assembled at @f$\varphi_e = \mathrm{id}@f$ (their
+ * mapped variants are deferred with the mapped discrete-gravity unit;
+ * the elastic, @f$B_\Sigma@f$ and §3 gravity terms are fully mapped);
+ * one fluid region inside a solid shell (nested-shell/two-sided
+ * extensions with the inner-core work).
+ */
+class LinearQuasiStaticSlipReferentialProblem
+    : public LinearQuasiStaticReferentialProblem {
+ public:
+  /**
+   * @param fes_s Solid displacement space on a SubMesh of the ball; the
+   * base class's displacement space.
+   * @param fes_f Fluid displacement space on a SubMesh of the ball,
+   * sharing @p fes_s's FiniteElementCollection.
+   * @param fes_zeta Scalar potential space on the ball.
+   * @param rheology The constitutive state, position-based coefficients
+   * valid on *both* regions (a fluid region carries @f$\mu_b = \pi@f$
+   * automatically through the bare conversion; RadialHydrostaticBackground
+   * supplies exactly this).
+   * @param density Referential density on both regions.
+   * @param interface_pressure The referential pressure @f$\pi@f$ on
+   * @f$\Sigma@f$ (the background's pressure field).
+   * @param interface_marker Boundary attributes of @f$\Sigma@f$ on the
+   * *solid* SubMesh.
+   * @param background_zeta0 Optional @f$\zeta^0@f$; when null it is
+   * solved from the density over solid *and* fluid.
+   */
+  LinearQuasiStaticSlipReferentialProblem(
+      mfem::FiniteElementSpace* fes_s, mfem::FiniteElementSpace* fes_f,
+      mfem::FiniteElementSpace* fes_zeta,
+      const ReferentialElasticRheology& rheology, mfem::Coefficient& density,
+      mfem::Coefficient& interface_pressure,
+      const mfem::Array<int>& interface_marker,
+      mfem::real_t gravitational_constant, int dtn_degree,
+      mfem::Coefficient* background_zeta0 = nullptr);
+
+  /**
+   * @brief The prescribed fluid extension @f$\tilde v = E\,u_s@f$
+   * (NewRadialFluidExtension): fluid vdofs from solid vdofs, interface
+   * trace exact. Required before the first Solve(); the interior rule is
+   * gauge, and agreement of observables between two @f$E@f$s is the
+   * built-in invariance test. Copied.
+   */
+  void SetFluidExtension(const mfem::SparseMatrix& E);
+
+#ifdef MFEM_USE_MPI
+  /** @brief Parallel overload: @p E on true dofs
+   * (NewRadialFluidExtension parallel overload). */
+  void SetFluidExtension(const mfem::HypreParMatrix& E);
+#endif
+
+  /**
+   * @brief The fluid gauge penalty @f$\epsilon\,2\mu_g\,\mathrm{dev}\,
+   * \varepsilon(u_f):\mathrm{dev}\,\varepsilon(u_f')@f$ on the whole
+   * fluid space (solver operator only; the interleaved refinement removes
+   * the @f$O(\epsilon)@f$ bias). Required before the first Solve().
+   */
+  void SetFluidGauge(mfem::Coefficient& mu_gauge, mfem::real_t epsilon);
+
+  /** @brief Constraint penalty @f$\theta@f$ and the number of
+   * augmented-Lagrangian iterations per Solve() (each interleaves one
+   * Tikhonov refinement of the fluid gauge). */
+  void SetConstraint(mfem::real_t theta, int al_iterations);
+
+  const mfem::GridFunction& FluidDisplacement() const { return *u_f_; }
+  mfem::FiniteElementSpace& FluidSpace() { return *fes_f_; }
+
+  /** @brief Normal-jump energies @f$\sqrt{j^T B_n j}@f$,
+   * @f$j = u_s - J u_f@f$, at the end of each AL iteration of the last
+   * Solve(). */
+  const std::vector<mfem::real_t>& NormalJumpHistory() const {
+    return jump_history_;
+  }
+
+  /** @brief The accumulated AL multiplier (dual vector on the
+   * @f$(u_s, u_f)@f$ blocks): the discrete constraint reaction, i.e. the
+   * interface normal-traction *perturbation* paired with @f$\nu@f$. */
+  const mfem::BlockVector& ConstraintMultiplier() const { return *w_al_; }
+
+  /**
+   * @brief Diagnostic: @f$\|A_{\mathrm{blk}}(u_s, u_f, 0)\| /
+   * (\|A\|_{\max}\|(u_s,u_f)\|)@f$ under the full three-block operator
+   * (physical interface form included, penalty excluded). Assembles if
+   * needed.
+   */
+  mfem::real_t BlockNullPairResidual(const mfem::Vector& us_true,
+                                     const mfem::Vector& uf_true);
+
+  /** @brief Residuals of the slip null pairs: common translations, then
+   * the independent solid and fluid mapped rotations. */
+  std::vector<mfem::real_t> SlipRigidPairResiduals();
+
+  /** @brief The base-class gauged fluid is not meaningful here (the fluid
+   * has its own space); use SetFluidGauge(). */
+  void SetGaugedFluid(const mfem::Array<int>&, mfem::Coefficient&,
+                      mfem::real_t, int, GaugePenalty) override;
+
+  void RegisterFields(mfem::DataCollection& dc) override;
+
+ protected:
+  void SetupSolver(mfem::OperatorHandle& A) override;
+  bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
+
+ private:
+  void RecomputeBackgroundPotential();
+  void SetupSlipRigidModes();
+  void AssembleSlipBlocks(mfem::OperatorHandle& A);
+#ifdef MFEM_USE_MPI
+  void AssembleSlipBlocksPar(mfem::OperatorHandle& A);
+#endif
+
+  mfem::FiniteElementSpace* fes_f_;
+#ifdef MFEM_USE_MPI
+  mfem::ParFiniteElementSpace* pfes_f_ = nullptr;
+#endif
+  mfem::Coefficient* pi_;
+  mfem::Array<int> interface_marker_;
+  std::unique_ptr<mfem::GridFunction> u_f_;
+
+  // interface pairing (solid x fluid; vdofs in serial, true dofs in
+  // parallel) and its transpose
+  std::unique_ptr<mfem::SparseMatrix> J_, Jt_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pJ_, pJt_;
+#endif
+
+  // fluid shadow of the potential space, zeta0 and g0 on the fluid
+  std::unique_ptr<mfem::FiniteElementSpace> shadow_zeta_fluid_;
+  std::unique_ptr<SubMeshDofInjection> injection_fluid_;
+  std::unique_ptr<mfem::GridFunction> zeta0_fluid_;
+  std::unique_ptr<mfem::GradientGridFunctionCoefficient> grad_zeta0_fluid_;
+  std::unique_ptr<mfem::GridFunction> g0_fluid_gf_;
+
+  // fluid extension, gauge and constraint parameters
+  std::unique_ptr<mfem::SparseMatrix> Ef_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pEf_;
+#endif
+  mfem::Coefficient* fluid_mu_gauge_ = nullptr;
+  mfem::real_t fluid_gauge_eps_ = 0.0;
+  mfem::real_t theta_ = 1.0e2;
+  int al_iterations_ = 8;
+
+  // assembled physical blocks, the solver blocks with the constraint
+  // penalty folded in (S**, A11_solve_), the penalty kernel Bn and the
+  // fluid gauge penalty eps Q; serial sparse or hypre per the spaces,
+  // with type-generic views (op_*) for the solver and diagnostics
+  std::unique_ptr<mfem::SparseMatrix> A00_, A01_, A10_, A11_, A02_, A20_,
+      A12_, A21_, S00_, S01_, S10_, A11_solve_, Qf_, Bn_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pA00_, pA01_, pA10_, pA11_, pA02_,
+      pA20_, pA12_, pA21_, pS00_, pS01_, pS10_, pA11_solve_, pQf_, pBn_;
+#endif
+  const mfem::Operator *op_A00_ = nullptr, *op_A01_ = nullptr,
+                       *op_A10_ = nullptr, *op_A11_ = nullptr,
+                       *op_A02_ = nullptr, *op_A20_ = nullptr,
+                       *op_A12_ = nullptr, *op_A21_ = nullptr,
+                       *op_S00_ = nullptr, *op_S01_ = nullptr,
+                       *op_S10_ = nullptr, *op_S11_ = nullptr,
+                       *op_Qf_ = nullptr, *op_Bn_ = nullptr,
+                       *op_J_ = nullptr, *op_Jt_ = nullptr;
+
+  // three-block solver
+  mfem::Array<int> offsets3_;
+  std::unique_ptr<NullSpaceProjector> projector3_;
+  std::unique_ptr<mfem::BlockOperator> block_op3_;
+  std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec3_;
+  std::unique_ptr<mfem::Solver> prec11_;
+  std::unique_ptr<ProjectedOperator> projected_op3_;
+  std::unique_ptr<ProjectedSolver> projected3_, projected_prec3_;
+  std::unique_ptr<mfem::MINRESSolver> minres3_;
+  std::unique_ptr<mfem::BlockVector> X3_, B3_, w_al_;
+  std::vector<mfem::real_t> jump_history_;
 };
 
 }  // namespace mfemElasticity

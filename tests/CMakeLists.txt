@@ -218,6 +218,10 @@ add_executable(TestSlipInterface TestSlipInterface.cpp)
 target_link_libraries(TestSlipInterface PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestSlipInterface)
 
+add_executable(TestSlipProblem TestSlipProblem.cpp)
+target_link_libraries(TestSlipProblem PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestSlipProblem)
+
 add_executable(TestBackground TestBackground.cpp)
 target_link_libraries(TestBackground PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestBackground)

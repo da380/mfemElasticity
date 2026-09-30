@@ -718,8 +718,36 @@ the same treatment (the verification record of \S\ref{sec:gravhess}),
 and both $B_\Sigma$ and the gravity volume pieces now also exist as
 \textbf{pinned discrete operators} (library integrators plus the
 extension operator, cross-checked against the quadrature values with
-order convergence). What remains for the single-valued-$\zeta$ solver
-is assembly only; the mapped ($\varphi_e \neq \mathrm{id}$) discrete
-gravity pieces and the broken-$\zeta$ variant follow.
+order convergence). The \textbf{single-valued-$\zeta$ solver is built}
+(\texttt{LinearQuasiStaticSlipReferentialProblem}: the three-block
+system of \S\ref{sec:collect}, with the constraint by penalty +
+augmented Lagrangian interleaved with the fluid-gauge Tikhonov
+refinement) and passes its acceptance test
+(\texttt{tests/TestSlipProblem.cpp}): on the two-layer hydrostatic
+disc --- where $\pi(r_c) > 0$, so $B_\Sigma$ and the mismatch pieces
+act --- the broken formulation reproduces the welded gauged solution
+(tangential continuity being an admissible gauge for the barotropic
+fluid) to $1.1\times10^{-3}$ in the solid displacement and
+$7\times10^{-4}$ in the solid-region potential at order 2, while two
+fluid extensions (taper powers 2, 3) agree to $5\times10^{-6}$ ---
+the built-in gauge-invariance test, essentially at solver precision.
+The solver runs serial and parallel in one class (hypre products of
+the one-sided interface kernel, the true-dof pairing and the parallel
+prescribed extensions; serial-vs-parallel norms agree at $10^{-5}$ on
+1/2/4 ranks). Two working notes from the build: (i) $\zeta^1 = \varphi^1 +
+\tilde{\bv}\cdot\nabla\zeta^0$ \emph{carries the extension field} off
+the solid, so it is extension-invariant (an observable) only on the
+solid region --- comparisons elsewhere must first convert to the
+Eulerian $\varphi^1$; (ii) the converged AL multiplier of the
+\emph{linearised} solve is the first-order interface traction
+$\varpi^{(1)}$ (the mortar variable), not $\pi$ --- the
+``multiplier $\to \pi$'' consistency diagnostic of \S\ref{sec:first}
+belongs to a nonlinear/first-variation AL solve, or to checking a
+generated background's traction condition $P_s\bN = -\pi\bnu$
+directly. Remaining: the solution-level reductions (sphere
+$\to$ Dahlen class; $\pi = 0$ $\to$ the sliding tests), the mapped
+($\varphi_e \neq \mathrm{id}$) discrete gravity pieces (the solver
+asserts nothing but currently assembles the mismatch pieces in their
+$\varphi_e = \mathrm{id}$ form), and the broken-$\zeta$ variant.
 
 \end{document}
