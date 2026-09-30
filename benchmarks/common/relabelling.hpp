@@ -40,6 +40,7 @@
 
 #pragma once
 
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <map>
@@ -137,6 +138,56 @@ class RadialProfiles {
       b.push_back(l.hi);
     }
     return b;
+  }
+
+  /// The mass enclosed within radius r, 4 pi int rho r'^2 dr' (balls),
+  /// by 64-point Gauss-Legendre per segment of the exact profiles: the
+  /// mapped runs need the PERTURBED model's gravity, which the mesh
+  /// integrals of the base fields cannot give.
+  real_t EnclosedMass(real_t r) const {
+    constexpr int n = 64;
+    static const auto nodes = [] {
+      std::array<std::array<real_t, 2>, n> nw{};
+      // Newton on Legendre P_n for the Gauss nodes and weights.
+      for (int i = 0; i < n; i++) {
+        real_t x = std::cos(std::numbers::pi_v<real_t> * (i + 0.75) /
+                            (n + 0.5));
+        real_t pp = 0.0;
+        for (int it = 0; it < 100; it++) {
+          real_t p0 = 1.0, p1 = x;
+          for (int k = 2; k <= n; k++) {
+            const real_t p2 = ((2.0 * k - 1.0) * x * p1 -
+                               (k - 1.0) * p0) / k;
+            p0 = p1;
+            p1 = p2;
+          }
+          pp = n * (x * p1 - p0) / (x * x - 1.0);
+          const real_t dx = p1 / pp;
+          x -= dx;
+          if (std::abs(dx) < 1e-16) {
+            break;
+          }
+        }
+        nw[i] = {x, 2.0 / ((1.0 - x * x) * pp * pp)};
+      }
+      return nw;
+    }();
+    constexpr real_t four_pi = 4.0 * std::numbers::pi_v<real_t>;
+    real_t mass = 0.0;
+    for (const auto& layer : layers_) {
+      const real_t lo = layer.lo, hi = std::min(layer.hi, r);
+      if (hi <= lo) {
+        break;
+      }
+      const real_t mid = 0.5 * (lo + hi), half = 0.5 * (hi - lo);
+      real_t sum = 0.0;
+      for (const auto& [x, w] : nodes) {
+        const real_t rr = mid + half * x;
+        sum += w * Eval("rho", rr) * rr * rr;
+      }
+      mass += four_pi * half * sum;
+    }
+    return mass;
   }
 
  private:
@@ -285,6 +336,84 @@ inline CallableDiffeomorphism InteriorRelabelling(
             F(i, j) += amplitude * h * Dw(i, j);
             if (r > 1e-14) {
               F(i, j) += amplitude * hp * w[i] * x[j] / r;
+            }
+          }
+        }
+      });
+}
+
+// The degree-0 interface shift (the tier-3 perturbation benchmark,
+// doc/mappings.md): a purely radial, piecewise-linear map of the
+// reference boundaries 0 = b_0 < ... < b_n onto shifted ones, moving
+// ONE interface by eps and leaving the centre, the other interfaces,
+// the surface and everything beyond fixed:
+//
+//   phi_e(x) = f(r) x^,  f affine per layer with f(b_j) = b_j + eps
+//              delta_{jk} at the shifted interface k,
+//   F = f'(r) r^ r^T + (f/r)(I - r^ r^T)   (exact; discontinuous
+//                                           across interfaces, which
+//                                           the per-region forms allow).
+//
+// The physical model is the SAME spherical one with that interface at
+// b_k + eps, so pyslfp solves it exactly at every finite eps: the 3-D
+// mapped solve on ONE fixed mesh has an exact reference per eps, and
+// the fixed mesh cancels the discretisation bias in the finite
+// difference [R(eps) - R(-eps)] / 2 eps against the 1-D derivative.
+inline CallableDiffeomorphism InterfaceShift(
+    int dim, const std::vector<real_t>& boundaries, int interface,
+    real_t eps) {
+  MFEM_VERIFY(interface >= 1 &&
+                  interface + 1 < static_cast<int>(boundaries.size()),
+              "InterfaceShift: an INTERIOR interface (1 .. n-1) moves; "
+              "the centre and the surface stay.");
+  auto f_of = [boundaries, interface, eps](real_t r, real_t& f,
+                                           real_t& fp) {
+    const auto& b = boundaries;
+    const int n = static_cast<int>(b.size());
+    f = r;
+    fp = 1.0;
+    if (r >= b[n - 1]) {
+      return;  // on and beyond the surface: identity
+    }
+    for (int j = 0; j + 1 < n; j++) {
+      if (r <= b[j + 1]) {
+        const real_t lo = b[j], hi = b[j + 1];
+        const real_t lo_t = lo + (j == interface ? eps : 0.0);
+        const real_t hi_t = hi + (j + 1 == interface ? eps : 0.0);
+        fp = (hi_t - lo_t) / (hi - lo);
+        f = lo_t + fp * (r - lo);
+        return;
+      }
+    }
+  };
+  return CallableDiffeomorphism(
+      dim,
+      [dim, f_of](const Vector& x, Vector& y) {
+        const real_t r = x.Norml2();
+        y.SetSize(dim);
+        if (r < 1e-300) {
+          y = x;
+          return;
+        }
+        real_t f, fp;
+        f_of(r, f, fp);
+        y = x;
+        y *= f / r;
+      },
+      [dim, f_of](const Vector& x, DenseMatrix& F) {
+        const real_t r = x.Norml2();
+        F.SetSize(dim);
+        F = 0.0;
+        real_t f = r, fp = 1.0;
+        if (r > 1e-300) {
+          f_of(r, f, fp);
+        }
+        const real_t t = r > 1e-300 ? f / r : 1.0;
+        for (int i = 0; i < dim; i++) {
+          F(i, i) = t;
+          for (int j = 0; j < dim; j++) {
+            if (r > 1e-300) {
+              F(i, j) += (fp - t) * x[i] * x[j] / (r * r);
             }
           }
         }

@@ -62,17 +62,21 @@ def homogeneous() -> Model:
         layer_names=["body"], interface_names=["surface"], name="homogeneous")
 
 
-def two_solid() -> Model:
+def two_solid(discontinuity: float = MID_MANTLE) -> Model:
+    """The two-solid model; `discontinuity` moves the interface (the
+    degree-0 perturbation benchmark shifts it)."""
     return LayeredIsotropicElastic(
-        [0.0, MID_MANTLE, RADIUS], rho=[6500.0, 3500.0],
+        [0.0, discontinuity, RADIUS], rho=[6500.0, 3500.0],
         vp=[12000.0, 8500.0], vs=[6500.0, 4500.0],
         layer_names=["lower", "upper"],
         interface_names=["discontinuity", "surface"], name="two_solid")
 
 
-def fluid_core() -> Model:
+def fluid_core(cmb: float = CMB) -> Model:
+    """The two-layer model; `cmb` moves the interface (the degree-0
+    perturbation benchmark shifts it by a small amount)."""
     return LayeredIsotropicElastic(
-        [0.0, CMB, RADIUS], rho=[11000.0, 4500.0], vp=[9000.0, 11000.0],
+        [0.0, cmb, RADIUS], rho=[11000.0, 4500.0], vp=[9000.0, 11000.0],
         vs=[0.0, 6000.0], layer_names=["core", "mantle"],
         interface_names=["cmb", "surface"], name="fluid_core")
 
@@ -139,6 +143,13 @@ def prem_6() -> Model:
         ["inner_core", "outer_core", "lower_mantle", "transition_zone",
          "upper_mantle", "crust"], name="prem_6")
 
+
+#: Models whose single interior interface the perturbation benchmark can
+#: shift, with the keyword that moves it (SI metres).
+SHIFTABLE: dict[str, str] = {
+    "fluid_core": "cmb",
+    "two_solid": "discontinuity",
+}
 
 MODELS: dict[str, Callable[[], Model]] = {
     "homogeneous": homogeneous,

@@ -214,7 +214,7 @@ def plot_love_numbers(runs: list[Run], ref: dict, title: str, out: Path) -> None
         for i, run in enumerate(shown):
             rl = [l for l in ls if l in run.values[key]]
             ax.plot(rl, [run.values[key][l] for l in rl], linestyle="none",
-                    marker=MARKERS[i], color=COLOURS[i], markeredgecolor=SURFACE,
+                    marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)], markeredgecolor=SURFACE,
                     markeredgewidth=1.0, label=run.label, zorder=2)
         ax.set_title(label, loc="left")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
@@ -229,13 +229,13 @@ def plot_love_numbers(runs: list[Run], ref: dict, title: str, out: Path) -> None
 
 def plot_errors(runs: list[Run], ref: dict, title: str, out: Path) -> None:
     fig, axes = plt.subplots(2, 3, figsize=(14, 7), sharex=True, sharey=True)
-    shown = runs[:len(COLOURS)]
+    shown = runs
     for ax, (key, label, *_) in zip(axes.flat, QUANTITIES):
         for i, run in enumerate(shown):
             e = relative_error(run, ref, key)
             ls = sorted(e)
-            ax.semilogy(ls, [e[l] for l in ls], marker=MARKERS[i],
-                        color=COLOURS[i], markeredgecolor=SURFACE,
+            ax.semilogy(ls, [e[l] for l in ls], marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)],
+                        color=COLOURS[i % len(COLOURS)], markeredgecolor=SURFACE,
                         markeredgewidth=1.0, label=run.label)
         ax.set_title(label, loc="left")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
@@ -255,19 +255,19 @@ def plot_timing(runs: list[Run], title: str, out: Path) -> None:
     """The cost comparison of the methods (and solver and interface
     variants): wall seconds and outer iterations of the load solve by
     degree, one series per run, setup times in the legend."""
-    shown = runs[:len(COLOURS)]
+    shown = runs
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharex=True)
     for i, run in enumerate(shown):
         ls = sorted(run.solve_seconds or {})
         if not ls:
             continue
         axes[0].semilogy(ls, [run.solve_seconds[l] for l in ls],
-                         marker=MARKERS[i], color=COLOURS[i],
+                         marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
                          markeredgecolor=SURFACE, markeredgewidth=1.0,
                          label=f"{run.label}; setup "
                                f"{run.setup_seconds:.1f} s")
         axes[1].plot(ls, [run.iterations[l] for l in ls],
-                     marker=MARKERS[i], color=COLOURS[i],
+                     marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
                      markeredgecolor=SURFACE, markeredgewidth=1.0)
     axes[0].set_title("load solve, wall seconds", loc="left")
     axes[1].set_title("outer iterations", loc="left")
@@ -318,7 +318,7 @@ def plot_convergence(runs: list[Run], ref: dict, title: str, out: Path) -> None:
                 if len(pts) < 2:
                     continue
                 rate = fitted_rate(*zip(*pts))
-                ax.loglog(*zip(*pts), marker=MARKERS[i], color=COLOURS[i],
+                ax.loglog(*zip(*pts), marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
                           linestyle=linestyle,
                           markeredgecolor=SURFACE, markeredgewidth=1.0,
                           label=f"order {order}, degree {l} "
@@ -358,7 +358,7 @@ def plot_field_convergence(runs_by: dict[str, Run],
             if len(pts) < 2:
                 continue
             rate = fitted_rate(*zip(*pts))
-            ax.loglog(*zip(*pts), marker=MARKERS[i], color=COLOURS[i],
+            ax.loglog(*zip(*pts), marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
                       markeredgecolor=SURFACE, markeredgewidth=1.0,
                       label=f"order {order} ($p$ = {rate:.1f})")
         ax.set_title(f"relative L2 error of {label}", loc="left")
@@ -443,12 +443,12 @@ def plot_profiles(runs: list[Run], reference: dict, results: dict[str, dict],
                 # reference, and the values on the interfaces
                 for p in d["load"].get("profiles", []):
                     if p[fe_key]:
-                        ax.plot(p[fe_key], p["radius"], color=COLOURS[i],
+                        ax.plot(p[fe_key], p["radius"], color=COLOURS[i % len(COLOURS)],
                                 linewidth=1.5, linestyle=(0, (4, 3)),
                                 zorder=2)
                 ax.plot(d["load"][fe_key],
                         [f["radius"] for f in r["interfaces"]],
-                        linestyle="none", marker=MARKERS[i], color=COLOURS[i],
+                        linestyle="none", marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
                         markeredgecolor=SURFACE, markeredgewidth=1.0,
                         label=run.label, zorder=3)
             ax.set_title(f"{label}, degree {l}", loc="left")
@@ -548,7 +548,7 @@ def plot_field_spectrum(fields: list[tuple[str, dict]], title: str,
     names = (("u", "$U$"), ("v", "$V$"), ("phi", "$\\phi$"))
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.2), sharey=True)
     for ax, (key, label) in zip(axes, names):
-        for i, (run, field) in enumerate(fields[:len(COLOURS)]):
+        for i, (run, field) in enumerate(fields):
             degree = np.array(field["degree"]).astype(int)
             fe = np.array(field[key])
             ref = np.array(field[f"{key}_reference"])
@@ -560,7 +560,7 @@ def plot_field_spectrum(fields: list[tuple[str, dict]], title: str,
                     ls.append(l)
                     errors.append(np.sqrt(np.mean((fe[m] - ref[m]) ** 2))
                                   / size)
-            ax.semilogy(ls, errors, marker=MARKERS[i], color=COLOURS[i],
+            ax.semilogy(ls, errors, marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
                         markeredgecolor=SURFACE, markeredgewidth=1.0,
                         label=run)
         ax.set_title(f"{label} on the surface", loc="left")
@@ -591,6 +591,9 @@ def plot_model(directory: Path) -> list[str]:
         ref = reference_values(reference)
         title = reference["model"]
         for path in sorted(case.glob("results_o*.json")):
+            if "_shift" in path.stem:
+                continue  # a perturbed MODEL, the perturbation
+                # family's business (perturbation/plot.py)
             runs.append(read_run(path, fluid=fluid))
             results[runs[-1].label] = json.loads(path.read_text())
         for path in sorted(case.glob("field_o*.json")):

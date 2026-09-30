@@ -238,6 +238,9 @@ struct CaseOptions {
   int al_iterations = 8;
   real_t map_amplitude = 0.0;
   bool map_interp = false;
+  real_t map_shift = 0.0;
+  int map_shift_interface = 1;
+  const char* profiles = "";
 
   void Add(OptionsParser& args) {
     args.AddOption(&method, "-method", "--method",
@@ -263,6 +266,20 @@ struct CaseOptions {
                    "Use the nodal interpolant of the relabelling (the "
                    "discrete change-of-variables mode) instead of the "
                    "exact analytic mapping.");
+    args.AddOption(&map_shift, "-map-shift", "--map-shift",
+                   "Degree-0 interface shift eps (relabelling.hpp, the "
+                   "tier-3 perturbation benchmark): the named reference "
+                   "interface moves radially by eps, the physical model "
+                   "being the perturbed spherical one — pair with "
+                   "-profiles of THAT model. Referential methods only. "
+                   "Zero (default): off.");
+    args.AddOption(&map_shift_interface, "-map-shift-interface",
+                   "--map-shift-interface",
+                   "Which interior interface the shift moves (1 = the "
+                   "innermost).");
+    args.AddOption(&profiles, "-profiles", "--profiles",
+                   "Radial-profiles file overriding the case's own: the "
+                   "PERTURBED model's profiles for a shift run.");
     args.AddOption(&slip_theta, "-theta", "--slip-theta",
                    "Constraint penalty of the slipping methods (both the "
                    "normal and, broken, the scalar jump).");
@@ -578,6 +595,37 @@ class Case {
         an.gravity = G * within / (r * r);
       }
     }
+    // A mapped run describes a DIFFERENT physical model (the perturbed
+    // profiles through the map): its mass and gravities come from the
+    // exact profiles at the PHYSICAL interface radii — the base fields'
+    // mesh integrals would keep the base model's (a 2 percent error in
+    // g at a 0.02 interface shift, fatal to the derivative benchmark).
+    if (profiles_) {
+      mass = profiles_->EnclosedMass(radius);
+      gravity = G * mass / (radius * radius);
+      int shifted_attribute = -1;
+      if (options.map_shift != 0.0) {
+        int k = 0;
+        for (const auto& f : manifest.Interfaces()) {
+          if (++k == options.map_shift_interface) {
+            shifted_attribute = f.attribute;
+          }
+        }
+      }
+      for (auto& an : analyses) {
+        const real_t r_phys =
+            an.interface.radius +
+            (an.interface.attribute == shifted_attribute
+                 ? options.map_shift
+                 : 0.0);
+        an.gravity = G * profiles_->EnclosedMass(r_phys) /
+                     (r_phys * r_phys);
+      }
+      if (root) {
+        std::cout << "Mapped model: mass " << mass << ", surface gravity "
+                  << gravity << "\n";
+      }
+    }
 
     // One load and one tidal potential, their coefficients set per solve.
     Vector zero(Basis().Size());
@@ -822,6 +870,11 @@ class Case {
                      ",\n  \"map_mode\": \"" +
                      (options_.map_interp ? "interpolated" : "exact") + "\""
                : std::string())
+       << (options_.map_shift != 0.0
+               ? ",\n  \"map_shift\": " + Num(options_.map_shift) +
+                     ",\n  \"map_shift_interface\": " +
+                     std::to_string(options_.map_shift_interface)
+               : std::string())
        << (method == "slip" || method == "slip_broken"
                ? ",\n  \"slip_theta\": " + Num(options_.slip_theta) +
                      ",\n  \"al_iterations\": " +
@@ -896,7 +949,8 @@ class Case {
 
     // The relabelling of the mapped benchmark: built before the
     // coefficients, which it composes.
-    const bool mapped = options.map_amplitude != 0.0;
+    const bool shifted = options.map_shift != 0.0;
+    const bool mapped = options.map_amplitude != 0.0 || shifted;
     Diffeomorphism* map_use = nullptr;
     if (mapped) {
       MFEM_VERIFY(method == "referential" || method == "slip_broken",
@@ -905,15 +959,27 @@ class Case {
                   "(referential, slip_broken); the single-valued slip "
                   "refuses maps by design and the Eulerian classes are "
                   "unmapped.");
+      MFEM_VERIFY(!(shifted && options.map_amplitude != 0.0),
+                  "-map and -map-shift are separate benchmarks.");
       const std::string& mpath = manifest.Path();
       const auto slash = mpath.find_last_of('/');
+      const std::string dir =
+          slash == std::string::npos ? std::string()
+                                     : mpath.substr(0, slash + 1);
       profiles_ = std::make_unique<RadialProfiles>(
-          (slash == std::string::npos ? std::string()
-                                      : mpath.substr(0, slash + 1)) +
-          "radial_profiles.txt");
+          std::string(options.profiles).empty()
+              ? dir + "radial_profiles.txt"
+              : std::string(options.profiles));
+      // The map's REFERENCE boundaries are the mesh's own: the base
+      // case's, not the (possibly perturbed) profiles'.
+      base_profiles_ =
+          std::make_unique<RadialProfiles>(dir + "radial_profiles.txt");
       xi_analytic_ = std::make_unique<CallableDiffeomorphism>(
-          InteriorRelabelling(dim, profiles_->Boundaries(),
-                              options.map_amplitude));
+          shifted ? InterfaceShift(dim, base_profiles_->Boundaries(),
+                                   options.map_shift_interface,
+                                   options.map_shift)
+                  : InteriorRelabelling(dim, base_profiles_->Boundaries(),
+                                        options.map_amplitude));
       if (options.map_interp) {
         xi_interp_ = std::make_unique<MultiMeshDiffeomorphism>(
             *xi_analytic_, *parent);
@@ -934,25 +1000,40 @@ class Case {
             MaxIdentityDeviation(*xi_analytic_, *parent, outer_marker);
         Array<int> itf_marker(parent->bdr_attributes.Max());
         itf_marker = 0;
+        int k = 0;
         for (const auto& f : manifest.Interfaces()) {
+          k++;
+          if (shifted && k == options.map_shift_interface) {
+            continue;  // the shifted interface moves by design
+          }
           itf_marker[f.attribute - 1] = 1;
         }
         const real_t d_itf =
             MaxIdentityDeviation(*xi_analytic_, *parent, itf_marker);
-        // The interface check sees the DISCRETE facets: their
-        // quadrature points sit off the exact sphere by the geometric
-        // interpolation error, and the bump vanishes quadratically, so
-        // the deviation there is that error SQUARED — the geometric
-        // floor, not a defect of the mapping.
-        MFEM_VERIFY(d_out < 1e-12 && d_itf < 1e-6,
+        // The interface check sees the DISCRETE facets: quadrature
+        // points sit off the exact spheres by the geometric error. The
+        // interior relabelling's bump vanishes QUADRATICALLY there, so
+        // its floor is that error squared (~1e-8); the piecewise-LINEAR
+        // shift map only reaches the identity with a slope jump
+        // eps / (layer width), so its floor is the facet error times
+        // that jump (~1e-5 at eps = 0.02 on a coarse mesh).
+        const real_t itf_floor = shifted ? 1e-4 : 1e-6;
+        MFEM_VERIFY(d_out < 1e-12 && d_itf < itf_floor,
                     "-map: the relabelling must be the identity on the "
-                    "sphere and on every interface (deviations "
+                    "sphere and on every unshifted interface (deviations "
                         << d_out << ", " << d_itf << ").");
         if (Mpi::Root()) {
-          std::cout << "Relabelled: amplitude " << options.map_amplitude
-                    << (options.map_interp ? ", interpolated F"
-                                           : ", exact F")
-                    << ", interface identity to " << d_itf << "\n";
+          if (shifted) {
+            std::cout << "Interface shift: eps " << options.map_shift
+                      << " at interface " << options.map_shift_interface
+                      << ", other interfaces identity to " << d_itf
+                      << "\n";
+          } else {
+            std::cout << "Relabelled: amplitude " << options.map_amplitude
+                      << (options.map_interp ? ", interpolated F"
+                                             : ", exact F")
+                      << ", interface identity to " << d_itf << "\n";
+          }
         }
       }
     }
@@ -1086,11 +1167,19 @@ class Case {
       pi_values = 0.0;
       pi_values[b_itf - 1] = itf.ValueBeside("p0", fluid_attr);
       pi_c_ = std::make_unique<PWConstCoefficient>(pi_values);
+      Coefficient* pi_use = pi_c_.get();
+      if (mapped) {
+        // The interface pressure of the (possibly shifted) PHYSICAL
+        // interface: the composed p0 profile at |phi_e(x)| — equal to
+        // the manifest value when the map fixes the interface.
+        pi_use = comp_p0_.get();
+      }
       interface_marker_ =
           MeshManifest::Marker(Array<int>({b_itf}), n_bdr);
       if (root) {
         std::cout << "Slipping interface " << itf.name << " at r = "
                   << itf.radius << ", pi = " << pi_values[b_itf - 1]
+                  << (mapped ? " (composed profile used)" : "")
                   << ", theta = " << options.slip_theta << ", "
                   << options.al_iterations << " AL iterations"
                   << (method == "slip_broken" ? ", broken zeta" : "")
@@ -1100,7 +1189,7 @@ class Case {
       auto slip_problem =
           std::make_unique<LinearQuasiStaticSlipReferentialProblem>(
               fes_u.get(), fes_f_.get(), fes_phi.get(), *ref_rheology_,
-              *rho_use, *pi_c_, interface_marker_, G, options.dtn_degree);
+              *rho_use, *pi_use, interface_marker_, G, options.dtn_degree);
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
       slip_problem->SetPrescribedVacuumExtension(*fes_buffer_, *Evac_);
       slip_problem->SetFluidGauge(*kappa_fluid_c_dispatch_,
@@ -1214,7 +1303,7 @@ class Case {
   std::unique_ptr<GridFunctionCoefficient> p0_c_, kappa_fluid_c_;
   Coefficient* kappa_fluid_c_dispatch_ = nullptr;
   // The relabelled (mapped) benchmark.
-  std::unique_ptr<RadialProfiles> profiles_;
+  std::unique_ptr<RadialProfiles> profiles_, base_profiles_;
   std::unique_ptr<CallableDiffeomorphism> xi_analytic_;
   std::unique_ptr<MultiMeshDiffeomorphism> xi_interp_;
   Diffeomorphism* map_use_ = nullptr;

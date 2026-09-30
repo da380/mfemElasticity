@@ -280,14 +280,14 @@ and the whole follows.
    then the Nanson boundary terms (`TestMappedBoundaryIntegrators`: the
    F3 and composed-F2 identities and both load compositions); identity
    tests for each.
-5. The relabelled elasto-gravity benchmark beside `love_numbers/`:
-   variant 2a (machine precision), then 2b against pyslfp through the
-   mapping. The `meshes/aspherical_body.py` family provides
+5. The relabelled elasto-gravity benchmark, the `benchmarks/relabelling`
+   family: variant 2a (machine precision), then 2b against pyslfp
+   through the mapping. The `meshes/aspherical_body.py` family provides
    independently-generated aspherical meshes where 2b wants them.
 
    *Done (30 Sep 2026), with one finding.* Both variants live in the
-   Love-number campaign (`benchmarks/README.md`, "The relabelled 3-D
-   benchmark"): `love_benchmark -map` is 2b (interior relabelling of
+   relabelling family (`benchmarks/relabelling/README.md`):
+   `love_benchmark -map` is 2b (interior relabelling of
    `relabelling.hpp`, pointwise identity with identity gradient on every
    interface, exact-F; referential and broken-ζ methods), and
    `relabelled_identity` is 2a at the level of the full coupled solve.

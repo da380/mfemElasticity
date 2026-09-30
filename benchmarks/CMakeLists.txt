@@ -43,33 +43,67 @@ else()
     set(BENCHMARKS_PYTHON "python3")
 endif()
 
-# benchmark_launcher(<benchmark> <script> [<argument>...]): the launcher
-# <build>/benchmarks/<benchmark>/<script> of <script>.py, with the given
-# arguments before the user's.
-function(benchmark_launcher benchmark script)
+# The benchmarks are organised by family, one sub-folder each with its
+# own scripts and outputs (see README.md); common/ holds what they
+# share. The drivers of every family collect in <build>/benchmarks/bin,
+# and each family's launchers sit in <build>/benchmarks/<family>/, meant
+# to be started there so that the outputs land beside them. The master
+# script's launcher is <build>/benchmarks/campaign.
+
+# benchmark_driver(<family> <driver>): the program <family>/<driver>.cpp,
+# built into <build>/benchmarks/bin with common/ on its include path.
+function(benchmark_driver family driver)
+    add_executable(${driver} ${family}/${driver}.cpp)
+    target_link_libraries(${driver} mfemElasticity)
+    target_include_directories(${driver} PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/common")
+    set_target_properties(${driver} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+endfunction()
+
+# benchmark_launcher(<source> <destination> <script> [<argument>...]):
+# the launcher <build>/benchmarks/<destination>/<script> of the script
+# <source>/<script>.py, with the given arguments before the user's.
+function(benchmark_launcher source destination script)
     string(JOIN " " BENCHMARK_ARGUMENTS ${ARGN})
     set(BENCHMARK_SCRIPT
-        "${CMAKE_CURRENT_SOURCE_DIR}/${benchmark}/${script}.py")
+        "${CMAKE_CURRENT_SOURCE_DIR}/${source}/${script}.py")
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/launcher.sh.in"
-                   "${CMAKE_CURRENT_BINARY_DIR}/${benchmark}/${script}"
+                   "${CMAKE_CURRENT_BINARY_DIR}/${destination}/${script}"
                    @ONLY
                    FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE
                                     GROUP_READ GROUP_EXECUTE
                                     WORLD_READ WORLD_EXECUTE)
 endfunction()
 
+set(BENCHMARK_LAUNCHER_ARGUMENTS
+    "--programs \"${CMAKE_CURRENT_BINARY_DIR}/bin\""
+    "--mpiexec \"${MPIEXEC_EXECUTABLE}\"")
+
 # --- Love numbers -----------------------------------------------------------
 
-foreach(driver love_benchmark field_benchmark partition_case
-        relabelled_identity aspherical_reference)
-    add_executable(${driver} love_numbers/${driver}.cpp)
-    target_link_libraries(${driver} mfemElasticity)
-    set_target_properties(${driver} PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/love_numbers")
+foreach(driver love_benchmark field_benchmark partition_case)
+    benchmark_driver(love_numbers ${driver})
 endforeach()
+benchmark_launcher(love_numbers love_numbers run
+    ${BENCHMARK_LAUNCHER_ARGUMENTS})
+benchmark_launcher(love_numbers love_numbers plot)
+benchmark_launcher(love_numbers love_numbers cmb_report)
+benchmark_launcher(common love_numbers make_case)
 
-benchmark_launcher(love_numbers run
-    "--programs \"${CMAKE_CURRENT_BINARY_DIR}/love_numbers\""
-    "--mpiexec \"${MPIEXEC_EXECUTABLE}\"")
-benchmark_launcher(love_numbers plot)
-benchmark_launcher(love_numbers make_case)
+# --- Relabelling ------------------------------------------------------------
+
+foreach(driver relabelled_identity aspherical_reference)
+    benchmark_driver(relabelling ${driver})
+endforeach()
+benchmark_launcher(relabelling relabelling plot)
+
+# --- Perturbation -----------------------------------------------------------
+
+benchmark_launcher(perturbation perturbation perturbation_check
+    ${BENCHMARK_LAUNCHER_ARGUMENTS})
+benchmark_launcher(perturbation perturbation plot)
+
+# --- The master script ------------------------------------------------------
+
+benchmark_launcher(. . campaign ${BENCHMARK_LAUNCHER_ARGUMENTS})

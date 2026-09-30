@@ -40,50 +40,14 @@ from __future__ import annotations
 import argparse
 import os
 import shlex
-import subprocess
 import sys
-import time
 from pathlib import Path
 
-import models
-
 HERE = Path(__file__).resolve().parent
-REPOSITORY = HERE.parent.parent
+sys.path.insert(0, str(HERE.parent / "common"))
 
-
-def find_programs(given: Path | None) -> Path:
-    """The directory holding the drivers: the one given, or that of a
-    build tree of the repository."""
-    if given is not None:
-        return given.resolve()
-    for build in sorted(REPOSITORY.glob("build*")):
-        candidate = build / "benchmarks" / "love_numbers"
-        if (candidate / "love_benchmark").exists():
-            return candidate
-    raise SystemExit("love_benchmark not found in a build tree of the "
-                     "repository (configure with -DUSE_MPI=ON "
-                     "-DBUILD_BENCHMARKS=ON), and no --programs given")
-
-
-def run(command: list[str], *, log: Path | None, dry_run: bool) -> bool:
-    """Run a command, its output to `log` and the terminal; True on
-    success."""
-    print("  $ " + shlex.join(command), flush=True)
-    if dry_run:
-        return True
-    start = time.time()
-    with subprocess.Popen(command, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True) as process:
-        lines = []
-        for line in process.stdout:
-            lines.append(line)
-            sys.stdout.write("    " + line)
-        process.wait()
-    if log is not None:
-        log.write_text("$ " + shlex.join(command) + "\n" + "".join(lines))
-    print(f"  ({time.time() - start:.1f} s, exit {process.returncode})",
-          flush=True)
-    return process.returncode == 0
+import models  # noqa: E402
+from drivers import find_programs, run  # noqa: E402
 
 
 def main() -> None:
@@ -123,11 +87,14 @@ def main() -> None:
                         "spherical physics described from laterally mapped "
                         "coordinates, referential methods only; results "
                         "carry a _map<A> suffix")
-    p.add_argument("--cmb", choices=("full", "nomass", "uniform", "winkler"),
-                   default="full",
-                   help="Dahlen-path fluid-interface approximation "
-                        "(doc/self_gravitation.md); non-full results carry "
-                        "the choice as a suffix")
+    p.add_argument("--cmb", nargs="+",
+                   choices=("full", "nomass", "uniform", "winkler"),
+                   default=["full"],
+                   help="Dahlen-path fluid-interface treatments to run, "
+                        "one results file each (doc/self_gravitation.md); "
+                        "non-full results carry the choice as a suffix, "
+                        "and cmb_report.py compares their cost and "
+                        "accuracy")
     p.add_argument("--solver", type=int, nargs="+", default=[1],
                    choices=(0, 1),
                    help="Eulerian linear solvers to run, one results file "
@@ -181,7 +148,8 @@ def main() -> None:
         case = args.out / name / f"h{h:g}"
         print(f"{name}, h = {h:g}: {case}", flush=True)
         if args.remake or not (case / "case.json").exists():
-            ok = run([sys.executable, str(HERE / "make_case.py"), name,
+            ok = run([sys.executable,
+                      str(HERE.parent / "common" / "make_case.py"), name,
                       "--h", f"{h:g}", "--buffer", f"{args.buffer:g}",
                       "--angular", f"{args.angular:g}",
                       "--thin", f"{args.thin:g}",
@@ -202,17 +170,21 @@ def main() -> None:
         methods = list(args.method)
         if args.fluid == "gauged" and "gauged" not in methods:
             methods.append("gauged")
-        for order, method, solver in ((o, m, s) for o in args.order
-                                      for m in methods
-                                      for s in args.solver):
+        for order, method, solver, cmb in ((o, m, s, c) for o in args.order
+                                           for m in methods
+                                           for s in args.solver
+                                           for c in args.cmb):
             if method not in ("dahlen", "gauged") and solver != args.solver[0]:
                 continue  # the referential solvers ignore the choice
+            if method != "dahlen" and cmb != args.cmb[0]:
+                continue  # the treatments are the Dahlen path's: one
+                # run of the other methods per sweep, without them
             mapped = args.map != 0.0
             if mapped and method not in ("referential", "slip_broken"):
                 continue  # the mapped benchmark runs the mapped methods
             suffix = "" if method == "dahlen" else f"_{method}"
-            if args.cmb != "full" and method == "dahlen":
-                suffix += f"_{args.cmb}"
+            if cmb != "full" and method == "dahlen":
+                suffix += f"_{cmb}"
             if mapped:
                 suffix += f"_map{args.map:g}"
             if solver == 0:
@@ -221,8 +193,8 @@ def main() -> None:
                       "-rt", f"{args.rel_tol:g}", "-s", str(solver),
                       "-method", method,
                       *(["-map", f"{args.map:g}"] if mapped else []),
-                      *(["-cmb", args.cmb]
-                        if args.cmb != "full" and method == "dahlen"
+                      *(["-cmb", cmb]
+                        if cmb != "full" and method == "dahlen"
                         else []),
                       *shlex.split(args.program_args)]
             jobs = []
