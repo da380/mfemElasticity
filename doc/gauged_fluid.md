@@ -65,9 +65,20 @@ displacements that pollute the solid through the coupling. The remedy
 also adds `O(h-residual / (eps mu_g))` of the near-kernel junk that the
 penalty exists to suppress (iterated Tikhonov on a consistent-but-discrete
 singular system is semi-convergent). Too small an `eps` or too many
-refinements bring the junk back; `eps ~ 1e-2..1e-3` with **2–3
+refinements bring the junk back; `eps ~ 1e-2` with **2–3
 refinements** balances the `O(eps^k)` bias against the `O(k h^q / eps)`
-junk, and both improve with mesh refinement. The worst case is a load
+junk, and both improve with mesh refinement. The operating point is
+certified two-sided (1 Oct 2026 sweep, fluid_core h = 0.3, order 2,
+3 refinements): `eps = 1e-1` leaves a 2.6e-2 observable bias in the
+degree-2 load `h`; below the operating point the cost grows ~4.5× per
+decade (3.7k → 6.3k → 28.6k → 138k iterations over 1e-1 … 1e-4) and by
+`eps = 1e-4` the solution is semi-convergently polluted (`h₂ = −3.17`
+against −1.00, despite the solver reporting convergence). The window is
+problem- and resolution-dependent in principle but holds at PREM
+structure (prem_4, h = 0.2, 5e-4 against pyslfp); every GaugeRefine
+carries a contraction-rate tripwire (warn above 0.9: semi-convergence,
+`eps` too small; note above 0.2: residual bias beyond the refinement
+budget). The worst case is a load
 aligned with a near-null mode: a *uniform* tidal gradient (a rigid-mode
 load) leaks ~3% of a comparable physical response into the solid on the
 coarse test mesh at `eps = 1e-2`, k = 3, growing like `k / eps` beyond

@@ -77,6 +77,19 @@ with the weak-scaling timings collated in `<out>/scaling_summary.md`
 and the CMB cost-accuracy tables in
 `<out>/love_numbers/cmb_summary.md`.
 
+`--combined` (opt-in) runs the Love numbers of the `methods` and `cmb`
+stages combined (`run.py --combined`, love_numbers/README.md: one load
+solve for all the degrees and one tidal solve), the results suffixed
+`_combined` beside, not over, those by degree. It leaves the other stages
+as they are: `field` has no Love solve, `mapped` checks an agreement of
+the order of the combined solves' leakage between degrees, `perturbation`
+differences exact solves by degree, `identity` and `aspherical` run other
+drivers, and `scaling` times the solves by degree. The collating scripts
+(`plot.py`, `cmb_report.py`, the scaling summary, `talk_figures.py`)
+read either kind; a combined run's cost is its one load solve for all
+the degrees, shown once and labelled combined, and `cmb_report.py`
+tabulates the combined treatments apart from those by degree.
+
 ## What the campaign shows
 
 The standing assessment, from the measured campaigns (details in the

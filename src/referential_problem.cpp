@@ -1727,6 +1727,7 @@ bool LinearQuasiStaticReferentialSelfGravitatingProblem::GaugeRefine(Vector& X) 
     X_block_->GetBlock(1) = Zeta_true_;
   }
   DistributePotential(Zeta_true_);
+  WarnGaugeContraction();
   return ok;
 }
 

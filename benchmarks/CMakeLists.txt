@@ -106,7 +106,11 @@ benchmark_launcher(perturbation perturbation plot)
 
 # --- Viscoelastic -----------------------------------------------------------
 
+benchmark_driver(viscoelastic viscoelastic_love)
 benchmark_launcher(viscoelastic viscoelastic survey)
+benchmark_launcher(viscoelastic viscoelastic laplace_reference)
+benchmark_launcher(viscoelastic viscoelastic compare)
+benchmark_launcher(common viscoelastic make_case)
 
 # --- The master script ------------------------------------------------------
 

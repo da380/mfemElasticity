@@ -147,8 +147,13 @@ attribute. Hence the separate `FluidRegion::interface_density`.
 ## 3. Solvers
 
 **Block MINRES (default).** MINRES on the `[u; φ]` system, which is
-symmetric and indefinite (a saddle point: the energy is minimised in u and
-maximised in φ), with a block-diagonal SPD preconditioner: Gauss–Seidel or
+symmetric; the *physical* functional is a saddle (minimised in u,
+maximised in φ), but the assembled symmetric system is congruent to
+`diag(S, A_φφ)` and hence positive definite for a gravitationally
+stable body — CG on the projected block system is admissible
+(`SolverType::BlockCG`, kept as a diagnostic: measured identical cost
+to MINRES on the stable and steep three-layer models). The solve uses
+a block-diagonal SPD preconditioner: Gauss–Seidel or
 BoomerAMG with elasticity options on `A_uu`, and on the shifted Laplacian
 `(K + εM)/4πG`, without `M_F`.
 

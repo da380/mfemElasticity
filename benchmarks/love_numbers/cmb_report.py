@@ -16,12 +16,24 @@ below which mesh error the approximation is the bottleneck.
 The comparison is of the load Love numbers: h' and l' from degree one,
 k' from degree two (frame-fixed at one), degree zero left out with a
 fluid layer (README.md).
+
+Combined runs (`run.py --cmb ... --combined`, results suffixed
+`_combined`) get tables of their own, their rows marked "(combined)" and
+compared with the combined full treatment: their "s / solve" and
+iterations are of the one load solve for all the degrees, not a mean by
+degree, and their numbers carry the leakage between degrees that the
+solves by degree discard (README.md, "Combined solves").
 """
 from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "common"))
+
+from costs import load_cost  # noqa: E402
 
 TREATMENTS = ("full", "nomass", "uniform", "winkler")
 QUANTITIES = (("h", 1), ("l", 1), ("k", 2))  # key, first degree
@@ -30,12 +42,11 @@ QUANTITIES = (("h", 1), ("l", 1), ("k", 2))  # key, first degree
 def love_from(results: Path) -> dict:
     r = json.loads(results.read_text())
     values = {d["degree"]: d["load"] for d in r["degrees"]}
-    loads = [d["load"] for d in r["degrees"] if "load" in d]
+    cost = load_cost(r)
     return {"values": values, "setup": r["setup_seconds"],
             "unknowns": r["potential_unknowns"],
-            "seconds": sum(d["seconds"] for d in loads) / len(loads),
-            "iterations": sum(d["outer_iterations"]
-                              for d in loads) / len(loads)}
+            "seconds": cost.seconds, "iterations": cost.iterations,
+            "combined": cost.combined}
 
 
 def love_reference(case: Path) -> dict[int, dict[str, float]]:
@@ -71,8 +82,14 @@ def main() -> None:
         if not (case / "reference.json").exists():
             continue
         refs = love_reference(case)
-        for full in sorted(case.glob("results_o*.json")):
-            stem = full.stem  # results_o<p>
+        # The runs by degree and the combined runs (suffix _combined)
+        # make separate tables: the combined numbers carry the leakage
+        # between degrees, which would pollute the deviation from full.
+        fulls = [(f, "") for f in sorted(case.glob("results_o*.json"))]
+        fulls += [(f, "_combined") for f in
+                  sorted(case.glob("results_o*_combined.json"))]
+        for full, mode in fulls:
+            stem = full.stem.removesuffix(mode)  # results_o<p>
             if stem.count("_") != 1:
                 continue  # a method, solver or cmb variant
             order = int(stem.split("_o")[1])
@@ -80,7 +97,7 @@ def main() -> None:
                 continue
             runs = {"full": love_from(full)}
             for t in TREATMENTS[1:]:
-                f = case / f"results_o{order}_{t}.json"
+                f = case / f"results_o{order}_{t}{mode}.json"
                 if f.exists():
                     runs[t] = love_from(f)
             if len(runs) < 2:
@@ -88,8 +105,14 @@ def main() -> None:
             degrees = sorted(set.intersection(
                 *(set(r["values"]) for r in runs.values())) & set(refs))
             degrees = [l for l in degrees if l >= 1]
-            lines += [f"## {case} (order {order}, degrees "
-                      f"{degrees[0]}-{degrees[-1]})", "",
+            heading = (f"## {case} (order {order}, degrees "
+                       f"{degrees[0]}-{degrees[-1]})")
+            if mode:
+                heading = (f"## {case} (order {order}, degrees "
+                           f"{degrees[0]}-{degrees[-1]}, combined solves:"
+                           " s / solve and iterations are of the one load"
+                           " solve for all the degrees)")
+            lines += [heading, "",
                       "| treatment | h' vs ref | l' vs ref | k' vs ref "
                       "| vs full | potential unknowns | setup s | "
                       "s / solve | iterations |",
@@ -99,8 +122,9 @@ def main() -> None:
                          for q, l0 in QUANTITIES]
                 vs_full = worst(r["values"], runs["full"]["values"],
                                 degrees) if t != "full" else 0.0
+                label = f"{t} (combined)" if r["combined"] else t
                 lines.append(
-                    f"| {t} | " +
+                    f"| {label} | " +
                     "".join(f"{e:.2e} | " for e in per_q) +
                     f"{'-' if t == 'full' else f'{vs_full:.2e}'} | "
                     f"{r['unknowns']} | {r['setup']:.1f} | "

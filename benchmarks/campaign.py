@@ -26,6 +26,9 @@ stopped. The tree mirrors the families:
   <out>/perturbation/<model>/        shifted profiles, references, runs
                                      and perturbation_*.png
   <out>/scaling/                     the weak-scaling rungs
+  <out>/viscoelastic/<model>/        (opt-in stage) case, Laplace
+                                     reference, FE histories, error
+                                     tables and figures
   <out>/campaign_log.md              every command and stage outcome
 
 plot.py renders the Love tree at the end and the scaling rungs collate
@@ -35,6 +38,25 @@ into scaling_summary.md.
     ./campaign --profile server --out /scratch/love
     ./campaign --profile server --stages methods field --lmax 20
     ./campaign --profile server --stages scaling --dry-run
+    ./campaign --profile local --stages viscoelastic plot
+    ./campaign --profile local --stages methods cmb plot --combined
+
+--combined (opt-in) runs the Love-number solves of the methods and cmb
+stages combined (run.py --combined: one load solve for all the degrees,
+one tidal solve), results suffixed _combined beside, not over, those by
+degree. It leaves alone the field stage (no Love solve), the mapped
+stage (its agreement is of the order of the combined solves' leakage
+between degrees), the perturbation stage (exact solves by degree for
+its finite differences), the identity and aspherical stages (other
+drivers) and the scaling stage (its timings are by degree). Where a
+combined run's cost is shown, it is that of its one load solve,
+labelled combined.
+
+The viscoelastic stage is OPT-IN (never in the default stage list; name
+it with --stages): Maxwell Love-number histories by viscoelastic_love
+against the correspondence-principle reference of
+viscoelastic/laplace_reference.py, compared by viscoelastic/compare.py
+in the plot stage (viscoelastic/README.md).
 
 Method-model compatibility is encoded here: the slipping methods take a
 single fluid core, the mapped stages the referential family, and the
@@ -53,6 +75,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE / "common"))
 
+from costs import load_cost  # noqa: E402
 from drivers import find_programs, run  # noqa: E402
 
 #: Which methods and stages run on which models, beyond the Eulerian
@@ -68,12 +91,10 @@ MAPPED_MODELS = ("homogeneous", "two_solid", "linear_solid", "fluid_core")
 IDENTITY_MODELS = ("homogeneous", "two_solid", "linear_solid",
                    "fluid_core")
 ASPHERICAL_MODELS = ("homogeneous", "linear_solid")
-# The shift legs run the referential method only: an OUTWARD interface
-# shift through the slipping machinery leaves the AL constraint system
-# near-singular (stiffening theta amplifies the failure; the inward leg
-# and the fixed-interface mapped runs are healthy) — a parked
-# formulation question, see perturbation/README.md.
-PERTURBATION = {"fluid_core": ("referential",),
+# slip_broken rejoined the shift legs 1 Oct 2026: the outward-shift
+# pathology was a map-evaluation defect, cured by the forced
+# interpolated-F shift maps (perturbation/README.md).
+PERTURBATION = {"fluid_core": ("referential", "slip_broken"),
                 "two_solid": ("referential",)}
 
 PROFILES = {
@@ -82,7 +103,11 @@ PROFILES = {
                   solvers=[1], cmb=["full", "nomass", "uniform", "winkler"],
                   map_amplitude=0.02,
                   shift_eps=[0.02], pert_lmax=3, field=True, scaling=[],
-                  aspherical_scale=1.0, aspherical_lmax=4),
+                  aspherical_scale=1.0, aspherical_lmax=4,
+                  # model -> Maxwell time per solid layer ("inf":
+                  # elastic), centre outward
+                  viscoelastic=dict(models={"fluid_core": ["1"]}, h=0.3,
+                                    order=2, lmax=4, scheme="sdirk23")),
     "server": dict(models=["homogeneous", "two_solid", "linear_solid",
                            "fluid_core", "inner_core", "stratified_core",
                            "earth_like", "prem_4"],
@@ -95,11 +120,17 @@ PROFILES = {
                    # unknowns per rank up the ladder
                    scaling=[(12, 0.2), (25, 0.157), (50, 0.125),
                             (100, 0.099)],
-                   aspherical_scale=0.5, aspherical_lmax=8),
+                   aspherical_scale=0.5, aspherical_lmax=8,
+                   viscoelastic=dict(
+                       models={"fluid_core": ["1"],
+                               "homogeneous_lithosphere": ["1", "inf"]},
+                       h=0.2, order=2, lmax=8, scheme="sdirk23")),
 }
 
 STAGES = ("methods", "cmb", "field", "mapped", "identity", "aspherical",
-          "perturbation", "scaling", "plot")
+          "perturbation", "scaling", "viscoelastic", "plot")
+#: Stages run only when named in --stages.
+OPT_IN = ("viscoelastic",)
 
 
 def main() -> None:
@@ -124,6 +155,11 @@ def main() -> None:
     p.add_argument("--partition", action="store_true",
                    help="partition each case for the ranks, so that no "
                         "rank reads the whole mesh (large runs)")
+    p.add_argument("--combined", action="store_true",
+                   help="run the Love numbers of the methods and cmb "
+                        "stages with one solve per forcing for all the "
+                        "degrees (run.py --combined; see above for the "
+                        "stages it leaves alone)")
     p.add_argument("--programs", type=Path, default=None)
     p.add_argument("--mpiexec", default="mpiexec")
     p.add_argument("--dry-run", action="store_true",
@@ -138,7 +174,7 @@ def main() -> None:
                  "shift_eps": args.shift_eps}
     prof.update({k: v for k, v in overrides.items() if v is not None})
     prof["dtn_degree"] = max(prof["dtn_degree"], prof["lmax"])
-    stages = args.stages or list(STAGES)
+    stages = args.stages or [s for s in STAGES if s not in OPT_IN]
 
     programs = Path(".") if args.dry_run and args.programs is None \
         else find_programs(args.programs)
@@ -149,6 +185,7 @@ def main() -> None:
             d.mkdir(parents=True, exist_ok=True)
     log: list[str] = [f"# campaign --profile {args.profile}"
                       f" --stages {' '.join(stages)}"
+                      + (" --combined" if args.combined else "") +
                       f"  ({time.strftime('%Y-%m-%d %H:%M')})", ""]
     failures: list[str] = []
     dry = ["--dry-run"] if args.dry_run else []
@@ -173,6 +210,8 @@ def main() -> None:
               "--np", prof["np"], "--lmax", prof["lmax"],
               "--dtn-degree", prof["dtn_degree"], "--out", loves,
               *(["--partition"] if args.partition else [])]
+    # The Love-number stages that may run combined (--combined).
+    combined = ["--combined"] if args.combined else []
 
     # 1. The cross-method sweep, with the Eulerian solver axis.
     if "methods" in stages:
@@ -184,7 +223,8 @@ def main() -> None:
                 methods += ["slip", "slip_broken"]
             stage(f"methods:{model}", run_py(
                 "love_numbers", "run", model, *common,
-                "--method", *methods, "--solver", *prof["solvers"]))
+                "--method", *methods, "--solver", *prof["solvers"],
+                *combined))
 
     # 2. The approximate CMB conditions (Dahlen path, fluid models):
     # cost against accuracy, collated by cmb_report.py in the plot stage.
@@ -194,7 +234,7 @@ def main() -> None:
                 continue  # no fluid layer, nothing to approximate
             stage(f"cmb:{model}", run_py(
                 "love_numbers", "run", model, *common,
-                "--cmb", *prof["cmb"]))
+                "--cmb", *prof["cmb"], *combined))
 
     # 3. The field benchmark (Eulerian pair); off in the local profile
     # unless asked for by name.
@@ -301,13 +341,60 @@ def main() -> None:
                 "--out", out / "scaling",
                 *(["--partition"] if args.partition else [])))
 
-    # 9. Plots and the summaries, each skipped quietly when its stage
+    # 9. The viscoelastic histories (opt-in): per model a case (the Love
+    # tree's when it has one), the Laplace reference and one stepper's
+    # run; compared in the plot stage.
+    ve = prof["viscoelastic"]
+    ve_root = out / "viscoelastic"
+
+    def ve_paths(model: str) -> tuple[Path, Path, Path]:
+        tag = "_".join(ve["models"][model])
+        d = ve_root / model
+        return (d / f"laplace_tau{tag}.json",
+                d / f"results_o{ve['order']}_{ve['scheme']}_tau{tag}.json",
+                d)
+
+    if "viscoelastic" in stages:
+        for model, taus in ve["models"].items():
+            ref, res, d = ve_paths(model)
+            if not args.dry_run:
+                d.mkdir(parents=True, exist_ok=True)
+            case = loves / model / f"h{ve['h']:g}" / "case.json"
+            ok = True
+            if not case.exists():
+                case = d / f"h{ve['h']:g}" / "case.json"
+                if not case.exists():
+                    ok = sh([py, HERE / "common" / "make_case.py", model,
+                             "--out", case.parent, "--h", ve["h"],
+                             "--lmax", ve["lmax"]])
+            if ok and not ref.exists():
+                ok = sh([py, HERE / "viscoelastic" / "laplace_reference.py",
+                         model, "--tau", *taus, "--lmax", ve["lmax"],
+                         "--out", ref], log_file=d / "laplace_log.txt")
+            if ok and not res.exists():
+                ok = sh([mpiexec, "-np", prof["np"],
+                         programs / "viscoelastic_love", "-c", case,
+                         "-o", ve["order"], "-lmax", ve["lmax"],
+                         "-deg", max(prof["dtn_degree"], ve["lmax"]),
+                         "-tau", ",".join(taus), "-scheme", ve["scheme"],
+                         "-out", res], log_file=res.with_suffix(".txt"))
+            stage(f"viscoelastic:{model}", ok)
+
+    # 10. Plots and the summaries, each skipped quietly when its stage
     # left nothing to draw.
     if "plot" in stages and not args.dry_run:
-        stage("plot", sh([py, HERE / "love_numbers" / "plot.py", loves]))
+        if any(loves.rglob("results_*.json")):
+            stage("plot", sh([py, HERE / "love_numbers" / "plot.py",
+                              loves]))
         if "cmb" in stages:
             stage("cmb_report", sh(
                 [py, HERE / "love_numbers" / "cmb_report.py", loves]))
+        for model in ve["models"]:
+            ref, res, d = ve_paths(model)
+            if ref.exists() and res.exists():
+                stage(f"plot:viscoelastic:{model}", sh(
+                    [py, HERE / "viscoelastic" / "compare.py", res,
+                     "--reference", ref, "--out", d]))
         if any((out / "relabelling").glob("aspherical*.json")):
             stage("plot:relabelling", sh(
                 [py, HERE / "relabelling" / "plot.py",
@@ -329,13 +416,16 @@ def main() -> None:
             if not path.exists():
                 continue
             r = json.loads(path.read_text())
-            loads = [d["load"] for d in r["degrees"] if "load" in d]
+            # The scaling stage never runs combined, but a combined
+            # file in its place reports its one load solve, so marked.
+            cost = load_cost(r)
             rows.append(
                 f"| {r['ranks']} | {h_s:g} | {r['elements']} | "
                 f"{r['displacement_unknowns'] + r['potential_unknowns']} "
                 f"| {r['setup_seconds']:.1f} | "
-                f"{sum(d['seconds'] for d in loads) / len(loads):.2f} | "
-                f"{sum(d['outer_iterations'] for d in loads) / len(loads):.0f} |")
+                f"{cost.seconds:.2f}"
+                f"{' (combined)' if cost.combined else ''} | "
+                f"{cost.iterations:.0f} |")
         if len(rows) > 2:
             (out / "scaling_summary.md").write_text("\n".join(rows) + "\n")
             log.append("[scaling] summary in scaling_summary.md")

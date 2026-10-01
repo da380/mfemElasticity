@@ -88,3 +88,18 @@ Love numbers. The driver therefore forces interpolated F for any
 `-map-shift` run. The interpolation perturbs the represented model by
 O(h^p) consistently at both signs, which cancels in the central
 differences of the derivative benchmark.
+
+## slip_broken rejoined the derivative benchmark (1 Oct 2026)
+
+With interpolated-F shift maps, the slip_broken legs run healthily at
+every shift including the formerly singular +ε: the interface-shift
+derivative at degree 0 agrees with the 1-D theory to 0.78% (matching
+the referential leg's 0.77%), degrees 3–4 at the few-percent level,
+with l′ inheriting its usual small-denominator amplification. Degree 2
+carries a ~17% absolute offset against pyslfp at *every* ε that is
+method-independent (referential shows the same): this is the recorded
+O(N²) stratification mismatch of the compressible methods against the
+pyslfp reference on the non-neutral fluid_core model, not a shift or
+solver effect; it propagates into the degree-2 derivatives
+accordingly. A neutral-core model (aw_core) remains the clean
+cross-method derivative ladder.

@@ -26,12 +26,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "common"))
+
+from costs import load_cost  # noqa: E402
 
 COLOURS = {"dahlen": "#2a78d6", "gauged": "#eb6834",
            "referential": "#eda100", "slip": "#008300",
@@ -68,17 +73,28 @@ def save(fig, out: Path) -> None:
     print(f"wrote {out}")
 
 
-def methods_figure(case: Path, out: Path) -> None:
-    """Agreement by degree and cost per solve, the five formulations."""
+def methods_figure(case: Path, out: Path, combined: bool = False) -> None:
+    """Agreement by degree and cost per solve, the five formulations.
+
+    Each formulation's results by degree are drawn, or its combined
+    results (suffix _combined) where those are all there is; with
+    combined=True the combined results are preferred. A combined run's
+    cost is that of its one load solve for all the degrees, not a mean
+    by degree, and its bar is labelled so."""
     ref = reference(case)
     series = [("dahlen", ""), ("gauged", "_gauged"),
               ("referential", "_referential"), ("slip", "_slip"),
               ("slip_broken", "_slip_broken")]
     fig, (a0, a1) = plt.subplots(1, 2, figsize=(12.6, 4.8),
                                  gridspec_kw={"width_ratios": [3, 2]})
-    names, costs, its = [], [], []
+    names, labels, costs, its, alls = [], [], [], [], []
     for name, tag in series:
-        r = love(case / f"results_o2{tag}.json")
+        tags = [tag + "_combined", tag] if combined else \
+            [tag, tag + "_combined"]
+        path = next((case / f"results_o2{t}.json" for t in tags
+                     if (case / f"results_o2{t}.json").exists()),
+                    case / f"results_o2{tag}.json")
+        r = love(path)
         ls, errs = [], []
         for l in sorted(set(r) & set(ref)):
             if l == 0 and name == "dahlen":
@@ -93,10 +109,12 @@ def methods_figure(case: Path, out: Path) -> None:
             ls.append(l)
             errs.append(worst)
         a0.semilogy(ls, errs, marker="o", color=COLOURS[name], label=name)
-        loads = [r[l]["load"] for l in sorted(r)]
+        cost = load_cost(json.loads(path.read_text()))
         names.append(name)
-        costs.append(sum(d["seconds"] for d in loads) / len(loads))
-        its.append(sum(d["outer_iterations"] for d in loads) / len(loads))
+        labels.append(f"{name} (combined)" if cost.combined else name)
+        costs.append(cost.seconds)
+        its.append(cost.iterations)
+        alls.append(cost.combined)
     a0.set_xlabel("degree $l$")
     a0.set_ylabel("relative error vs pyslfp")
     a0.set_title("five formulations, one radial reference", loc="left")
@@ -104,13 +122,15 @@ def methods_figure(case: Path, out: Path) -> None:
     a0.legend(framealpha=0.95)
     y = range(len(names))[::-1]
     a1.barh(y, costs, color=[COLOURS[n] for n in names], height=0.62)
-    for yi, c, it in zip(y, costs, its):
-        a1.text(c * 1.15, yi, f"{c:.1f} s   ({it:.0f} its)",
+    for yi, c, it, one in zip(y, costs, its, alls):
+        a1.text(c * 1.15, yi, f"{c:.1f} s   ({it:.0f} its)"
+                + (", all $l$" if one else ""),
                 va="center", fontsize=12, color=MUTED)
-    a1.set_yticks(y, names)
+    a1.set_yticks(y, labels)
     a1.set_xscale("log")
     a1.set_xlim(right=max(costs) * 8)
-    a1.set_xlabel("seconds per solve")
+    a1.set_xlabel("seconds per solve" if not any(alls) else
+                  "seconds per solve (combined: one solve, all $l$)")
     a1.set_title("what each one costs", loc="left")
     a1.grid(axis="y", visible=False)
     save(fig, out / "methods.png")
@@ -301,10 +321,17 @@ def main() -> None:
     p.add_argument("--identity-logs", type=Path,
                    default=Path("runs_campaign/relabelling"))
     p.add_argument("--aspherical", type=Path, default=Path("talk_data"))
+    p.add_argument("--combined", action="store_true",
+                   help="methods.png from the combined results "
+                        "(results_o2[_<method>]_combined.json, run.py "
+                        "--combined) where they exist; without it they "
+                        "serve only where the results by degree are "
+                        "missing. A combined bar's cost is its one load "
+                        "solve for all the degrees")
     args = p.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
 
-    methods_figure(args.methods_case, args.out)
+    methods_figure(args.methods_case, args.out, args.combined)
     cmb_figure(args.cmb_case, args.out)
     identity_figure(args.identity_logs, args.out)
     derivative_figure(args.methods_case, args.out)

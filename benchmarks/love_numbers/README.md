@@ -212,7 +212,13 @@ centre-of-mass correction at degree one acts on the degree-one
 coefficients alone and is unchanged. The results keep their per-degree
 form with `"combined": true`; the outer iterations and wall time of the two
 solves are under `"combined_solves"`, and the per-degree counts and times
-are null.
+are null. The collating scripts read such files alongside those by degree
+(`plot.py`; `cmb_report.py`, `campaign.py`'s scaling summary and
+`talk_figures.py` through `common/costs.py`): a combined run's cost is
+its one load solve for all the degrees, attributed once to the run and
+labelled combined, and `cmb_report.py` tabulates the combined CMB
+treatments apart from those by degree. `campaign.py --combined` runs the
+methods and CMB stages this way (../README.md).
 
 The caveats. The discrete operator is not exactly rotationally invariant,
 so a load of degree l leaks into the responses of the other degrees: the

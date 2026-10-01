@@ -434,6 +434,16 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   mfem::OperatorHandle Q_, A_solve_;
   std::vector<mfem::real_t> gauge_residuals_;
 
+  /** @brief The epsilon-window tripwire shared by every GaugeRefine
+   * implementation: the refinement corrections contract at
+   * @f$\sim\epsilon/(\lambda+\epsilon)@f$, so a rate above 0.9 is the
+   * semi-convergence signature (epsilon too small for this mesh/model)
+   * and a rate above 0.2 leaves a bias @f$\sim\mathrm{rate}^k@f$ beyond
+   * the refinement budget (epsilon too large, or too few refinements).
+   * Warn only; thresholds from the 1 Oct 2026 epsilon sweep
+   * (doc/gauged_fluid.md). */
+  void WarnGaugeContraction() const;
+
   mfem::real_t t_ = 0.0;
   mfem::real_t rel_tol_ = 1e-12;
   mfem::IterativeSolver::PrintLevel print_level_;

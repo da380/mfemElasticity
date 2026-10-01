@@ -1193,33 +1193,7 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::GaugeRefine(Vector& X) {
   Phi_true_ = Phi_acc;
   outer_its_ = outer;
   inner_its_ = inner;
-  // Operating-point tripwire: the epsilon window is problem- and
-  // resolution-dependent (doc/gauged_fluid.md). The corrections
-  // contract at ~eps/(lambda+eps); a rate near one is the
-  // semi-convergence signature (epsilon too SMALL for this mesh — the
-  // gauge component escapes the refinements), while a mid-range rate
-  // leaves a bias ~rate^k beyond the refinement budget (epsilon too
-  // LARGE, or too few refinements). Warn only; thresholds from the
-  // 1 Oct 2026 epsilon sweep.
-  if (gauge_residuals_.size() >= 2) {
-    const real_t r0 = gauge_residuals_[gauge_residuals_.size() - 2];
-    const real_t rate = gauge_residuals_.back() / std::max(r0, real_t{1e-300});
-    bool root = true;
-#ifdef MFEM_USE_MPI
-    if (pfes_) {
-      root = pfes_->GetMyRank() == 0;
-    }
-#endif
-    if (root && rate > real_t{0.9}) {
-      mfem::out << "GaugeRefine WARNING: refinement contraction " << rate
-                << " >= 0.9 — semi-convergence regime, the gauge penalty "
-                   "epsilon is too small for this mesh/model.\n";
-    } else if (root && rate > real_t{0.2}) {
-      mfem::out << "GaugeRefine note: refinement contraction " << rate
-                << " > 0.2 — residual gauge bias ~rate^k may remain; "
-                   "consider a smaller epsilon or more refinements.\n";
-    }
-  }
+  WarnGaugeContraction();
   if (X_block_) {
     // Leave the accumulated solution as the next solve's warm start.
     X_block_->GetBlock(0) = X;

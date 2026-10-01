@@ -4,6 +4,9 @@ A ladder of models of increasing complexity on an Earth-sized body, each
 a planetmodel `Model` in SI:
 
   homogeneous      one solid layer of constant density and moduli
+  homogeneous_lithosphere
+                   the same body cut into an interior and an outer shell
+                   (the viscoelastic benchmark's elastic lithosphere)
   two_solid        two solid layers with a jump in every parameter
   fluid_core       a uniform fluid core under a uniform solid mantle
   inner_core       a solid inner core, a fluid outer core and a mantle,
@@ -54,12 +57,28 @@ DENSITY_SCALE = 5000.0
 ICB = 1200.0e3
 CMB = 3500.0e3
 MID_MANTLE = 5000.0e3
+#: The base of the elastic lithosphere of the viscoelastic benchmark's
+#: homogeneous_lithosphere: thick (~670 km) so that coarse meshes resolve
+#: it, the point being an elastic layer that survives the relaxed limit.
+LITHOSPHERE_BASE = 5700.0e3
 
 
 def homogeneous() -> Model:
     return LayeredIsotropicElastic(
         [0.0, RADIUS], rho=[5500.0], vp=[10000.0], vs=[5500.0],
         layer_names=["body"], interface_names=["surface"], name="homogeneous")
+
+
+def homogeneous_lithosphere(base: float = LITHOSPHERE_BASE) -> Model:
+    """The homogeneous body cut in two at `base`: elastically the same
+    body, but the outer shell is a layer of its own, so that the
+    viscoelastic benchmark can keep it elastic (an elastic lithosphere
+    over a Maxwell interior; viscoelastic/README.md)."""
+    return LayeredIsotropicElastic(
+        [0.0, base, RADIUS], rho=[5500.0, 5500.0], vp=[10000.0, 10000.0],
+        vs=[5500.0, 5500.0], layer_names=["interior", "lithosphere"],
+        interface_names=["lithosphere_base", "surface"],
+        name="homogeneous_lithosphere")
 
 
 def two_solid(discontinuity: float = MID_MANTLE) -> Model:
@@ -153,6 +172,7 @@ SHIFTABLE: dict[str, str] = {
 
 MODELS: dict[str, Callable[[], Model]] = {
     "homogeneous": homogeneous,
+    "homogeneous_lithosphere": homogeneous_lithosphere,
     "two_solid": two_solid,
     "fluid_core": fluid_core,
     "inner_core": inner_core,

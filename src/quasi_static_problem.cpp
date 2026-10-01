@@ -149,6 +149,29 @@ void LinearQuasiStaticProblemBase::AssembleOperator() {
   assemblies_++;
 }
 
+void LinearQuasiStaticProblemBase::WarnGaugeContraction() const {
+  if (gauge_residuals_.size() < 2) {
+    return;
+  }
+  const real_t r0 = gauge_residuals_[gauge_residuals_.size() - 2];
+  const real_t rate = gauge_residuals_.back() / std::max(r0, real_t{1e-300});
+  bool root = true;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    root = pfes_->GetMyRank() == 0;
+  }
+#endif
+  if (root && rate > real_t{0.9}) {
+    mfem::out << "GaugeRefine WARNING: refinement contraction " << rate
+              << " >= 0.9 — semi-convergence regime, the gauge penalty "
+                 "epsilon is too small for this mesh/model.\n";
+  } else if (root && rate > real_t{0.2}) {
+    mfem::out << "GaugeRefine note: refinement contraction " << rate
+              << " > 0.2 — residual gauge bias ~rate^k may remain; "
+                 "consider a smaller epsilon or more refinements.\n";
+  }
+}
+
 void LinearQuasiStaticProblemBase::NoteIterations(int its) {
   total_its_ += its;
   if (prec_baseline_its_ < 0) {
@@ -288,6 +311,7 @@ bool LinearQuasiStaticProblemBase::GaugeRefine(Vector& X) {
     X += d;
     prev = d;
   }
+  WarnGaugeContraction();
   return ok;
 }
 

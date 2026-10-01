@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <optional>
 #include <fstream>
 #include <iomanip>
@@ -357,7 +358,16 @@ struct CaseOptions {
 // partitioning.
 class Case {
  public:
-  explicit Case(const CaseOptions& options)
+  // A rheology to build the Eulerian problem with in place of the elastic
+  // one of the case's moduli (the viscoelastic family's Maxwell layers):
+  // called once, during construction, with the displacement SubMesh and
+  // the case's bulk and shear moduli on it. The rheology returned must
+  // outlive the Case; null keeps the elastic one.
+  using RheologyFactory = std::function<const Rheology*(
+      ParSubMesh& displacement_mesh, Coefficient& kappa, Coefficient& mu)>;
+
+  explicit Case(const CaseOptions& options,
+                const RheologyFactory& rheology_factory = {})
       : options_(options), manifest(options.manifest) {
     const bool root = Mpi::Root();
     const auto start = Clock::now();
@@ -525,8 +535,12 @@ class Case {
     if (eulerian) {
       rheology_ = std::make_unique<IsotropicElasticRheology>(dim, *kappa_c_,
                                                              *mu_c_);
+      const Rheology* chosen =
+          rheology_factory ? rheology_factory(*solid, *kappa_c_, *mu_c_)
+                           : nullptr;
       problem = std::make_unique<Problem>(fes_u.get(), fes_phi.get(),
-                                          *rheology_, *rho_c_, G,
+                                          chosen ? *chosen : *rheology_,
+                                          *rho_c_, G,
                                           options.dtn_degree, nullptr,
                                           fluids);
       if (method == "gauged" && fluid_attributes.Size() > 0) {
@@ -584,6 +598,9 @@ class Case {
                                  : Problem::SolverType::BlockMINRES);
       problem->SetRelTol(options.rel_tol);
     } else {
+      MFEM_VERIFY(!rheology_factory,
+                  "A rheology other than the elastic one needs an Eulerian "
+                  "method (dahlen or gauged).");
       BuildReferential(options);
     }
 
