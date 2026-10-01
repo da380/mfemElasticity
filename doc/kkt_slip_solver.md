@@ -225,3 +225,107 @@ constraint is a genuine full-rank interface condition and its
 multiplier system reaches cost parity with AL; the gauge is a
 selection over a near-kernel, and there the penalty is not a
 compromise but the right regularisation.
+
+## 8. The solid-everywhere preconditioner for the clean gauged system (proposed, untested)
+
+A different use of the same ingredients, proposed on 1 Oct 2026 after
+the gauge-KKT park: solve the **clean** system `A u = f` (no `ε` in the
+operator at all) with MINRES, preconditioned by the regularised operator
+`L = A + Q` — physically, the model made solid everywhere by giving the
+fluid a shear modulus `μ_g`. Nothing new is assembled: `SetGaugedFluid()`
+already holds `A`, `Q` and `A + εQ` with its preconditioner, so the
+experiment is a split of `ε` into an operator value (0) and a
+preconditioner value (`ε_prec`, tunable, order one), plus a benchmark
+flag.
+
+**Why it should work, mode by mode.** In the generalised eigenbasis
+`A vᵢ = λᵢ Q vᵢ` of `doc/gauge_penalty_iteration.tex`, the
+preconditioned operator `(A + ε_prec Q)⁻¹ A` has eigenvalues
+`λᵢ / (λᵢ + ε_prec)`:
+
+- solid-dominated modes: `Q` vanishes on the solid, `λ → ∞`, eigenvalue
+  → 1 — the preconditioner is exact there;
+- physical fluid modes: `λ = O(1)`; the measured refinement contraction
+  (`ρ ≈ 0.1` at `ε = 1e-2`, `μ_g = κ_f`) puts `λ_min ≈ 0.1`, so with
+  `ε_prec = 1` these sit in `[0.1, 1]` — a condition number of order ten;
+- exact gauge modes: eigenvalue 0 with zero right-hand side; MINRES on
+  the consistent singular system with an SPD preconditioner ignores them;
+- near-gauge modes (`λᵢ ~ h^p`, `fᵢ ~ h^p`): eigenvalue `≈ λᵢ` — see
+  the caveat below.
+
+**Relation to the production path.** Iterated Tikhonov refinement *is*
+Richardson iteration on `A u = f` preconditioned by `A + εQ`, contracting
+by `ε/(λ + ε)` per step — which forces `ε` small (1e-2) to converge in
+2–3 steps, and a small `ε` is exactly what makes each solve expensive
+(the fluid block at `κ/(εμ_g) = 100` is nearly incompressible, where AMG
+degrades; ~800 iterations against Dahlen's ~120). Replacing Richardson by
+MINRES removes the need for clustering near 1: the spectrum only has to
+stay away from 0, so `ε_prec` can be order one, where AMG on `A + Q` sees
+a fluid with `μ = κ` (Poisson ratio ≈ 0.13) — an easy elastic solid. The
+preconditioner's `ε_prec` becomes a free knob with a sweet spot: smaller
+values cluster the physical modes nearer 1 but degrade AMG; the two
+measured regimes (`ε = 1e-2` Richardson, `ε_prec = 1` Krylov) are its
+endpoints.
+
+**Caveat: the near-gauge modes move from the operator to the stopping
+rule.** The exact solution of the clean system carries `uᵢ = fᵢ/λᵢ` on
+the near-gauge modes — discretisation noise divided by discretisation
+noise — and this is the content of the semi-convergence recorded in §7
+and in the gauge note. Early-stopped Krylov is itself a regulariser: after
+`k` iterations the junk on mode `i` is about `fᵢ · |p_k′(0)|`, which for
+`k ~ 30` iterations shaped by a spectrum down to 0.1 is a few hundred
+times `fᵢ` — the same order as the 3-refinement path's `3fᵢ/ε = 300 fᵢ`.
+The production path is in the same boat (its physical residual after
+three refinements is `ρ³ ~ 1e-3`; it measures convergence on the
+regularised system). Expected behaviour therefore: the physical residual
+falls to the size of `f`'s near-kernel content (~1e-3 to 1e-4) in a few
+tens to a hundred iterations, then plateaus, then drifts
+semi-convergently. The practical questions are whether the plateau is
+clean enough for a stagnation-based stop (the `WarnGaugeContraction`
+logic, inverted into a stopping rule) and whether the plateau iterate's
+observables match the penalty endpoint at mesh level.
+
+**Measurement plan** (fluid_core h = 0.3, order 2, parallel): iteration
+history and plateau level against `ε_prec ∈ {1, 0.3, 0.1}`; endpoint
+Love numbers against the certified penalty truth (`h₂ = −0.989424`) and
+against pyslfp; the same on prem_4 for the neutral-core comparison. If
+the plateau is clean at ~1e-4, this is a candidate 5–10× on every
+gauged, referential and slip solve, the fluid block being the whole
+premium over Dahlen.
+
+**A further preconditioner ingredient, for later.** The fluid's physical
+content modulo relabellings is one scalar (`div(ρu)`) plus the interface
+normal trace, so a potential representation `u_f = ∇ψ` spans it; in the
+self-gravitating problem this does not collapse to a single potential
+(Dahlen's `φ`-only fluid is exact for neutral stratification only — in
+general `ψ` and `φ` both remain, and a mixed pair `(ψ, p)` is needed
+for the fourth-order `ψ` operator), so it is not a replacement
+formulation here, but a reduced fluid of this kind could serve as the
+fluid part of a preconditioner.
+A related direction: Chaljub & Valette (2004, GJI 158, 131;
+`doc/Elasticity/158-1-131.pdf`) represent the fluid displacement as
+`u = ∇χ + ξ s`, `s = ∇ρ/ρ − g/c²` (so `N² = s·g`), two scalar potentials
+chosen so that `u` lies in the range of the elastic-gravitational
+operator: for a non-rotating hydrostatic fluid the operator's null space
+is the divergence-free motion tangential to level surfaces, whose
+L²-complement is exactly the `∇χ + ξ g` form, so the ansatz is a
+gauge-free parameterisation of the physics — one potential when `N² = 0`
+(barotropic; Dahlen's case), two otherwise. Two caveats: nothing in the
+method *enforces* orthogonality to the null space — it is a property of
+the ansatz that holds for the non-rotating hydrostatic case and fails
+once rotation makes the null space geostrophic (and holds only
+approximately after discretisation, their spurious-mode discussion); and
+the formulation is dynamic — the static limit of their eqs (9)–(10)
+gives `div u = 0` and `u·g = ψ` (fluid incompressible with level
+surfaces following equipotentials, the Lagrangian pressure perturbation
+vanishing, as for the degree ≥ 1 static problem) but loses the degree-0
+compressible response, and the elimination `ξ = (ψ − g·∇χ)/N²` is
+singular in neutral layers. Not used in the quasi-static setting; its
+static limit would need its own derivation before it could serve as a
+formulation or a preconditioner here. A further structural point it
+brings into view: for `N² ≠ 0` the operator's essential spectrum is the
+interval between 0 and the extremal `N²`, so the static problem sits at
+the edge of a continuum and the discrete near-kernel samples genuine
+slow physical modes, not only the discretised relabelling kernel; the
+non-neutral `fluid_core` model and an Adams–Williamson core should
+therefore differ sharply in near-kernel behaviour.
