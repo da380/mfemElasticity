@@ -2409,11 +2409,20 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
   auto GS = NewSlipGravityInterfaceMatrix(*fes_, *fes_zs_solid_, *J_, *Jzsf_,
                                           interface_marker_,
                                           *grad_zeta0_shadow_, G_newton, map);
+  if (gs_scale_ != 1.0) {
+    for (auto* m : {GS.ss.get(), GS.sf.get(), GS.fs.get(), GS.ff.get(),
+                    GS.vz_ss.get(), GS.vz_sf.get(), GS.vz_fs.get(),
+                    GS.vz_ff.get()}) {
+      *m *= gs_scale_;
+    }
+  }
 
   // Constraint kernels on the solid side: normal jump (Bn) and the
   // scalar jump [[zeta]] = b.[[v]] (Mz, Kvz, Pb).
   MappedBackgroundField bC(*grad_zeta0_shadow_, map);
-  OuterProductCoefficient bbC(bC, bC);
+  mfem::VectorCoefficient& b_use =
+      b_override_ ? *b_override_ : static_cast<mfem::VectorCoefficient&>(bC);
+  OuterProductCoefficient bbC(b_use, b_use);
   {
     Array<int> marker(interface_marker_);
     BilinearForm bn(fes_);
@@ -2435,7 +2444,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
     Pb_ = std::make_unique<SparseMatrix>(pb.SpMat());
 
     MixedBilinearForm kb(fes_zs_solid_.get(), fes_);
-    kb.AddBoundaryIntegrator(new BoundaryVectorScalarIntegrator(bC), marker);
+    kb.AddBoundaryIntegrator(new BoundaryVectorScalarIntegrator(b_use),
+                             marker);
     kb.Assemble();
     kb.Finalize();
     Kvz_ = std::make_unique<SparseMatrix>(kb.SpMat());
@@ -2642,10 +2652,19 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
   auto GS = NewSlipGravityInterfaceMatrix(*pfes_, *pfes_zs_solid_, *pJ_,
                                           *pJzsf_, interface_marker_,
                                           *grad_zeta0_shadow_, G_newton, map);
+  if (gs_scale_ != 1.0) {
+    for (auto* m : {GS.ss.get(), GS.sf.get(), GS.fs.get(), GS.ff.get(),
+                    GS.vz_ss.get(), GS.vz_sf.get(), GS.vz_fs.get(),
+                    GS.vz_ff.get()}) {
+      *m *= gs_scale_;
+    }
+  }
 
   // Constraint kernels on the solid side, on true dofs.
   MappedBackgroundField bC(*grad_zeta0_shadow_, map);
-  OuterProductCoefficient bbC(bC, bC);
+  mfem::VectorCoefficient& b_use =
+      b_override_ ? *b_override_ : static_cast<mfem::VectorCoefficient&>(bC);
+  OuterProductCoefficient bbC(b_use, b_use);
   {
     Array<int> marker(interface_marker_);
     OperatorHandle H(Operator::Hypre_ParCSR);
@@ -2674,7 +2693,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
 
     OperatorHandle Hk(Operator::Hypre_ParCSR);
     ParMixedBilinearForm kb(pfes_zs_solid_.get(), pfes_);
-    kb.AddBoundaryIntegrator(new BoundaryVectorScalarIntegrator(bC), marker);
+    kb.AddBoundaryIntegrator(new BoundaryVectorScalarIntegrator(b_use),
+                             marker);
     kb.Assemble();
     kb.Finalize();
     kb.FormRectangularSystemMatrix(empty, empty, Hk);

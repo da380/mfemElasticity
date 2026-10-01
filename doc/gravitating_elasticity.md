@@ -787,7 +787,7 @@ exists:
 | background state `Φ₀, p⁰, T⁰` | `background.hpp`: `RadialHydrostaticBackground` (hydrostatic `g`/`p⁰` by cumulative quadrature, bare conversion, `S_e = −p⁰1`, identity map, assembled rheology), `RelabelledBackground` (the transformation-law chains, owned here — drivers never hand-roll), and the AW10 generators `MinimumNormEquilibriumStress` (elastic BVP) / `MinimumDeviatoricEquilibriumStress` (Taylor–Hood Stokes) for general aspherical `S_e` (§6); an arbitrary `S_e` may still be supplied as a coefficient (equilibrium consistency is then the modeller's burden) |
 | gravity, mixed Eulerian | exists (`mixed_problem.*`) |
 | gravity, mixed referential | `TransformedDiffusionIntegrator` + linearised-coefficient coupling — mostly exists via mappings |
-| fluid–solid slip, linearised | pairing + penalty/AL machinery exists; the `ϖ⁰ Q/S` equilibrium-geometry terms — **new**, from AC18 eqs. 121/137 |
+| fluid–solid slip, linearised | pairing + penalty/AL/KKT machinery exists; the `ϖ⁰`-weighted interface terms of AC18 eqs. 121/137 (their `Q/S` operators) ARE implemented — they are the pre-collapse form of `B_Σ`, curvature entering through the Weingarten collapse to a trace-only form (doc/slip_interface.tex, "the curvature enters, and immediately re-hides"; verified by the finite-ε second-variation tests). Open instead: the side conventions of the broken-ζ interface forms when `F` jumps across `Σ` (the interface-shift regime) |
 | `∇∇Φ₀`/centrifugal terms | exist (hydrostatic form); general-`T⁰` arrangement follows (M) with no rearrangement |
 | relabelling covariance | the mapping layer *is* AC18 eqs. 134–136 |
 | consistency test | hydrostatic `T⁰ = −p⁰1`: general assembly ≡ current implementation, as an operator identity |

@@ -68,3 +68,23 @@ The perturbed model's mass differs from the base model's at O(eps)
 mass, surface gravity and interface gravities from the exact radial
 profiles (`RadialProfiles::EnclosedMass`), not from mesh integrals of
 the base fields; the normalisations of the Love numbers depend on it.
+
+## Shift maps run with interpolated F (required)
+
+The exact `InterfaceShift` map has a discontinuous gradient at the
+moving interface, and the one-sided slip interface kernels evaluate it
+exactly there: on flat facets roundoff selects the side, and on curved
+facets the quadrature points sit O(h²) below the analytic radius, so
+most of each facet systematically receives the *fluid*-side slope where
+the solid-side value belongs. Measured on fluid_core h=0.3 (1 Oct
+2026), this one-sided mixing was the entirety of the outward-shift
+pathology: with the exact map, +ε ran ~9.6k iterations per degree with
+polluted Love numbers (h′₁ ≈ −72) and spurious ~1.5; with the
+per-submesh interpolated map (`-map-interp`, side-consistent by
+construction since each SubMesh's interpolant samples only its own
+elements and the map's *value* is continuous), both signs run in the
+healthy ~4–5k range with spurious at the 0.003–0.009 floor and sane
+Love numbers. The driver therefore forces interpolated F for any
+`-map-shift` run. The interpolation perturbs the represented model by
+O(h^p) consistently at both signs, which cancels in the central
+differences of the derivative benchmark.

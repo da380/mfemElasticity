@@ -892,6 +892,9 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSolver(OperatorHandle& A
   } else {
     SetupMinres(A);
   }
+  if (gauge_kkt_) {
+    SetupKKTGauge();
+  }
 }
 
 void LinearQuasiStaticMixedSelfGravitatingProblem::SetupSchur(OperatorHandle& A) {
@@ -922,11 +925,19 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetupMinres(OperatorHandle& A
 
 #ifdef MFEM_USE_MPI
   if (pfes_) {
-    minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+    if (type_ == SolverType::BlockCG) {
+      minres_ = std::make_unique<CGSolver>(pfes_->GetComm());
+    } else {
+      minres_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+    }
   } else
 #endif
   {
-    minres_ = std::make_unique<MINRESSolver>();
+    if (type_ == SolverType::BlockCG) {
+      minres_ = std::make_unique<CGSolver>();
+    } else {
+      minres_ = std::make_unique<MINRESSolver>();
+    }
   }
   projected_op_ =
       std::make_unique<ProjectedOperator>(*block_op_, *projector_block_);
@@ -973,6 +984,180 @@ void LinearQuasiStaticMixedSelfGravitatingProblem::SetGaugedFluid(
       fluid_marker, mu_gauge, epsilon, refinements, penalty, map);
 }
 
+namespace {
+
+// y = P (M (P x)): with P symmetric positive and M SPD this is an SPD
+// preconditioner. Used as the Murphy-Golub-Wathen multiplier-slot
+// approximation (A Qt^{-1} A)^{-1} ~ P(A) * Qt * P(A) of the gauge-KKT
+// saddle, with Qt the (A + Q) proxy of the regularised primal block.
+class SymmetricProductSolver : public Solver {
+ public:
+  SymmetricProductSolver(const Solver& P, const Operator& M)
+      : Solver(M.Height()), P_(&P), M_(&M), t1_(M.Height()),
+        t2_(M.Height()) {}
+  void SetOperator(const Operator&) override {}
+  void Mult(const Vector& x, Vector& y) const override {
+    P_->Mult(x, t1_);
+    M_->Mult(t1_, t2_);
+    P_->Mult(t2_, y);
+  }
+
+ private:
+  const Solver* P_;
+  const Operator* M_;
+  mutable Vector t1_, t2_;
+};
+
+}  // namespace
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::EnableGaugeKKT(
+    const Array<int>& fluid_marker, Coefficient& mu_gauge, bool mgw_prec) {
+  MFEM_VERIFY(type_ != SolverType::SchurCG,
+              "EnableGaugeKKT: block organisation only.");
+  gauge_kkt_ = true;
+  kkt_mgw_ = mgw_prec;
+  // Unit-scale penalty: the base then assembles Q_ itself and
+  // A_solve_ = A + Q, whose preconditioner the KKT diagonal slots
+  // reuse; zero refinements (the KKT solve needs none).
+  SetGaugedFluid(fluid_marker, mu_gauge, 1.0, 0, GaugePenalty::Deviatoric,
+                 nullptr);
+}
+
+void LinearQuasiStaticMixedSelfGravitatingProblem::SetupKKTGauge() {
+  const int nu = offsets_[1] - offsets_[0];
+  const int nphi = offsets_[2] - offsets_[1];
+  offsets_kkt4_.SetSize(5);
+  offsets_kkt4_[0] = 0;
+  offsets_kkt4_[1] = nu;
+  offsets_kkt4_[2] = nphi;
+  offsets_kkt4_[3] = nu;
+  offsets_kkt4_[4] = nphi;
+  offsets_kkt4_.PartialSum();
+
+  // [ Q 0 | A ] with the CLEAN physical blocks (A_, not the penalised
+  // [ 0 0 |   ]  A_solve_) in the constraint rows and columns.
+  // [  A  | 0 ]
+  block_op_kkt4_ = std::make_unique<BlockOperator>(offsets_kkt4_);
+  Operator* Auu = A_.Ptr();
+  block_op_kkt4_->SetBlock(0, 0, Q_.Ptr());
+  block_op_kkt4_->SetBlock(0, 2, Auu);
+  block_op_kkt4_->SetBlock(0, 3, const_cast<Operator*>(C_op_));
+  block_op_kkt4_->SetBlock(1, 2, const_cast<Operator*>(Ct_op_));
+  block_op_kkt4_->SetBlock(1, 3, const_cast<Operator*>(A_phiphi_));
+  block_op_kkt4_->SetBlock(2, 0, Auu);
+  block_op_kkt4_->SetBlock(2, 1, const_cast<Operator*>(C_op_));
+  block_op_kkt4_->SetBlock(3, 0, const_cast<Operator*>(Ct_op_));
+  block_op_kkt4_->SetBlock(3, 1, const_cast<Operator*>(A_phiphi_));
+
+  // Null pairs: each coupled-system pair appears in the primal slots
+  // and, independently, in the multiplier slots (v shares A's kernel).
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    projector_kkt4_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
+  } else
+#endif
+  {
+    projector_kkt4_ = std::make_unique<NullSpaceProjector>();
+  }
+  {
+    const int n2 = offsets_[2];
+    BlockVector nb(offsets_kkt4_);
+    for (int i = 0; i < projector_block_->Size(); i++) {
+      const Vector& b = projector_block_->Basis(i);
+      nb = 0.0;
+      for (int j = 0; j < n2; j++) {
+        nb(j) = b(j);
+      }
+      projector_kkt4_->Add(nb);
+      nb = 0.0;
+      for (int j = 0; j < n2; j++) {
+        nb(n2 + j) = b(j);
+      }
+      projector_kkt4_->Add(nb);
+    }
+  }
+
+  // Clean-A preconditioner for the MGW composite of the v_u slot:
+  // (A Qt^{-1} A)^{-1} = A^{-1} Qt A^{-1} ~ P(A) (A+Q) P(A), with the
+  // (A+Q) matrix available as the solve operator of the unit-scale
+  // gauged assembly.
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto amg = std::make_unique<HypreBoomerAMG>(*A_.As<HypreParMatrix>());
+    amg->SetSystemsOptions(fes_->GetMesh()->Dimension());
+    amg->SetPrintLevel(0);
+    prec_clean_u_ = std::move(amg);
+  } else
+#endif
+  {
+    prec_clean_u_ = std::make_unique<GSSmoother>(*A_.As<SparseMatrix>());
+  }
+  prec_vu_ =
+      std::make_unique<SymmetricProductSolver>(*prec_clean_u_, *A_solve_.Ptr());
+
+  block_prec_kkt4_ =
+      std::make_unique<BlockDiagonalPreconditioner>(offsets_kkt4_);
+  block_prec_kkt4_->SetDiagonalBlock(0, prec_.get());
+  block_prec_kkt4_->SetDiagonalBlock(1, prec_phi_.get());
+  // The MGW composite needs component inverses of AMG grade; with
+  // smoother-grade P it DEGRADES the solve (measured serially) and is
+  // therefore opt-in.
+  block_prec_kkt4_->SetDiagonalBlock(2,
+                                     kkt_mgw_ ? prec_vu_.get() : prec_.get());
+  block_prec_kkt4_->SetDiagonalBlock(3, prec_phi_.get());
+
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    minres_kkt4_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+  } else
+#endif
+  {
+    minres_kkt4_ = std::make_unique<MINRESSolver>();
+  }
+  projected_op_kkt4_ =
+      std::make_unique<ProjectedOperator>(*block_op_kkt4_, *projector_kkt4_);
+  minres_kkt4_->SetOperator(*projected_op_kkt4_);
+  projected_prec_kkt4_ = std::make_unique<ProjectedSolver>(*projector_kkt4_);
+  projected_prec_kkt4_->SetSolver(*block_prec_kkt4_);
+  minres_kkt4_->SetPreconditioner(*projected_prec_kkt4_);
+  minres_kkt4_->SetRelTol(rel_tol_);
+  minres_kkt4_->SetAbsTol(0.0);
+  minres_kkt4_->SetMaxIter(30000);
+  minres_kkt4_->SetPrintLevel(print_level_);
+  minres_kkt4_->iterative_mode = true;
+
+  projected_kkt4_ = std::make_unique<ProjectedSolver>(*projector_kkt4_);
+  projected_kkt4_->SetSolver(*minres_kkt4_);
+  projected_kkt4_->iterative_mode = true;
+
+  if (!Xk4_ || Xk4_->Size() != offsets_kkt4_.Last()) {
+    Xk4_ = std::make_unique<BlockVector>(offsets_kkt4_);
+    *Xk4_ = 0.0;
+  }
+  Bk4_ = std::make_unique<BlockVector>(offsets_kkt4_);
+}
+
+std::pair<real_t, real_t>
+LinearQuasiStaticMixedSelfGravitatingProblem::KKTResiduals() const {
+  MFEM_VERIFY(gauge_kkt_ && Xk4_ && Bk4_, "KKTResiduals: no KKT solve yet.");
+  BlockVector r(offsets_kkt4_);
+  block_op_kkt4_->Mult(*Xk4_, r);
+  r -= *Bk4_;
+  real_t prim = 0.0, prim_f = 0.0, stat = 0.0, qun = 0.0;
+  for (int b : {2, 3}) {
+    prim += r.GetBlock(b) * r.GetBlock(b);
+    prim_f += Bk4_->GetBlock(b) * Bk4_->GetBlock(b);
+  }
+  for (int b : {0, 1}) {
+    stat += r.GetBlock(b) * r.GetBlock(b);
+  }
+  Vector qu(offsets_kkt4_[1]);
+  Q_.Ptr()->Mult(Xk4_->GetBlock(0), qu);
+  qun = qu * qu;
+  return {std::sqrt(prim / std::max(prim_f, real_t{1e-300})),
+          std::sqrt(stat / std::max(qun, real_t{1e-300}))};
+}
+
 bool LinearQuasiStaticMixedSelfGravitatingProblem::GaugeRefine(Vector& X) {
   // Each step solves the regularised coupled system for the physical
   // residual, which after an exact step is [eps Q delta_u; 0]: the
@@ -1008,6 +1193,33 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::GaugeRefine(Vector& X) {
   Phi_true_ = Phi_acc;
   outer_its_ = outer;
   inner_its_ = inner;
+  // Operating-point tripwire: the epsilon window is problem- and
+  // resolution-dependent (doc/gauged_fluid.md). The corrections
+  // contract at ~eps/(lambda+eps); a rate near one is the
+  // semi-convergence signature (epsilon too SMALL for this mesh — the
+  // gauge component escapes the refinements), while a mid-range rate
+  // leaves a bias ~rate^k beyond the refinement budget (epsilon too
+  // LARGE, or too few refinements). Warn only; thresholds from the
+  // 1 Oct 2026 epsilon sweep.
+  if (gauge_residuals_.size() >= 2) {
+    const real_t r0 = gauge_residuals_[gauge_residuals_.size() - 2];
+    const real_t rate = gauge_residuals_.back() / std::max(r0, real_t{1e-300});
+    bool root = true;
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      root = pfes_->GetMyRank() == 0;
+    }
+#endif
+    if (root && rate > real_t{0.9}) {
+      mfem::out << "GaugeRefine WARNING: refinement contraction " << rate
+                << " >= 0.9 — semi-convergence regime, the gauge penalty "
+                   "epsilon is too small for this mesh/model.\n";
+    } else if (root && rate > real_t{0.2}) {
+      mfem::out << "GaugeRefine note: refinement contraction " << rate
+                << " > 0.2 — residual gauge bias ~rate^k may remain; "
+                   "consider a smaller epsilon or more refinements.\n";
+    }
+  }
   if (X_block_) {
     // Leave the accumulated solution as the next solve's warm start.
     X_block_->GetBlock(0) = X;
@@ -1052,6 +1264,24 @@ bool LinearQuasiStaticMixedSelfGravitatingProblem::SolveLinearSystem(
       t *= -1.0;
       t += B_phi_;
       ok = SolvePotential(t, Phi_true_) && ok;
+    }
+  } else if (gauge_kkt_) {
+    Bk4_->GetBlock(0) = 0.0;
+    Bk4_->GetBlock(1) = 0.0;
+    Bk4_->GetBlock(2) = B;
+    Bk4_->GetBlock(3) = B_phi_;
+    if (!SetWarmStartTolerance(*minres_kkt4_, *projected_prec_kkt4_,
+                               *Bk4_)) {
+      X = 0.0;
+      Phi_true_ = 0.0;
+      *Xk4_ = 0.0;
+    } else {
+      projected_kkt4_->Mult(*Bk4_, *Xk4_);
+      ok = minres_kkt4_->GetConverged();
+      outer_its_ = minres_kkt4_->GetNumIterations();
+      NoteIterations(outer_its_);
+      X = Xk4_->GetBlock(0);
+      Phi_true_ = Xk4_->GetBlock(1);
     }
   } else {
     B_block_->GetBlock(0) = B;

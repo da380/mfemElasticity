@@ -726,9 +726,13 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * only (EnableBrokenZeta() and EnableKKT() are mutually exclusive for
    * now).
    *
-   * @param fes_scalar_solid Scalar space on the solid SubMesh sharing
-   * the displacement order; the multiplier is its restriction to the
-   * interface boundary dofs. Not owned.
+   * @param fes_scalar_solid Scalar space on the solid SubMesh; the
+   * multiplier is its restriction to the interface boundary dofs. One
+   * order below the displacement is the recommended (mortar-style)
+   * choice — measured ~1.6x cheaper than equal order at a
+   * constraint-discretisation shift well below mesh error
+   * (doc/kkt_slip_solver.md); equal order is the strictest constraint
+   * space and what the serial cross-check test uses. Not owned.
    */
   void EnableKKT(mfem::FiniteElementSpace* fes_scalar_solid);
 
@@ -781,6 +785,26 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 
   /** @brief Whether the broken-@f$\zeta@f$ organisation is active. */
   bool BrokenZetaEnabled() const { return broken_zeta_; }
+
+  /**
+   * @brief DIAGNOSTIC (the interface-shift study): override the field
+   * @f$\mathbf{b} = F^{-T}\nabla\zeta^0@f$ used in the broken-@f$\zeta@f$
+   * scalar-jump constraint kernels (Kvz, Pb) by an externally supplied
+   * coefficient — e.g. the analytically composed physical gravity,
+   * which is continuous across @f$\Sigma@f$ even when @f$F@f$ jumps
+   * there, where the default's one-sided discrete composition is not.
+   * Null restores the default. Call before the first Solve(); not
+   * owned.
+   */
+  void SetBrokenConstraintGravity(mfem::VectorCoefficient* b) {
+    b_override_ = b;
+  }
+
+  /** @brief DIAGNOSTIC (interface-shift study): scale the whole
+   * @f$G_\Sigma@f$ gravity-interface block family by @p s (0 drops it
+   * symmetrically — the solve then targets a DIFFERENT physical
+   * problem; only solver-structure comparisons are meaningful). */
+  void ScaleBrokenGravityInterface(mfem::real_t s) { gs_scale_ = s; }
 
   /** @brief Scalar-jump energies @f$\sqrt{(c, c)_\Sigma}@f$,
    * @f$c = \jump{\zeta^1} - \mathbf{b}\cdot\jump{\bv}@f$, at the end of
@@ -955,6 +979,8 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
   bool broken_zeta_ = false;
   mfem::real_t theta_zeta_ = 0.0;
   mfem::FiniteElementSpace* fes_zo_ = nullptr;
+  mfem::VectorCoefficient* b_override_ = nullptr;
+  mfem::real_t gs_scale_ = 1.0;
 #ifdef MFEM_USE_MPI
   mfem::ParFiniteElementSpace* pfes_zo_ = nullptr;
   std::unique_ptr<mfem::ParFiniteElementSpace> pfes_zs_solid_;

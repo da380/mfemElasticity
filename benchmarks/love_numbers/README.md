@@ -200,6 +200,41 @@ mesh whose Love numbers are good to a per cent. The restoring force of that
 translation is weak (the Slichter mode), so a small error in the forces is
 a large one in the displacement. Order three has it right.
 
+## Combined solves
+
+The problem is linear, so `love_benchmark -combined` (`run.py --combined`,
+results `results_o<p>[_<method>]_combined.json`) solves twice in all: once
+for the sum of the unit loads Y_l0 of every degree from `lmin` to `lmax`,
+and once for the sum of the tidal potentials of degree two and above,
+starting cold. Every degree's numbers are analysed from the one solution,
+the harmonic analysis giving all the coefficients in one pass; the
+centre-of-mass correction at degree one acts on the degree-one
+coefficients alone and is unchanged. The results keep their per-degree
+form with `"combined": true`; the outer iterations and wall time of the two
+solves are under `"combined_solves"`, and the per-degree counts and times
+are null.
+
+The caveats. The discrete operator is not exactly rotationally invariant,
+so a load of degree l leaks into the responses of the other degrees: the
+solves by degree discard it, the combined solve adds it to each degree's
+number. On `fluid_core` at h = 0.3, order 2, the combined numbers differ
+from those by degree by 2e-5 to 2e-3 relative (Dahlen) and 3e-5 to 4.5e-3
+(gauged), the largest in l' of degree two whose value is small; in every
+entry but one the difference is below the error against the reference
+(by a factor of 40 to 90 in the median, 3 at the least: gauged load k' of
+degree two), and the exception (gauged tidal h at degree
+three, 2.9e-4 against an error of 2.0e-4) is where that error happens to
+be small. The degrees share one residual tolerance, relative to the
+combined load, so those with the smallest response are solved least
+accurately in relative terms (at `-rt 1e-10` the effect is below 1e-8).
+The `spurious` entry is then relative to the largest coefficient of a
+harmonic that was not forced. Dahlen's fluid leaves degree zero out of
+the combined load, as its degree-zero response is not comparable
+anyway; the other methods keep it. The cost there: Dahlen 130 + 137
+iterations (0.75 + 0.61 s) against 484 + 375 (2.1 + 1.65 s) by degree over
+the same degrees, gauged 783 + 840 (4.5 + 4.3 s) against 3916 + 2413
+(21.3 + 12.9 s).
+
 ## Resolution
 
 The element size `--h` is that on every interface, in units of the outer

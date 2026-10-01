@@ -34,6 +34,8 @@ repository; the launcher is then `--mpiexec`, else the environment's
 MPIEXEC, else `mpiexec`, and must belong to the MPI of the drivers.
 `--launcher-args` are passed to it before the program (binding, host
 files). `--dry-run` prints the commands without running anything.
+`--combined` runs love_benchmark with one solve per forcing for all the
+degrees (README.md), its results carrying the suffix `_combined`.
 """
 from __future__ import annotations
 
@@ -101,6 +103,11 @@ def main() -> None:
                         "each: 0 Schur-complement CG (suffix _schur), 1 "
                         "block MINRES; the referential methods have their "
                         "own solver and ignore the choice")
+    p.add_argument("--combined", action="store_true",
+                   help="solve the loads of all the degrees together, and "
+                        "the tides, one solve each (love_benchmark "
+                        "-combined); the results carry the suffix "
+                        "_combined")
     p.add_argument("--buffer", type=float, default=0.2,
                    help="thickness of the buffer shell over the radius")
     p.add_argument("--angular", type=float, default=0.3,
@@ -189,6 +196,7 @@ def main() -> None:
                 suffix += f"_map{args.map:g}"
             if solver == 0:
                 suffix += "_schur"
+            love_suffix = suffix + ("_combined" if args.combined else "")
             common = ["-c", str(case / "case.json"), "-o", str(order),
                       "-rt", f"{args.rel_tol:g}", "-s", str(solver),
                       "-method", method,
@@ -200,11 +208,12 @@ def main() -> None:
             jobs = []
             if not args.field_only:
                 jobs.append((
-                    case / f"results_o{order}{suffix}.json",
-                    case / f"log_o{order}{suffix}.txt",
+                    case / f"results_o{order}{love_suffix}.json",
+                    case / f"log_o{order}{love_suffix}.txt",
                     [str(programs / "love_benchmark"), *common,
                      "-lmin", str(args.lmin), "-lmax", str(args.lmax),
-                     "-deg", str(max(args.dtn_degree, args.lmax))]))
+                     "-deg", str(max(args.dtn_degree, args.lmax)),
+                     *(["-combined"] if args.combined else [])]))
             if (args.field or args.field_only) and method in ("dahlen",
                                                               "gauged"):
                 extra = (["-pv", str(case / f"paraview_o{order}{suffix}")]

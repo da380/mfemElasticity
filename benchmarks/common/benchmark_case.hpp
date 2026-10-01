@@ -239,6 +239,7 @@ struct CaseOptions {
   real_t sweep_tol = 1e-3;
   bool kkt = false;
   int kkt_order = 0;
+  int gauge_kkt = 0;  // 0: penalty; 1: KKT; 2: KKT with the MGW prec
   real_t map_amplitude = 0.0;
   bool map_interp = false;
   real_t map_shift = 0.0;
@@ -289,6 +290,12 @@ struct CaseOptions {
     args.AddOption(&al_iterations, "-al", "--al-iterations",
                    "Augmented-Lagrangian iterations per solve (slipping "
                    "methods).");
+    args.AddOption(&gauge_kkt, "-gauge-kkt", "--gauge-kkt",
+                   "Gauged method only: enforce the fluid gauge by the "
+                   "exact KKT saddle instead of the epsilon penalty "
+                   "(1: diagonal preconditioner, 2: with the "
+                   "Murphy-Golub-Wathen composite on the multiplier "
+                   "slot; 0: penalty, the default).");
     args.AddOption(&kkt_order, "-kkt-order", "--kkt-multiplier-order",
                    "Polynomial order of the KKT multiplier space "
                    "(0: the potential space's order). Lower orders "
@@ -530,11 +537,24 @@ class Case {
         for (const int a : fluid_attributes) {
           gauge_marker_[a - 1] = 1;
         }
-        problem->SetGaugedFluid(gauge_marker_, *kappa_c_, options.gauge_eps,
-                                options.gauge_refinements);
+        if (options.gauge_kkt > 0) {
+          problem->EnableGaugeKKT(gauge_marker_, *kappa_c_,
+                                  options.gauge_kkt == 2);
+        } else {
+          problem->SetGaugedFluid(gauge_marker_, *kappa_c_,
+                                  options.gauge_eps,
+                                  options.gauge_refinements);
+        }
         if (root) {
+          if (options.gauge_kkt > 0) {
+            std::cout << "Gauged fluid: exact KKT gauge"
+                      << (options.gauge_kkt == 2 ? " (MGW preconditioner)"
+                                                 : "")
+                      << ".\n";
+          } else {
           std::cout << "Gauged fluid: eps " << options.gauge_eps << ", "
                     << options.gauge_refinements << " refinements.\n";
+          }
         }
       }
       // A solid layer with fluid all around it turns freely in a
@@ -742,6 +762,21 @@ class Case {
     ref_problem->ResetSolution();
     ref_problem->AssembleForce(0.0);
     return ref_problem->Solve();
+  }
+
+  // Forget the previous solution, so that the next solve starts cold: the
+  // referential classes' own reset; the Eulerian class keeps its warm start
+  // privately and has none, but a solve with no forcing leaves it at zero
+  // (MINRES and CG both return zero, without iterating, for a zero
+  // right-hand side, and the gauge refinement of a zero solution is zero).
+  void ResetSolution() {
+    if (eulerian) {
+      Vector zero(Basis().Size());
+      zero = 0.0;
+      Solve(zero, true);
+    } else {
+      ref_problem->ResetSolution();
+    }
   }
 
   // The load's own potential on the displacement region, for the k'
@@ -1006,7 +1041,25 @@ class Case {
                                    options.map_shift)
                   : InteriorRelabelling(dim, base_profiles_->Boundaries(),
                                         options.map_amplitude));
-      if (options.map_interp) {
+      // Shift maps MUST run interpolated: the exact analytic map's
+      // gradient is discontinuous AT the moving interface, and the
+      // one-sided interface kernels evaluate it on the wrong side
+      // there (systematically so on curved facets, whose quadrature
+      // points sit O(h^2) off the analytic radius) — measured to be
+      // the whole of the outward-shift AL pathology. The per-submesh
+      // interpolant is side-consistent by construction
+      // (benchmarks/perturbation/README.md).
+      bool interp = options.map_interp;
+      if (shifted && !interp) {
+        if (root) {
+          std::cout << "map-shift: forcing interpolated F (exact "
+                       "branching maps evaluate their interface kink "
+                       "on the wrong side; see perturbation/README)."
+                    << std::endl;
+        }
+        interp = true;
+      }
+      if (interp) {
         xi_interp_ = std::make_unique<MultiMeshDiffeomorphism>(
             *xi_analytic_, *parent);
         xi_interp_->AddMesh(*solid);

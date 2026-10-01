@@ -32,7 +32,7 @@ namespace mfemElasticity {
  * In 2D the Dirichlet-to-Neumann map results in the following:
  * \f[
  * \int_{\partial \Omega} v \frac{\partial u}{\partial n} \dd S =
- * \frac{1}{\pi b}\sum_{k\ne 0} |k| v_{k} u_{k},
+ * \frac{1}{\pi b^{2}}\sum_{k\ne 0} |k| v_{k} u_{k},
  * \f]
  * where
  * \f[

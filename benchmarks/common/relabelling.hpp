@@ -375,8 +375,17 @@ inline CallableDiffeomorphism InterfaceShift(
     if (r >= b[n - 1]) {
       return;  // on and beyond the surface: identity
     }
+    // Side convention at the moving interface: the gradient's slope is
+    // DISCONTINUOUS there, and the one-sided interface kernels are
+    // assembled on the solid (outer) side, so radii within a roundoff
+    // band of an interior boundary must take the OUTER segment's slope.
+    // The naive `r <= b[j+1]` handed those kernels the inner (fluid)
+    // slope exactly on Sigma - measured to drive most of the
+    // outward-shift AL pathology (interpolated-F maps are immune: they
+    // evaluate through the adjacent solid element).
+    const real_t band = 1e-10 * b[n - 1];
     for (int j = 0; j + 1 < n; j++) {
-      if (r <= b[j + 1]) {
+      if (r <= b[j + 1] - (j + 2 < n ? band : real_t{0})) {
         const real_t lo = b[j], hi = b[j + 1];
         const real_t lo_t = lo + (j == interface ? eps : 0.0);
         const real_t hi_t = hi + (j + 1 == interface ? eps : 0.0);

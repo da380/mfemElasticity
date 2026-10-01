@@ -213,7 +213,30 @@ struct FluidRegion {
 class LinearQuasiStaticMixedSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase {
  public:
-  enum class SolverType { SchurCG, BlockMINRES };
+  /** BlockCG runs CG on the same projected block system as BlockMINRES:
+   * admissible because the assembled symmetric system is congruent to a
+   * positive-definite one for a gravitationally stable body (the
+   * physical functional's saddle sign does not survive the
+   * symmetrisation); CG breakdown would indicate indefiniteness. */
+  enum class SolverType { SchurCG, BlockMINRES, BlockCG };
+
+  /**
+   * @brief KKT (exact-gauge) alternative to the penalised gauged fluid:
+   * minimise @f$\tfrac12(Qu,u)@f$ subject to the full coupled
+   * equations, with @f$Q@f$ the UNIT-scale deviatoric gauge form on
+   * @p fluid_marker. One MINRES on the doubled saddle
+   * @f$[\mathrm{diag}(Q,0), A; A, 0]@f$: the physical equations hold
+   * exactly — no @f$\epsilon@f$, no bias, no Tikhonov refinements, no
+   * semi-convergence — and the gauge is fixed as the minimum-Q-energy
+   * representative. The auxiliary field @f$v@f$ is determined up to
+   * @f$\ker A@f$, which MINRES on the consistent system tolerates.
+   * Internally reuses SetGaugedFluid() at @f$\epsilon = 1@f$ (zero
+   * refinements), whose @f$A+Q@f$ assembly doubles as the
+   * preconditioner of both displacement slots. BlockMINRES/BlockCG
+   * organisation only.
+   */
+  void EnableGaugeKKT(const mfem::Array<int>& fluid_marker,
+                      mfem::Coefficient& mu_gauge, bool mgw_prec = false);
 
   /**
    * @param fes_u Displacement space (vdim = dim) on a (Par)SubMesh of the
@@ -560,7 +583,31 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   std::unique_ptr<mfem::BlockOperator> block_op_;
   std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec_;
   std::unique_ptr<ProjectedSolver> projected_prec_;  ///< P M P, both solvers
-  std::unique_ptr<mfem::MINRESSolver> minres_;
+  std::unique_ptr<mfem::IterativeSolver> minres_;  ///< MINRES or block CG
+
+  // ---- KKT gauge (EnableGaugeKKT): the doubled saddle solver ----
+  bool gauge_kkt_ = false;
+  mfem::Array<int> offsets_kkt4_;
+  std::unique_ptr<NullSpaceProjector> projector_kkt4_;
+  std::unique_ptr<mfem::BlockOperator> block_op_kkt4_;
+  std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec_kkt4_;
+  std::unique_ptr<ProjectedOperator> projected_op_kkt4_;
+  std::unique_ptr<ProjectedSolver> projected_kkt4_, projected_prec_kkt4_;
+  std::unique_ptr<mfem::MINRESSolver> minres_kkt4_;
+  std::unique_ptr<mfem::BlockVector> Xk4_, Bk4_;
+  bool kkt_mgw_ = false;
+  std::unique_ptr<mfem::Solver> prec_clean_u_;  ///< on the CLEAN A_uu
+  std::unique_ptr<mfem::Solver> prec_vu_;       ///< MGW composite
+  void SetupKKTGauge();
+
+ public:
+  /** @brief Diagnostic: relative physical residual
+   * @f$\|A(u,\phi) - f\| / \|f\|@f$ of the last gauge-KKT iterate (the
+   * constraint rows of the saddle), and the stationarity residual
+   * @f$\|Qu + Av\|@f$ relative to @f$\|Qu\|@f$, as a pair. */
+  std::pair<mfem::real_t, mfem::real_t> KKTResiduals() const;
+
+ private:
   std::unique_ptr<mfem::BlockVector> X_block_, B_block_;
   mfem::Vector rhs_s_, w_;
 

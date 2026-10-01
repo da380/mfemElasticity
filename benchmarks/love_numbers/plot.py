@@ -112,15 +112,21 @@ def read_run(path: Path, *, fluid: bool) -> Run:
     seconds = r["setup_seconds"]
     solve_seconds: dict[int, float] = {}
     iterations: dict[int, int] = {}
+    # A combined run (love_benchmark -combined) solves each forcing once
+    # for all degrees: its cost is written once, under "combined_solves",
+    # and the per-degree times and iteration counts are null.
+    combined = bool(r.get("combined", False))
+    for solve in r.get("combined_solves", {}).values():
+        seconds += solve["seconds"]
     for d in r["degrees"]:
         l = d["degree"]
-        if "load" in d:
+        if "load" in d and d["load"].get("seconds") is not None:
             solve_seconds[l] = d["load"]["seconds"]
             iterations[l] = d["load"]["outer_iterations"]
         for key, _, forcing, name in QUANTITIES:
             if forcing not in d or d[forcing].get(name) is None:
                 continue
-            if name == "h":
+            if name == "h" and d[forcing].get("seconds") is not None:
                 seconds += d[forcing]["seconds"]
             if forcing == "load" and l == 0 and name != "h":
                 # k' and l' vanish at degree zero: nothing to be relative to
@@ -150,6 +156,9 @@ def read_run(path: Path, *, fluid: bool) -> Run:
     if map_amplitude:
         tag += f"_map{map_amplitude:g}"
         label += f" (map {map_amplitude:g})"
+    if combined:
+        tag += "_combined"
+        label += " (combined)"
     return Run(h=h, order=r["order"], ranks=r["ranks"], seconds=seconds,
                unknowns=r["displacement_unknowns"] + r["potential_unknowns"],
                values=values, label=label, method=method, tag=tag,
