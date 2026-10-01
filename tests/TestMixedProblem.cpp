@@ -1,10 +1,10 @@
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
-  Tests for LinearQuasiStaticSelfGravitatingProblem on the canned two-layer
+  Tests for LinearQuasiStaticMixedSelfGravitatingProblem on the canned two-layer
   meshes (2-D disc in a disc, 3-D ball in a ball), see
-  SelfGravitatingTestCommon.hpp.
+  MixedProblemTestCommon.hpp.
 
   - The Schur-complement CG and the block MINRES solvers give the same
     displacement and potential to solver tolerance (both solve the system
@@ -64,9 +64,9 @@ struct Case {
     surface = SurfaceMarker(*body);
   }
 
-  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> Problem(
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> Problem(
       bool with_load = true) {
-    auto p = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, *rho, kG, kDtNDegree);
     if (with_load) {
       p->SetSurfaceLoad(*sigma, surface);
@@ -82,21 +82,21 @@ double RelDiff(const GridFunction& a, const GridFunction& b) {
   return L2Norm(d) / L2Norm(b);
 }
 
-class SelfGravitatingTest : public testing::TestWithParam<Param> {};
+class MixedProblemTest : public testing::TestWithParam<Param> {};
 
-TEST_P(SelfGravitatingTest, SchurAndMinresAgree) {
+TEST_P(MixedProblemTest, SchurAndMinresAgree) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
   auto schur = s.Problem();
   schur->SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   schur->AssembleForce(0.0);
   ASSERT_TRUE(schur->Solve());
 
   auto minres = s.Problem();
   minres->SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES);
   minres->AssembleForce(0.0);
   ASSERT_TRUE(minres->Solve());
 
@@ -108,7 +108,7 @@ TEST_P(SelfGravitatingTest, SchurAndMinresAgree) {
   EXPECT_GT(schur->LastInnerIterations(), minres->LastInnerIterations());
 }
 
-TEST_P(SelfGravitatingTest, MassWeightedGaugeAgrees) {
+TEST_P(MixedProblemTest, MassWeightedGaugeAgrees) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
@@ -116,7 +116,7 @@ TEST_P(SelfGravitatingTest, MassWeightedGaugeAgrees) {
   // representative directly, and it carries no momentum.
   auto schur = s.Problem();
   schur->SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   schur->SetMassWeightedGauge();
   schur->AssembleForce(0.0);
   ASSERT_TRUE(schur->Solve());
@@ -156,7 +156,7 @@ TEST_P(SelfGravitatingTest, MassWeightedGaugeAgrees) {
   EXPECT_LT(L2Norm(d), 1e-6 * dnorm);
 }
 
-TEST(SelfGravitatingRigidModes, ResidualsDecreaseWithOrder) {
+TEST(MixedProblemRigidModes, ResidualsDecreaseWithOrder) {
   for (int dim : {2, 3}) {
     std::vector<double> worst;
     for (int order : {1, 2}) {
@@ -175,7 +175,7 @@ TEST(SelfGravitatingRigidModes, ResidualsDecreaseWithOrder) {
   }
 }
 
-TEST_P(SelfGravitatingTest, ZeroDensityIsTractionProblem) {
+TEST_P(MixedProblemTest, ZeroDensityIsTractionProblem) {
   const auto [dim, order] = GetParam();
   Case s(dim, order, 0.0);
 
@@ -228,7 +228,7 @@ TEST_P(SelfGravitatingTest, ZeroDensityIsTractionProblem) {
   EXPECT_LT(RelDiff(p->Displacement(), u_ref), 1e-7);
 }
 
-TEST_P(SelfGravitatingTest, LinearInTheLoads) {
+TEST_P(MixedProblemTest, LinearInTheLoads) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
@@ -272,13 +272,13 @@ TEST_P(SelfGravitatingTest, LinearInTheLoads) {
   EXPECT_LT(RelDiff(p->Potential(), phi0), 1e-7);
 }
 
-TEST_P(SelfGravitatingTest, WarmStartsReproduceColdSolves) {
+TEST_P(MixedProblemTest, WarmStartsReproduceColdSolves) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
   for (auto type :
-       {LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG,
-        LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES}) {
+       {LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG,
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES}) {
     auto p = s.Problem();
     p->SetSolverType(type);
     p->AssembleForce(0.0);
@@ -300,7 +300,7 @@ TEST_P(SelfGravitatingTest, WarmStartsReproduceColdSolves) {
   }
 }
 
-TEST_P(SelfGravitatingTest, RelaxationWeights) {
+TEST_P(MixedProblemTest, RelaxationWeights) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
@@ -311,7 +311,7 @@ TEST_P(SelfGravitatingTest, RelaxationWeights) {
 
   ConstantCoefficient tau(1.0);
   auto maxwell = IsotropicMaxwellRheology::Maxwell(dim, *s.kappa, *s.mu, tau);
-  auto q = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+  auto q = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
       s.fes_u.get(), s.fes_phi.get(), maxwell, *s.rho, kG, kDtNDegree);
   q->SetSurfaceLoad(*s.sigma, s.surface);
   q->SetRelTol(1e-11);
@@ -334,7 +334,7 @@ TEST_P(SelfGravitatingTest, RelaxationWeights) {
   EXPECT_LT(RelDiff(q->Potential(), phi0), 1e-8);
 }
 
-TEST_P(SelfGravitatingTest, SuppliedBackgroundPotential) {
+TEST_P(MixedProblemTest, SuppliedBackgroundPotential) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
@@ -343,7 +343,7 @@ TEST_P(SelfGravitatingTest, SuppliedBackgroundPotential) {
   ASSERT_TRUE(p->Solve());
 
   GridFunctionCoefficient phi0_coeff(&p->BackgroundPotential());
-  auto q = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+  auto q = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
       s.fes_u.get(), s.fes_phi.get(), *s.rheology, *s.rho, kG, kDtNDegree,
       &phi0_coeff);
   q->SetSurfaceLoad(*s.sigma, s.surface);
@@ -357,14 +357,14 @@ TEST_P(SelfGravitatingTest, SuppliedBackgroundPotential) {
   EXPECT_LT(RelDiff(q->Potential(), p->Potential()), 1e-8);
 }
 
-TEST_P(SelfGravitatingTest, ViscoelasticCreep) {
+TEST_P(MixedProblemTest, ViscoelasticCreep) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
   ConstantCoefficient tau(1.0);
   IsotropicMaxwellRheology maxwell =
       IsotropicMaxwellRheology::Maxwell(dim, *s.kappa, *s.mu, tau);
-  LinearQuasiStaticSelfGravitatingProblem p(s.fes_u.get(), s.fes_phi.get(),
+  LinearQuasiStaticMixedSelfGravitatingProblem p(s.fes_u.get(), s.fes_phi.get(),
                                             maxwell, *s.rho, kG, kDtNDegree);
   p.SetSurfaceLoad(*s.sigma, s.surface);
   p.SetRelTol(1e-10);
@@ -391,7 +391,7 @@ TEST_P(SelfGravitatingTest, ViscoelasticCreep) {
   }
 }
 
-INSTANTIATE_TEST_SUITE_P(SelfGravitating, SelfGravitatingTest,
+INSTANTIATE_TEST_SUITE_P(MixedProblem, MixedProblemTest,
                          testing::Values(Param{2, 1}, Param{2, 2},
                                          Param{3, 2}));
 

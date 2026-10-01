@@ -21,6 +21,8 @@
 
 namespace mfemElasticity {
 
+class Diffeomorphism;
+
 namespace detail {
 
 /**
@@ -187,6 +189,15 @@ class Rheology {
    * internal variable on the marked elements only; the branch modulus must
    * vanish outside them. */
   virtual const mfem::Array<int>* BranchMarker(int k) const { return nullptr; }
+
+  /** @brief The equilibrium mapping @f$\varphi_e@f$ when the reference
+   * state is *non-natural* in the sense of Al-Attar & Crawford 2016 (the
+   * particle label is not the equilibrium position); null means natural
+   * labels, @f$\varphi_e = \mathrm{id}@f$. The stiffness integrators of
+   * MakeStiffness() carry the mapping themselves; problems consult this
+   * for everything else that depends on it (rigid modes of the mapped
+   * positions, boundary-area factors). */
+  virtual Diffeomorphism* EquilibriumMapping() const { return nullptr; }
 };
 
 // ---------------------------------------------------------------------------

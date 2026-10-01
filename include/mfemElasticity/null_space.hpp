@@ -215,18 +215,25 @@ class NullSpaceProjector {
  * three rotations in three dimensions) to @p P as true-dof vectors. Returns
  * the number actually added (a mode already spanned by @p P is dropped).
  *
+ * With a non-null @p map the rotations are those of the *mapped* positions
+ * @f$W\varphi_e(x)@f$ (MappedRotation) — the strain-free rotational modes
+ * of a problem posed on a fixed reference body with a non-natural
+ * reference state; translations are unchanged.
+ *
  * @p P must use the communicator of @p fes when the space is parallel. The
  * space must have vdim 2 or 3.
  */
-int AddRigidModes(NullSpaceProjector& P, mfem::FiniteElementSpace& fes);
+int AddRigidModes(NullSpaceProjector& P, mfem::FiniteElementSpace& fes,
+                  Diffeomorphism* map = nullptr);
 
 /**
  * @brief A projector holding exactly the rigid modes of @p fes (serial or
  * parallel, the communicator taken from the space); the null-space handling
- * of a pure traction problem.
+ * of a pure traction problem. Rotations are mapped through @p map when one
+ * is given (see AddRigidModes).
  */
 std::unique_ptr<NullSpaceProjector> MakeRigidModeProjector(
-    mfem::FiniteElementSpace& fes);
+    mfem::FiniteElementSpace& fes, Diffeomorphism* map = nullptr);
 
 /**
  * @brief The operator @f$P A P@f$ for a projector @f$P@f$ from a

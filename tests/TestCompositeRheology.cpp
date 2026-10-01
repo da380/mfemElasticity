@@ -1,5 +1,5 @@
 #include "QuasiStaticTestCommon.hpp"
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
@@ -411,7 +411,7 @@ INSTANTIATE_TEST_SUITE_P(Composite, CompositeRheologyTest,
                                           testing::Values(0, 1),
                                           testing::Values(1, 2)));
 
-TEST(CompositeRheologySelfGravitating, ElasticCoreMaxwellMantle) {
+TEST(CompositeRheologyMixedProblem, ElasticCoreMaxwellMantle) {
   using namespace self_grav_test;
   const int dim = 2, order = 1;
   Mesh parent(ThreeLayerMeshFile(dim).c_str(), 1, 1);
@@ -437,7 +437,7 @@ TEST(CompositeRheologySelfGravitating, ElasticCoreMaxwellMantle) {
   EXPECT_EQ(composite.BranchLabel(0), "mantle_branch0");
 
   std::vector<FluidRegion> fluids{OuterCore(solid, rho_f)};
-  LinearQuasiStaticSelfGravitatingProblem problem(&fes_u, &fes_phi, composite,
+  LinearQuasiStaticMixedSelfGravitatingProblem problem(&fes_u, &fes_phi, composite,
                                                   rho_s, kG, kDtNDegree,
                                                   nullptr, fluids);
   problem.SetSurfaceLoad(sigma, SurfaceMarker(solid));

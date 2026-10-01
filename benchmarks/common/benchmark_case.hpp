@@ -2,7 +2,7 @@
 // benchmark_case.hpp
 //
 // What the drivers of the Love-number benchmark share: a case read from its
-// manifest and set up as a LinearQuasiStaticSelfGravitatingProblem, the
+// manifest and set up as a LinearQuasiStaticMixedSelfGravitatingProblem, the
 // harmonic analysis of its solution on the interfaces of the solid, the
 // translation that takes a solution to the centre-of-mass frame, and the
 // writing of numbers as JSON.
@@ -41,7 +41,7 @@ inline constexpr real_t kPi = std::numbers::pi_v<real_t>;
 
 using Clock = std::chrono::steady_clock;
 using BHC = BoundaryHarmonicCoefficients;
-using Problem = LinearQuasiStaticSelfGravitatingProblem;
+using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 
 // The fields of the model a case holds.
 inline constexpr const char* kFields[] = {"rho", "kappa", "mu"};
@@ -236,6 +236,8 @@ struct CaseOptions {
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
   int al_iterations = 8;
+  real_t sweep_tol = 1e-3;
+  bool kkt = false;
   real_t map_amplitude = 0.0;
   bool map_interp = false;
   real_t map_shift = 0.0;
@@ -286,6 +288,19 @@ struct CaseOptions {
     args.AddOption(&al_iterations, "-al", "--al-iterations",
                    "Augmented-Lagrangian iterations per solve (slipping "
                    "methods).");
+    args.AddOption(&kkt, "-kkt", "--kkt", "-no-kkt", "--no-kkt",
+                   "Enforce the slip constraint by a monolithic KKT "
+                   "multiplier block (single-valued slip only) instead "
+                   "of penalty + augmented Lagrangian; -al then bounds "
+                   "the gauge refinements (2-3 suffice).");
+    args.AddOption(&sweep_tol, "-sweep-tol", "--al-sweep-tolerance",
+                   "Loose relative tolerance of the early AL sweeps "
+                   "(geometric tightening to -rt, final sweep at -rt; "
+                   "SetSweepTolerance). Roughly halves the slip cost at "
+                   "a solver-endpoint shift ~1e-3, an order below the "
+                   "mesh error. 0: every sweep at full tolerance — "
+                   "required for finite-difference (-map-shift) studies "
+                   "and strict solver comparisons.");
     args.AddOption(&cmb, "-cmb", "--cmb-approximation",
                    "Fluid-interface treatment of the Dahlen path: 'full' "
                    "(stratified, F1+F2+F3), 'nomass' (drop the fluid mass "
@@ -386,7 +401,7 @@ class Case {
     MFEM_VERIFY(dim == 3, "The benchmark is for balls.");
 
     // The method solved: the Eulerian pair share the
-    // LinearQuasiStaticSelfGravitatingProblem, the referential family
+    // LinearQuasiStaticMixedSelfGravitatingProblem, the referential family
     // its own construction below.
     method = options.gauged ? "gauged" : options.method;
     MFEM_VERIFY(method == "dahlen" || method == "gauged" ||
@@ -878,7 +893,12 @@ class Case {
        << (method == "slip" || method == "slip_broken"
                ? ",\n  \"slip_theta\": " + Num(options_.slip_theta) +
                      ",\n  \"al_iterations\": " +
-                     std::to_string(options_.al_iterations)
+                     std::to_string(options_.al_iterations) +
+                     ",\n  \"sweep_tol\": " +
+                     Num(options_.map_shift != 0.0 ? 0.0
+                                                   : options_.sweep_tol) +
+                     ",\n  \"kkt\": " +
+                     std::string(options_.kkt ? "true" : "false")
                : std::string())
        << (method != "dahlen"
                ? ",\n  \"gauge_epsilon\": " + Num(options_.gauge_eps) +
@@ -1135,7 +1155,7 @@ class Case {
         dim, *C_final, *S_final, *phi_e);
 
     if (!slip) {
-      ref_problem = std::make_unique<LinearQuasiStaticReferentialProblem>(
+      ref_problem = std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
           fes_u.get(), fes_phi.get(), *ref_rheology_, *rho_use, G,
           options.dtn_degree);
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
@@ -1187,7 +1207,7 @@ class Case {
       }
 
       auto slip_problem =
-          std::make_unique<LinearQuasiStaticSlipReferentialProblem>(
+          std::make_unique<LinearQuasiStaticReferentialSelfGravitatingSlipProblem>(
               fes_u.get(), fes_f_.get(), fes_phi.get(), *ref_rheology_,
               *rho_use, *pi_use, interface_marker_, G, options.dtn_degree);
       Evac_ = NewRadialVacuumExtension(*fes_u, *fes_buffer_, radius, r_out);
@@ -1196,6 +1216,17 @@ class Case {
                                   options.gauge_eps);
       slip_problem->SetConstraint(options.slip_theta,
                                   options.al_iterations);
+      // Shift (finite-difference) runs need the reproducible endpoint:
+      // every sweep at full tolerance, whatever -sweep-tol says.
+      slip_problem->SetSweepTolerance(
+          options.map_shift != 0.0 ? 0.0 : options.sweep_tol);
+      if (options.kkt) {
+        MFEM_VERIFY(method == "slip",
+                    "-kkt: single-valued slip only for now.");
+        fes_lam_bench_ = std::make_unique<ParFiniteElementSpace>(
+            static_cast<ParMesh*>(fes_u->GetMesh()), fes_phi->FEColl());
+        slip_problem->EnableKKT(fes_lam_bench_.get());
+      }
       if (method == "slip") {
         Ef_ = NewRadialFluidExtension(*fes_u, *fes_f_, itf.radius);
         slip_problem->SetFluidExtension(*Ef_);
@@ -1277,7 +1308,7 @@ class Case {
   std::unique_ptr<ParGridFunction> rho, kappa, mu, p0;
   std::unique_ptr<ParFiniteElementSpace> fes_u, fes_phi;
   std::unique_ptr<Problem> problem;
-  std::unique_ptr<LinearQuasiStaticReferentialProblem> ref_problem;
+  std::unique_ptr<LinearQuasiStaticReferentialSelfGravitatingProblem> ref_problem;
   std::vector<InterfaceAnalysis> analyses;
   int surface = -1;
   std::unique_ptr<HarmonicExpansionCoefficient> sigma, psi;
@@ -1297,7 +1328,8 @@ class Case {
 
   // The referential family (BuildReferential).
   std::unique_ptr<ParSubMesh> buffer_sub_, fluid_sub_, outer_sub_;
-  std::unique_ptr<ParFiniteElementSpace> fes_buffer_, fes_f_, fes_zo_;
+  std::unique_ptr<ParFiniteElementSpace> fes_buffer_, fes_f_, fes_zo_,
+      fes_lam_bench_;
   std::unique_ptr<ParGridFunction> p0_solid_, p0_fluid_, rho_fluid_,
       kappa_fluid_, mu_fluid_;
   std::unique_ptr<GridFunctionCoefficient> p0_c_, kappa_fluid_c_;

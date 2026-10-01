@@ -1,7 +1,7 @@
 /**
  * @file referential_problem.cpp
  * @brief Implementation of ReferentialElasticRheology and
- * LinearQuasiStaticReferentialProblem.
+ * LinearQuasiStaticReferentialSelfGravitatingProblem.
  */
 
 #include "mfemElasticity/referential_problem.hpp"
@@ -1154,7 +1154,7 @@ std::unique_ptr<ElasticStiffness> ReferentialElasticRheology::MakeStiffness()
 // ---------------------------------------------------------------------------
 // Construction
 
-LinearQuasiStaticReferentialProblem::LinearQuasiStaticReferentialProblem(
+LinearQuasiStaticReferentialSelfGravitatingProblem::LinearQuasiStaticReferentialSelfGravitatingProblem(
     FiniteElementSpace* fes_u, FiniteElementSpace* fes_zeta,
     const ReferentialElasticRheology& rheology, Coefficient& density,
     real_t gravitational_constant, int dtn_degree,
@@ -1174,19 +1174,19 @@ LinearQuasiStaticReferentialProblem::LinearQuasiStaticReferentialProblem(
       K_shift_(Operator::MFEM_SPARSEMAT),
       C_(Operator::MFEM_SPARSEMAT) {
   MFEM_VERIFY(G_ > 0.0,
-              "LinearQuasiStaticReferentialProblem: G must be positive.");
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: G must be positive.");
   MFEM_VERIFY(fes_zeta_->GetVDim() == 1,
-              "LinearQuasiStaticReferentialProblem: the potential space must "
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: the potential space must "
               "be scalar.");
   MFEM_VERIFY(fes_zeta_->GetMesh()->Dimension() == dim_,
-              "LinearQuasiStaticReferentialProblem: mesh dimensions differ.");
+              "LinearQuasiStaticReferentialSelfGravitatingProblem: mesh dimensions differ.");
 
   ball_wide_ = (fes_u->GetMesh() == fes_zeta_->GetMesh());
 #ifdef MFEM_USE_MPI
   pfes_zeta_ = dynamic_cast<ParFiniteElementSpace*>(fes_zeta_);
   MFEM_VERIFY(
       (pfes_ != nullptr) == (pfes_zeta_ != nullptr),
-      "LinearQuasiStaticReferentialProblem: the displacement and potential "
+      "LinearQuasiStaticReferentialSelfGravitatingProblem: the displacement and potential "
       "spaces must both be serial or both be parallel.");
   if (pfes_zeta_) {
     K_zeta_.SetType(Operator::Hypre_ParCSR);
@@ -1199,7 +1199,7 @@ LinearQuasiStaticReferentialProblem::LinearQuasiStaticReferentialProblem(
     if (pfes_zeta_) {
       auto* psub = dynamic_cast<ParSubMesh*>(pfes_->GetParMesh());
       MFEM_VERIFY(psub && psub->GetParent() == pfes_zeta_->GetParMesh(),
-                  "LinearQuasiStaticReferentialProblem: the displacement "
+                  "LinearQuasiStaticReferentialSelfGravitatingProblem: the displacement "
                   "space must live on a ParSubMesh of the potential space's "
                   "mesh, or on that mesh itself.");
       shadow_zeta_ = SubMeshDofInjection::MakeShadowSpace(*pfes_zeta_, *psub);
@@ -1208,7 +1208,7 @@ LinearQuasiStaticReferentialProblem::LinearQuasiStaticReferentialProblem(
     {
       auto* sub = dynamic_cast<SubMesh*>(fes_->GetMesh());
       MFEM_VERIFY(sub && sub->GetParent() == fes_zeta_->GetMesh(),
-                  "LinearQuasiStaticReferentialProblem: the displacement "
+                  "LinearQuasiStaticReferentialSelfGravitatingProblem: the displacement "
                   "space must live on a SubMesh of the potential space's "
                   "mesh, or on that mesh itself.");
       shadow_zeta_ = SubMeshDofInjection::MakeShadowSpace(*fes_zeta_, *sub);
@@ -1262,7 +1262,7 @@ LinearQuasiStaticReferentialProblem::LinearQuasiStaticReferentialProblem(
     ToTrueDofs(*fes_zeta_, *l, L_outer_);
     outer_length_ = Dot(L_outer_, ones_);
     MFEM_VERIFY(outer_length_ > 0.0,
-                "LinearQuasiStaticReferentialProblem: empty outer boundary.");
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: empty outer boundary.");
   }
 
   SetupPotentialOperators();
@@ -1277,13 +1277,13 @@ LinearQuasiStaticReferentialProblem::LinearQuasiStaticReferentialProblem(
   B_zeta_ = 0.0;
 }
 
-void LinearQuasiStaticReferentialProblem::ResetSolution() {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::ResetSolution() {
   if (X_block_) {
     *X_block_ = 0.0;
   }
 }
 
-bool LinearQuasiStaticReferentialProblem::ParallelPotential() const {
+bool LinearQuasiStaticReferentialSelfGravitatingProblem::ParallelPotential() const {
 #ifdef MFEM_USE_MPI
   return pfes_zeta_ != nullptr;
 #else
@@ -1291,7 +1291,7 @@ bool LinearQuasiStaticReferentialProblem::ParallelPotential() const {
 #endif
 }
 
-void LinearQuasiStaticReferentialProblem::ToTrueDofs(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::ToTrueDofs(
     const FiniteElementSpace& fes, const Vector& L, Vector& T) const {
   const Operator* P = fes.GetProlongationMatrix();
   if (P) {
@@ -1302,7 +1302,7 @@ void LinearQuasiStaticReferentialProblem::ToTrueDofs(
   }
 }
 
-void LinearQuasiStaticReferentialProblem::MakeCompatible(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::MakeCompatible(
     Vector& B_zeta) const {
   if (dim_ != 2) {
     return;
@@ -1311,9 +1311,9 @@ void LinearQuasiStaticReferentialProblem::MakeCompatible(
   B_zeta.Add(-mass / outer_length_, L_outer_);
 }
 
-void LinearQuasiStaticReferentialProblem::SetupPotentialOperators() {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupPotentialOperators() {
   Array<int> empty;
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
 
   // K_a = <a_e grad zeta, grad chi> on the ball (the mapped Laplacian);
   // A_zeta = (K_a + DtN) / 4 pi G.
@@ -1394,7 +1394,7 @@ void LinearQuasiStaticReferentialProblem::SetupPotentialOperators() {
   }
 }
 
-void LinearQuasiStaticReferentialProblem::ComputeBackgroundPotential(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::ComputeBackgroundPotential(
     Coefficient* zeta0) {
   if (zeta0) {
     zeta0_->ProjectCoefficient(*zeta0);
@@ -1420,7 +1420,7 @@ void LinearQuasiStaticReferentialProblem::ComputeBackgroundPotential(
     Zeta0 = 0.0;
     zeta_solver_->Mult(B, Zeta0);
     MFEM_VERIFY(cg_zeta_->GetConverged(),
-                "LinearQuasiStaticReferentialProblem: the background "
+                "LinearQuasiStaticReferentialSelfGravitatingProblem: the background "
                 "potential solve did not converge.");
     zeta0_->SetFromTrueDofs(Zeta0);
   }
@@ -1429,11 +1429,11 @@ void LinearQuasiStaticReferentialProblem::ComputeBackgroundPotential(
   }
 }
 
-void LinearQuasiStaticReferentialProblem::SetupCoupling() {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupCoupling() {
   // c(zeta, v) = (1/4piG) int_B <a'(v) g0, grad zeta>: trial zeta on the
   // ball, test v on the body; C^T by transposition.
   Array<int> empty;
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   const real_t c = 1.0 / four_pi_G_;
   if (ball_wide_) {
 #ifdef MFEM_USE_MPI
@@ -1486,13 +1486,13 @@ void LinearQuasiStaticReferentialProblem::SetupCoupling() {
   Ct_op_ = Ct_owned_.get();
 }
 
-void LinearQuasiStaticReferentialProblem::SetupGravityIntegrators() {
-  auto& map = ref_rheology_->EquilibriumMapping();
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupGravityIntegrators() {
+  auto& map = *ref_rheology_->EquilibriumMapping();
   StiffnessIntegrators().AddDomainIntegrator(new ReferentialGravityIntegrator(
       map, *grad_zeta0_shadow_, 1.0 / (2.0 * four_pi_G_)));
 }
 
-void LinearQuasiStaticReferentialProblem::SetupRigidModes() {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupRigidModes() {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
     projector_u_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
@@ -1515,7 +1515,7 @@ void LinearQuasiStaticReferentialProblem::SetupRigidModes() {
     VectorConstantCoefficient tc(e);
     add(tc);
   }
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   if (dim_ == 2) {
     MappedRotation rot(map, 2);
     add(rot);
@@ -1557,7 +1557,7 @@ void LinearQuasiStaticReferentialProblem::SetupRigidModes() {
 // ---------------------------------------------------------------------------
 // Loads
 
-void LinearQuasiStaticReferentialProblem::SetSurfaceLoad(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetSurfaceLoad(
     Coefficient& sigma, const Array<int>& bdr_marker) {
   MFEM_VERIFY(bdr_marker.Size() == fes_->GetMesh()->bdr_attributes.Max(),
               "SetSurfaceLoad: the marker must be sized to the SubMesh's "
@@ -1574,7 +1574,7 @@ void LinearQuasiStaticReferentialProblem::SetSurfaceLoad(
 }
 
 
-void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExtension(
     FiniteElementSpace& fes_buffer, const SparseMatrix& E) {
   MFEM_VERIFY(!ball_wide_,
               "SetPrescribedVacuumExtension: for the SubMesh mode (the "
@@ -1587,7 +1587,7 @@ void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
               "buffer vdofs.");
   MFEM_VERIFY(!ext_EtGE_, "SetPrescribedVacuumExtension: already set.");
 
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   auto* buffer_sub = dynamic_cast<SubMesh*>(fes_buffer.GetMesh());
   MFEM_VERIFY(buffer_sub && buffer_sub->GetParent() == fes_zeta_->GetMesh(),
               "SetPrescribedVacuumExtension: the buffer space must live on "
@@ -1627,13 +1627,13 @@ void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
 
 
 #ifdef MFEM_USE_MPI
-void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetPrescribedVacuumExtension(
     ParFiniteElementSpace& fes_buffer, const HypreParMatrix& E) {
   MFEM_VERIFY(!ball_wide_ && ParallelPotential(),
               "SetPrescribedVacuumExtension(par): parallel SubMesh mode "
               "only.");
   MFEM_VERIFY(!pext_EtGE_, "SetPrescribedVacuumExtension: already set.");
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   auto* buffer_sub = dynamic_cast<ParSubMesh*>(fes_buffer.GetParMesh());
   MFEM_VERIFY(buffer_sub &&
                   buffer_sub->GetParent() == pfes_zeta_->GetParMesh(),
@@ -1677,17 +1677,17 @@ void LinearQuasiStaticReferentialProblem::SetPrescribedVacuumExtension(
 }
 #endif
 
-void LinearQuasiStaticReferentialProblem::SetGaugedFluid(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetGaugedFluid(
     const Array<int>& fluid_marker, Coefficient& mu_gauge, real_t epsilon,
     int refinements, GaugePenalty penalty, Diffeomorphism* map) {
   if (map == nullptr && penalty == GaugePenalty::Deviatoric) {
-    map = &ref_rheology_->EquilibriumMapping();
+    map = ref_rheology_->EquilibriumMapping();
   }
   LinearQuasiStaticProblemBase::SetGaugedFluid(
       fluid_marker, mu_gauge, epsilon, refinements, penalty, map);
 }
 
-void LinearQuasiStaticReferentialProblem::SetVacuumExtension(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetVacuumExtension(
     const Array<int>& buffer_marker, Coefficient& mu_gauge, real_t epsilon,
     int refinements) {
   MFEM_VERIFY(ball_wide_,
@@ -1696,7 +1696,7 @@ void LinearQuasiStaticReferentialProblem::SetVacuumExtension(
                  GaugePenalty::Harmonic);
 }
 
-bool LinearQuasiStaticReferentialProblem::GaugeRefine(Vector& X) {
+bool LinearQuasiStaticReferentialSelfGravitatingProblem::GaugeRefine(Vector& X) {
   // As for the gauged fluid's coupled refinement: the physical residual
   // after an exact regularised solve is [eps Q delta_u; 0].
   gauge_residuals_.clear();
@@ -1730,7 +1730,7 @@ bool LinearQuasiStaticReferentialProblem::GaugeRefine(Vector& X) {
   return ok;
 }
 
-void LinearQuasiStaticReferentialProblem::AssembleForce(real_t t) {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::AssembleForce(real_t t) {
   LinearQuasiStaticProblemBase::AssembleForce(t);
   b_zeta_->Assemble();
   if (ball_wide_) {
@@ -1743,7 +1743,7 @@ void LinearQuasiStaticReferentialProblem::AssembleForce(real_t t) {
   MakeCompatible(B_zeta_);
 }
 
-void LinearQuasiStaticReferentialProblem::RegisterFields(DataCollection& dc) {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::RegisterFields(DataCollection& dc) {
   LinearQuasiStaticProblemBase::RegisterFields(dc);
   dc.RegisterField("potential",
                    ball_wide_ ? zeta_.get() : zeta_shadow_.get());
@@ -1754,7 +1754,7 @@ void LinearQuasiStaticReferentialProblem::RegisterFields(DataCollection& dc) {
 // ---------------------------------------------------------------------------
 // Solver
 
-void LinearQuasiStaticReferentialProblem::SetupSolver(OperatorHandle& A) {
+void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupSolver(OperatorHandle& A) {
   Operator* A_uu = A.Ptr();
   if (ext_EtGE_) {
     A_aug_.Clear();
@@ -1813,7 +1813,7 @@ void LinearQuasiStaticReferentialProblem::SetupSolver(OperatorHandle& A) {
   B_block_ = std::make_unique<BlockVector>(offsets_);
 }
 
-bool LinearQuasiStaticReferentialProblem::SolveLinearSystem(const Vector& B,
+bool LinearQuasiStaticReferentialSelfGravitatingProblem::SolveLinearSystem(const Vector& B,
                                                             Vector& X) {
   B_block_->GetBlock(0) = B;
   B_block_->GetBlock(1) = B_zeta_;
@@ -1835,7 +1835,7 @@ bool LinearQuasiStaticReferentialProblem::SolveLinearSystem(const Vector& B,
   return ok;
 }
 
-void LinearQuasiStaticReferentialProblem::DistributePotential(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::DistributePotential(
     const Vector& Z) {
   zeta_->SetFromTrueDofs(Z);
   if (!ball_wide_) {
@@ -1846,7 +1846,7 @@ void LinearQuasiStaticReferentialProblem::DistributePotential(
 // ---------------------------------------------------------------------------
 // Diagnostics
 
-real_t LinearQuasiStaticReferentialProblem::NullPairResidual(
+real_t LinearQuasiStaticReferentialSelfGravitatingProblem::NullPairResidual(
     const Vector& u_true) {
   EnsureOperator();
   real_t a_max = 0.0;
@@ -1873,7 +1873,7 @@ real_t LinearQuasiStaticReferentialProblem::NullPairResidual(
   return std::sqrt(Dot(r, r)) / (a_max * std::max(norm, real_t{1e-300}));
 }
 
-void LinearQuasiStaticReferentialProblem::ApplyBlockOperator(
+void LinearQuasiStaticReferentialSelfGravitatingProblem::ApplyBlockOperator(
     const Vector& u_true, const Vector& z_true, Vector& r_u, Vector& r_z) {
   EnsureOperator();
   BlockVector n(offsets_), r(offsets_);
@@ -1884,7 +1884,7 @@ void LinearQuasiStaticReferentialProblem::ApplyBlockOperator(
   r_z = r.GetBlock(1);
 }
 
-std::vector<real_t> LinearQuasiStaticReferentialProblem::RigidPairResiduals() {
+std::vector<real_t> LinearQuasiStaticReferentialSelfGravitatingProblem::RigidPairResiduals() {
   // The projector's basis is orthonormal, so the general diagnostic's
   // norm factor is one and the historic semantics are unchanged.
   EnsureOperator();
@@ -1896,7 +1896,7 @@ std::vector<real_t> LinearQuasiStaticReferentialProblem::RigidPairResiduals() {
 }
 
 // ---------------------------------------------------------------------------
-// LinearQuasiStaticSlipReferentialProblem
+// LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 
 namespace {
 
@@ -1933,35 +1933,35 @@ class RhoSymJacobianCoefficient : public MatrixCoefficient {
 
 }  // namespace
 
-LinearQuasiStaticSlipReferentialProblem::
-    LinearQuasiStaticSlipReferentialProblem(
+LinearQuasiStaticReferentialSelfGravitatingSlipProblem::
+    LinearQuasiStaticReferentialSelfGravitatingSlipProblem(
         FiniteElementSpace* fes_s, FiniteElementSpace* fes_f,
         FiniteElementSpace* fes_zeta, const ReferentialElasticRheology& rheology,
         Coefficient& density, Coefficient& interface_pressure,
         const Array<int>& interface_marker, real_t gravitational_constant,
         int dtn_degree, Coefficient* background_zeta0)
-    : LinearQuasiStaticReferentialProblem(fes_s, fes_zeta, rheology, density,
+    : LinearQuasiStaticReferentialSelfGravitatingProblem(fes_s, fes_zeta, rheology, density,
                                           gravitational_constant, dtn_degree,
                                           background_zeta0),
       fes_f_(fes_f),
       pi_(&interface_pressure),
       interface_marker_(interface_marker) {
   MFEM_VERIFY(!ball_wide_,
-              "LinearQuasiStaticSlipReferentialProblem: the solid space "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the solid space "
               "must live on a SubMesh of the ball.");
   MFEM_VERIFY(fes_f_->FEColl() == fes_->FEColl() &&
                   fes_f_->GetVDim() == dim_ &&
                   fes_f_->GetOrdering() == fes_->GetOrdering(),
-              "LinearQuasiStaticSlipReferentialProblem: the fluid space "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the fluid space "
               "must share the solid space's collection, vdim and ordering.");
   MFEM_VERIFY(
       interface_marker_.Size() == fes_->GetMesh()->bdr_attributes.Max(),
-      "LinearQuasiStaticSlipReferentialProblem: the interface marker must "
+      "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the interface marker must "
       "be sized to the solid SubMesh's bdr_attributes.Max().");
 #ifdef MFEM_USE_MPI
   pfes_f_ = dynamic_cast<ParFiniteElementSpace*>(fes_f_);
   MFEM_VERIFY((pfes_ != nullptr) == (pfes_f_ != nullptr),
-              "LinearQuasiStaticSlipReferentialProblem: the solid and "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the solid and "
               "fluid spaces must both be serial or both be parallel.");
 #endif
 
@@ -1976,7 +1976,7 @@ LinearQuasiStaticSlipReferentialProblem::
     auto* fluid_sub = dynamic_cast<ParSubMesh*>(pfes_f_->GetParMesh());
     MFEM_VERIFY(fluid_sub &&
                     fluid_sub->GetParent() == pfes_zeta_->GetParMesh(),
-                "LinearQuasiStaticSlipReferentialProblem: the fluid space "
+                "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the fluid space "
                 "must live on a ParSubMesh of the ball.");
     auto* solid_sub = dynamic_cast<ParSubMesh*>(pfes_->GetParMesh());
     ParFiniteElementSpace parent_fes(
@@ -1997,7 +1997,7 @@ LinearQuasiStaticSlipReferentialProblem::
   {
     auto* fluid_sub = dynamic_cast<SubMesh*>(fes_f_->GetMesh());
     MFEM_VERIFY(fluid_sub && fluid_sub->GetParent() == fes_zeta_->GetMesh(),
-                "LinearQuasiStaticSlipReferentialProblem: the fluid space "
+                "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the fluid space "
                 "must live on a SubMesh of the ball.");
     auto* solid_sub = dynamic_cast<SubMesh*>(fes_->GetMesh());
     FiniteElementSpace parent_fes(
@@ -2031,7 +2031,7 @@ LinearQuasiStaticSlipReferentialProblem::
   SetupSlipRigidModes();
 }
 
-void LinearQuasiStaticSlipReferentialProblem::RecomputeBackgroundPotential() {
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::RecomputeBackgroundPotential() {
   // As the base class's background solve, with the fluid's referential
   // mass added to the source.
   Vector bL(fes_zeta_->GetVSize()), tmp(fes_zeta_->GetVSize()), B;
@@ -2055,7 +2055,7 @@ void LinearQuasiStaticSlipReferentialProblem::RecomputeBackgroundPotential() {
   Zeta0 = 0.0;
   zeta_solver_->Mult(B, Zeta0);
   MFEM_VERIFY(cg_zeta_->GetConverged(),
-              "LinearQuasiStaticSlipReferentialProblem: the background "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the background "
               "potential solve did not converge.");
   zeta0_->SetFromTrueDofs(Zeta0);
   injection_->MultTranspose(*zeta0_, *zeta0_shadow_);
@@ -2063,7 +2063,7 @@ void LinearQuasiStaticSlipReferentialProblem::RecomputeBackgroundPotential() {
   SetupCoupling();
 }
 
-void LinearQuasiStaticSlipReferentialProblem::SetupSlipRigidModes() {
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSlipRigidModes() {
   offsets3_.SetSize(4);
   offsets3_[0] = 0;
   offsets3_[1] = fes_->GetTrueVSize();
@@ -2101,7 +2101,7 @@ void LinearQuasiStaticSlipReferentialProblem::SetupSlipRigidModes() {
     n.GetBlock(1) = tf;
     projector3_->Add(n);
   }
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   const int nrot = (dim_ == 2) ? 1 : 3;
   for (int c = 0; c < nrot; c++) {
     MappedRotation rot(map, dim_ == 2 ? 2 : c);
@@ -2123,17 +2123,21 @@ void LinearQuasiStaticSlipReferentialProblem::SetupSlipRigidModes() {
   }
 }
 
-void LinearQuasiStaticSlipReferentialProblem::ResetSolution() {
-  LinearQuasiStaticReferentialProblem::ResetSolution();
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::ResetSolution() {
+  LinearQuasiStaticReferentialSelfGravitatingProblem::ResetSolution();
   if (X3_) {
     *X3_ = 0.0;
   }
   if (X4_) {
     *X4_ = 0.0;
   }
+  if (Xk_) {
+    *Xk_ = 0.0;
+  }
+  lambda_ = 0.0;
 }
 
-void LinearQuasiStaticSlipReferentialProblem::SetFluidExtension(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidExtension(
     const SparseMatrix& E) {
   MFEM_VERIFY(!ParallelPotential(),
               "SetFluidExtension: the sparse overload is for the serial "
@@ -2145,7 +2149,7 @@ void LinearQuasiStaticSlipReferentialProblem::SetFluidExtension(
 }
 
 #ifdef MFEM_USE_MPI
-void LinearQuasiStaticSlipReferentialProblem::SetFluidExtension(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidExtension(
     const HypreParMatrix& E) {
   MFEM_VERIFY(ParallelPotential(),
               "SetFluidExtension: the hypre overload is for the parallel "
@@ -2159,7 +2163,7 @@ void LinearQuasiStaticSlipReferentialProblem::SetFluidExtension(
 }
 #endif
 
-void LinearQuasiStaticSlipReferentialProblem::SetFluidGauge(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetFluidGauge(
     Coefficient& mu_gauge, real_t epsilon) {
   MFEM_VERIFY(epsilon > 0.0, "SetFluidGauge: epsilon must be positive.");
   fluid_mu_gauge_ = &mu_gauge;
@@ -2167,7 +2171,7 @@ void LinearQuasiStaticSlipReferentialProblem::SetFluidGauge(
   operator_dirty_ = true;
 }
 
-void LinearQuasiStaticSlipReferentialProblem::SetConstraint(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetConstraint(
     real_t theta, int al_iterations) {
   MFEM_VERIFY(theta > 0.0 && al_iterations >= 1,
               "SetConstraint: theta must be positive and al_iterations at "
@@ -2177,11 +2181,11 @@ void LinearQuasiStaticSlipReferentialProblem::SetConstraint(
   operator_dirty_ = true;
 }
 
-void LinearQuasiStaticSlipReferentialProblem::SetGaugedFluid(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetGaugedFluid(
     const Array<int>&, Coefficient&, real_t, int, GaugePenalty,
     Diffeomorphism*) {
   MFEM_ABORT(
-      "LinearQuasiStaticSlipReferentialProblem: the fluid has its own "
+      "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the fluid has its own "
       "space here; use SetFluidGauge().");
 }
 
@@ -2216,7 +2220,7 @@ class MappedBackgroundField : public VectorCoefficient {
 
 }  // namespace
 
-void LinearQuasiStaticSlipReferentialProblem::EnableBrokenZeta(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::EnableBrokenZeta(
     FiniteElementSpace* fes_zeta_outer, real_t theta_zeta) {
   MFEM_VERIFY(fes_zeta_outer && theta_zeta > 0.0,
               "EnableBrokenZeta: an outer scalar space and a positive "
@@ -2307,7 +2311,7 @@ void LinearQuasiStaticSlipReferentialProblem::EnableBrokenZeta(
   SetupBrokenRigidModes();
 }
 
-void LinearQuasiStaticSlipReferentialProblem::SetupBrokenRigidModes() {
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupBrokenRigidModes() {
   offsets4_.SetSize(5);
   offsets4_[0] = 0;
   offsets4_[1] = fes_->GetTrueVSize();
@@ -2345,7 +2349,7 @@ void LinearQuasiStaticSlipReferentialProblem::SetupBrokenRigidModes() {
     n.GetBlock(1) = tf;
     projector4_->Add(n);
   }
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   const int nrot = (dim_ == 2) ? 1 : 3;
   for (int c = 0; c < nrot; c++) {
     MappedRotation rot(map, dim_ == 2 ? 2 : c);
@@ -2368,12 +2372,12 @@ void LinearQuasiStaticSlipReferentialProblem::SetupBrokenRigidModes() {
   }
 }
 
-void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocks(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlocks(
     OperatorHandle& A) {
   MFEM_VERIFY(fluid_mu_gauge_,
-              "LinearQuasiStaticSlipReferentialProblem: call "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: call "
               "SetFluidGauge() before the first Solve().");
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   const real_t G_newton = four_pi_G_ / (4.0 * kPi);
 
   // Fluid elastic block and the fluid-region a'' gravity with the
@@ -2478,7 +2482,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocks(
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
     ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
     IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
-    auto& gmap = ref_rheology_->EquilibriumMapping();
+    auto& gmap = *ref_rheology_->EquilibriumMapping();
     BilinearForm qf(fes_f_);
     // The covariant penalty: the pulled-back deviatoric tensor, so the
     // mapped problem's gauge is the pull-back of the unmapped one (the
@@ -2595,12 +2599,12 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocks(
 }
 
 #ifdef MFEM_USE_MPI
-void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocksPar(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlocksPar(
     OperatorHandle& A) {
   MFEM_VERIFY(fluid_mu_gauge_,
-              "LinearQuasiStaticSlipReferentialProblem: call "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: call "
               "SetFluidGauge() before the first Solve().");
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   const real_t G_newton = four_pi_G_ / (4.0 * kPi);
   Array<int> empty;
   auto* pshadow_zf = dynamic_cast<ParFiniteElementSpace*>(
@@ -2724,7 +2728,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocksPar(
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
     ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
     IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
-    auto& gmap = ref_rheology_->EquilibriumMapping();
+    auto& gmap = *ref_rheology_->EquilibriumMapping();
     ParBilinearForm qf(pfes_f_);
     // The covariant penalty (see the serial block).
     qf.AddDomainIntegrator(new ElasticTensorIntegrator(Cdev, gmap));
@@ -2847,7 +2851,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleBrokenBlocksPar(
 }
 #endif
 
-void LinearQuasiStaticSlipReferentialProblem::SetupSolverBroken(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverBroken(
     OperatorHandle& A) {
 #ifdef MFEM_USE_MPI
   if (pfes_) {
@@ -2930,7 +2934,7 @@ void LinearQuasiStaticSlipReferentialProblem::SetupSolverBroken(
   *w_al4_ = 0.0;
 }
 
-bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
+bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystemBroken(
     const Vector& B, Vector& X) {
   B4_->GetBlock(0) = B;
   B4_->GetBlock(1) = 0.0;
@@ -2956,20 +2960,19 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
     DistributePotential(Zeta_true_);
     return true;
   }
-  // The first sweep runs on the usual relative tolerance; the later
-  // ones warm-start from the previous solution, so their target is
-  // made ABSOLUTE below, anchored to the first sweep's initial
-  // residual (in the solver's own norm) — a relative tolerance would
-  // be measured against each sweep's shrinking initial residual and
-  // over-solve without bound.
-  minres4_->SetRelTol(rel_tol_);
-  minres4_->SetAbsTol(0.0);
-
   // Augmented-Lagrangian iterations for BOTH interface constraints
   // (normal jump and scalar jump), interleaved with the Tikhonov
-  // refinement of the fluid gauge.
+  // refinement of the fluid gauge. Inexact sweeps with geometric
+  // tightening and the final sweep at full tolerance, exactly as in the
+  // single-valued loop (see SolveLinearSystem).
+  const real_t loose = std::max(sweep_loose_rel_, rel_tol_);
+  const real_t decay =
+      al_iterations_ > 2
+          ? std::pow(rel_tol_ / loose, real_t{1} / real_t(al_iterations_ - 2))
+          : rel_tol_ / loose;
   bool ok = true;
   int outer = 0;
+  real_t N0 = 0.0;
   BlockVector rhs(offsets4_);
   Vector js(offsets4_[1]), tmp_s(offsets4_[1]), Bjs(offsets4_[1]);
   Vector gU(offsets4_[1]);
@@ -2979,6 +2982,16 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
   Vector tmp_zo(fes_zo_->GetTrueVSize());
   Vector tmp_zf(shadow_zeta_fluid_->GetTrueVSize());
   for (int k = 0; k < al_iterations_; k++) {
+    const bool last = k == al_iterations_ - 1;
+    if (k == 0) {
+      minres4_->SetRelTol(last ? rel_tol_ : loose);
+      minres4_->SetAbsTol(0.0);
+    } else {
+      const real_t tol =
+          last ? rel_tol_ : std::max(rel_tol_, loose * std::pow(decay, k));
+      minres4_->SetAbsTol(tol * N0);
+      minres4_->SetRelTol(0.0);
+    }
     rhs = *B4_;
     rhs -= *w_al4_;
     op_Qf_->AddMult(X4_->GetBlock(1), rhs.GetBlock(1));
@@ -2986,8 +2999,7 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
     ok = minres4_->GetConverged() && ok;
     outer += minres4_->GetNumIterations();
     if (k == 0) {
-      minres4_->SetAbsTol(rel_tol_ * minres4_->GetInitialNorm());
-      minres4_->SetRelTol(0.0);
+      N0 = minres4_->GetInitialNorm();
     }
 
     // Normal jump: js = u_s - J u_f.
@@ -3036,7 +3048,7 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystemBroken(
   return ok;
 }
 
-void LinearQuasiStaticSlipReferentialProblem::DistributeBrokenPotential() {
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::DistributeBrokenPotential() {
   // Compose the ball potential for the observables: fluid first, outer
   // second, so the (double-valued) interface trace takes the solid-side
   // value -- zeta1 is extension- and organisation-invariant only on the
@@ -3059,17 +3071,17 @@ void LinearQuasiStaticSlipReferentialProblem::DistributeBrokenPotential() {
   DistributePotential(Zeta_true_);
 }
 
-void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocks(
     OperatorHandle& A) {
   MFEM_VERIFY(Ef_,
-              "LinearQuasiStaticSlipReferentialProblem: call "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: call "
               "SetFluidExtension() before the first Solve().");
   MFEM_VERIFY(fluid_mu_gauge_,
-              "LinearQuasiStaticSlipReferentialProblem: call "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: call "
               "SetFluidGauge() before the first Solve().");
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   MFEM_VERIFY(map.IsIdentity(),
-              "LinearQuasiStaticSlipReferentialProblem: the single-valued "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the single-valued "
               "organisation assembles its gravity MISMATCH pieces at "
               "phi_e = id only; for a mapped background use the "
               "broken-zeta organisation (EnableBrokenZeta), which is "
@@ -3164,7 +3176,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
     ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
     IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
-    auto& gmap = ref_rheology_->EquilibriumMapping();
+    auto& gmap = *ref_rheology_->EquilibriumMapping();
     BilinearForm qf(fes_f_);
     // The covariant penalty: the pulled-back deviatoric tensor, so the
     // mapped problem's gauge is the pull-back of the unmapped one (the
@@ -3240,17 +3252,17 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocks(
 }
 
 #ifdef MFEM_USE_MPI
-void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocksPar(
     OperatorHandle& A) {
   MFEM_VERIFY(pEf_,
-              "LinearQuasiStaticSlipReferentialProblem: call "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: call "
               "SetFluidExtension() before the first Solve().");
   MFEM_VERIFY(fluid_mu_gauge_,
-              "LinearQuasiStaticSlipReferentialProblem: call "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: call "
               "SetFluidGauge() before the first Solve().");
-  auto& map = ref_rheology_->EquilibriumMapping();
+  auto& map = *ref_rheology_->EquilibriumMapping();
   MFEM_VERIFY(map.IsIdentity(),
-              "LinearQuasiStaticSlipReferentialProblem: the single-valued "
+              "LinearQuasiStaticReferentialSelfGravitatingSlipProblem: the single-valued "
               "organisation assembles its gravity MISMATCH pieces at "
               "phi_e = id only; for a mapped background use the "
               "broken-zeta organisation (EnableBrokenZeta), which is "
@@ -3362,7 +3374,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
     ProductCoefficient mu_eps(eps_c, *fluid_mu_gauge_);
     ProductCoefficient lambda_eps(-2.0 / dim_, mu_eps);
     IsotropicElasticTensorCoefficient Cdev(dim_, lambda_eps, mu_eps);
-    auto& gmap = ref_rheology_->EquilibriumMapping();
+    auto& gmap = *ref_rheology_->EquilibriumMapping();
     ParBilinearForm qf(pfes_f_);
     // The covariant penalty (see the serial block).
     qf.AddDomainIntegrator(new ElasticTensorIntegrator(Cdev, gmap));
@@ -3436,7 +3448,7 @@ void LinearQuasiStaticSlipReferentialProblem::AssembleSlipBlocksPar(
 }
 #endif
 
-void LinearQuasiStaticSlipReferentialProblem::SetupSolver(OperatorHandle& A) {
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolver(OperatorHandle& A) {
   if (broken_zeta_) {
     SetupSolverBroken(A);
     return;
@@ -3514,12 +3526,19 @@ void LinearQuasiStaticSlipReferentialProblem::SetupSolver(OperatorHandle& A) {
   B3_ = std::make_unique<BlockVector>(offsets3_);
   w_al_ = std::make_unique<BlockVector>(offsets3_);
   *w_al_ = 0.0;
+
+  if (kkt_) {
+    SetupSolverKKT(A);
+  }
 }
 
-bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
+bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystem(
     const Vector& B, Vector& X) {
   if (broken_zeta_) {
     return SolveLinearSystemBroken(B, X);
+  }
+  if (kkt_) {
+    return SolveLinearSystemKKT(B, X);
   }
   B3_->GetBlock(0) = B;
   B3_->GetBlock(1) = 0.0;
@@ -3535,21 +3554,51 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
     DistributePotential(Zeta_true_);
     return true;
   }
-  // First sweep relative, later warm-started sweeps absolute on the
-  // first sweep's initial residual (see the broken-zeta loop).
-  minres3_->SetRelTol(rel_tol_);
-  minres3_->SetAbsTol(0.0);
-
   // Augmented-Lagrangian iterations for the normal-jump constraint,
   // interleaved with the Tikhonov refinement of the fluid gauge (the
   // sliding-interface scheme of doc/gauge_penalty_iteration.tex §4):
   //   S U_{k+1} = F - w_k + eps Q u_{f,k},   w_{k+1} = w_k + theta P U.
+  //
+  // Inexact sweeps: an early sweep need only be solved roughly (the
+  // next multiplier update perturbs the right-hand side anyway), so the
+  // inner tolerance tightens geometrically from kLooseRel to the full
+  // rel_tol_ across the sweeps, and the final sweep always runs at the
+  // full tolerance. Warm-started sweeps use an ABSOLUTE target anchored
+  // to the first sweep's initial residual in the solver's own norm (a
+  // relative one would chase each sweep's shrinking initial residual).
+  // Every requested sweep runs: an early-exit heuristic on the measured
+  // jump proved unreliable (the loose sweeps' own solver error pollutes
+  // the contraction measurement), and each sweep is a multiplier update
+  // the AL contraction needs.
+  // Inexact mode (SetSweepTolerance): loose <= rel_tol_ means every
+  // sweep runs at the full tolerance (the default).
+  const real_t loose = std::max(sweep_loose_rel_, rel_tol_);
+  // Geometric tightening from kLooseRel to rel_tol_ across the sweeps:
+  // the inner tolerance must NOT follow the measured jump (the measured
+  // jump cannot fall below the solver-error floor the loose tolerance
+  // itself sets - a deadlock), and the late accurate sweeps let the AL
+  // contraction wash out the early sweeps' multiplier error.
+  const real_t decay =
+      al_iterations_ > 2
+          ? std::pow(rel_tol_ / loose, real_t{1} / real_t(al_iterations_ - 2))
+          : rel_tol_ / loose;
   bool ok = true;
   int outer = 0;
+  real_t N0 = 0.0;
   BlockVector rhs(offsets3_);
   Vector js(offsets3_[1]), tmp_s(offsets3_[1]), Bjs(offsets3_[1]);
   Vector tmp_f(fes_f_->GetTrueVSize());
   for (int k = 0; k < al_iterations_; k++) {
+    const bool last = k == al_iterations_ - 1;
+    if (k == 0) {
+      minres3_->SetRelTol(last ? rel_tol_ : loose);
+      minres3_->SetAbsTol(0.0);
+    } else {
+      const real_t tol =
+          last ? rel_tol_ : std::max(rel_tol_, loose * std::pow(decay, k));
+      minres3_->SetAbsTol(tol * N0);
+      minres3_->SetRelTol(0.0);
+    }
     rhs = *B3_;
     rhs -= *w_al_;
     op_Qf_->AddMult(X3_->GetBlock(1), rhs.GetBlock(1));
@@ -3557,8 +3606,7 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
     ok = minres3_->GetConverged() && ok;
     outer += minres3_->GetNumIterations();
     if (k == 0) {
-      minres3_->SetAbsTol(rel_tol_ * minres3_->GetInitialNorm());
-      minres3_->SetRelTol(0.0);
+      N0 = minres3_->GetInitialNorm();
     }
 
     // js = u_s - J u_f; w += theta [Bn js; -J^T Bn js].
@@ -3581,7 +3629,320 @@ bool LinearQuasiStaticSlipReferentialProblem::SolveLinearSystem(
   return ok;
 }
 
-real_t LinearQuasiStaticSlipReferentialProblem::BlockNullPairResidual(
+namespace {
+
+// The KKT constraint blocks: with N the (u test x scalar trial) kernel
+// oint lam (nu . v) dS and R the restriction to the interface dofs,
+// forward mode gives lam = sign * R N^T (pre x) and transpose mode
+// u = sign * post(N E x). The four blocks of [S, C^T; C, 0] are the
+// (pre = J / post = J^T, sign) combinations, exact adjoint pairs by
+// construction.
+class RestrictedNormalTrace : public Operator {
+ public:
+  RestrictedNormalTrace(const Operator& N, const Array<int>& dofs,
+                        const Operator* other, real_t sign, bool transpose)
+      : Operator(transpose ? (other ? other->Height() : N.Height())
+                           : dofs.Size(),
+                 transpose ? dofs.Size()
+                           : (other ? other->Width() : N.Height())),
+        N_(&N),
+        dofs_(&dofs),
+        other_(other),
+        sign_(sign),
+        transpose_(transpose),
+        full_(N.Width()),
+        u_(N.Height()) {}
+
+  void Mult(const Vector& x, Vector& y) const override {
+    if (transpose_) {
+      full_ = 0.0;
+      for (int i = 0; i < dofs_->Size(); i++) {
+        full_((*dofs_)[i]) = x(i);
+      }
+      if (other_) {
+        N_->Mult(full_, u_);
+        other_->Mult(u_, y);
+      } else {
+        N_->Mult(full_, y);
+      }
+    } else {
+      if (other_) {
+        other_->Mult(x, u_);
+        N_->MultTranspose(u_, full_);
+      } else {
+        N_->MultTranspose(x, full_);
+      }
+      for (int i = 0; i < dofs_->Size(); i++) {
+        y(i) = sign_ * full_((*dofs_)[i]);
+      }
+      return;
+    }
+    y *= sign_;
+  }
+
+ private:
+  const Operator* N_;
+  const Array<int>* dofs_;
+  const Operator* other_;
+  real_t sign_;
+  bool transpose_;
+  mutable Vector full_, u_;
+};
+
+// Diagonal preconditioner of the multiplier block (theta-scaled lumped
+// interface mass: the Schur complement of the theta-augmented system is
+// spectrally close to M_Sigma / theta).
+class DiagonalScaleSolver : public Solver {
+ public:
+  explicit DiagonalScaleSolver(const Vector& scale)
+      : Solver(scale.Size()), d_(scale) {}
+  void SetOperator(const Operator&) override {}
+  void Mult(const Vector& x, Vector& y) const override {
+    y.SetSize(x.Size());
+    for (int i = 0; i < x.Size(); i++) {
+      y(i) = d_(i) * x(i);
+    }
+  }
+
+ private:
+  Vector d_;
+};
+
+}  // namespace
+
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::EnableKKT(
+    FiniteElementSpace* fes_scalar_solid) {
+  MFEM_VERIFY(!broken_zeta_,
+              "EnableKKT: single-valued organisation only (mutually "
+              "exclusive with EnableBrokenZeta).");
+  MFEM_VERIFY(fes_scalar_solid, "EnableKKT: a scalar space is required.");
+  kkt_ = true;
+  fes_lam_ = fes_scalar_solid;
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverKKT(
+    OperatorHandle&) {
+  auto& map = *ref_rheology_->EquilibriumMapping();
+
+  // The constraint kernel N (Nanson-exact flux form: covariant by
+  // construction) and the multiplier's interface dof list.
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto* plam = dynamic_cast<ParFiniteElementSpace*>(fes_lam_);
+    MFEM_VERIFY(plam,
+                "EnableKKT: a parallel problem needs a parallel scalar "
+                "space.");
+    ParMixedBilinearForm n(plam, pfes_);
+    n.AddBoundaryIntegrator(new BoundaryNormalScalarIntegrator(map),
+                            interface_marker_);
+    n.Assemble();
+    n.Finalize();
+    pNlam_.reset(n.ParallelAssemble());
+    op_Nlam_ = pNlam_.get();
+  } else
+#endif
+  {
+    MixedBilinearForm n(fes_lam_, fes_);
+    n.AddBoundaryIntegrator(new BoundaryNormalScalarIntegrator(map),
+                            interface_marker_);
+    n.Assemble();
+    n.Finalize();
+    Nlam_ = std::make_unique<SparseMatrix>(n.SpMat());
+    op_Nlam_ = Nlam_.get();
+  }
+  fes_lam_->GetEssentialTrueDofs(interface_marker_, lam_dofs_);
+  const int nlam = lam_dofs_.Size();
+
+  // theta-scaled lumped interface mass of the multiplier space.
+  Vector mdiag;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto* plam = static_cast<ParFiniteElementSpace*>(fes_lam_);
+    ParBilinearForm m(plam);
+    m.AddBoundaryIntegrator(new MassIntegrator(), interface_marker_);
+    m.Assemble();
+    m.Finalize();
+    std::unique_ptr<HypreParMatrix> M(m.ParallelAssemble());
+    SparseMatrix d;
+    M->GetDiag(d);
+    d.GetDiag(mdiag);
+  } else
+#endif
+  {
+    BilinearForm m(fes_lam_);
+    m.AddBoundaryIntegrator(new MassIntegrator(), interface_marker_);
+    m.Assemble();
+    m.Finalize();
+    m.SpMat().GetDiag(mdiag);
+  }
+  lam_mass_diag_.SetSize(nlam);
+  for (int i = 0; i < nlam; i++) {
+    lam_mass_diag_(i) = theta_ * mdiag(lam_dofs_[i]);
+  }
+  prec_lam_ = std::make_unique<DiagonalScaleSolver>(lam_mass_diag_);
+
+  offsets_kkt_.SetSize(5);
+  offsets_kkt_[0] = 0;
+  offsets_kkt_[1] = offsets3_[1] - offsets3_[0];
+  offsets_kkt_[2] = offsets3_[2] - offsets3_[1];
+  offsets_kkt_[3] = offsets3_[3] - offsets3_[2];
+  offsets_kkt_[4] = nlam;
+  offsets_kkt_.PartialSum();
+
+  kkt_ops_.clear();
+  kkt_ops_.push_back(std::make_unique<RestrictedNormalTrace>(
+      *op_Nlam_, lam_dofs_, nullptr, 1.0, false));  // (3,0)
+  kkt_ops_.push_back(std::make_unique<RestrictedNormalTrace>(
+      *op_Nlam_, lam_dofs_, op_J_, -1.0, false));  // (3,1)
+  kkt_ops_.push_back(std::make_unique<RestrictedNormalTrace>(
+      *op_Nlam_, lam_dofs_, nullptr, 1.0, true));  // (0,3)
+  kkt_ops_.push_back(std::make_unique<RestrictedNormalTrace>(
+      *op_Nlam_, lam_dofs_, op_Jt_, -1.0, true));  // (1,3)
+
+  block_op_kkt_ = std::make_unique<BlockOperator>(offsets_kkt_);
+  block_op_kkt_->SetBlock(0, 0, const_cast<Operator*>(op_S00_));
+  block_op_kkt_->SetBlock(0, 1, const_cast<Operator*>(op_S01_));
+  block_op_kkt_->SetBlock(1, 0, const_cast<Operator*>(op_S10_));
+  block_op_kkt_->SetBlock(1, 1, const_cast<Operator*>(op_S11_));
+  block_op_kkt_->SetBlock(0, 2, const_cast<Operator*>(op_A02_));
+  block_op_kkt_->SetBlock(2, 0, const_cast<Operator*>(op_A20_));
+  block_op_kkt_->SetBlock(1, 2, const_cast<Operator*>(op_A12_));
+  block_op_kkt_->SetBlock(2, 1, const_cast<Operator*>(op_A21_));
+  block_op_kkt_->SetBlock(2, 2, const_cast<Operator*>(A_zeta_));
+  block_op_kkt_->SetBlock(3, 0, kkt_ops_[0].get());
+  block_op_kkt_->SetBlock(3, 1, kkt_ops_[1].get());
+  block_op_kkt_->SetBlock(0, 3, kkt_ops_[2].get());
+  block_op_kkt_->SetBlock(1, 3, kkt_ops_[3].get());
+
+  // Null pairs: the three-block pairs with a zero multiplier component.
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    projector_kkt_ = std::make_unique<NullSpaceProjector>(pfes_->GetComm());
+  } else
+#endif
+  {
+    projector_kkt_ = std::make_unique<NullSpaceProjector>();
+  }
+  {
+    BlockVector nb(offsets_kkt_);
+    for (int i = 0; i < projector3_->Size(); i++) {
+      nb = 0.0;
+      Vector sub(nb.GetData(), offsets3_.Last());
+      sub = projector3_->Basis(i);
+      projector_kkt_->Add(nb);
+    }
+  }
+
+  block_prec_kkt_ =
+      std::make_unique<BlockDiagonalPreconditioner>(offsets_kkt_);
+  block_prec_kkt_->SetDiagonalBlock(0, prec_.get());
+  block_prec_kkt_->SetDiagonalBlock(1, prec11_.get());
+  block_prec_kkt_->SetDiagonalBlock(2, prec_zeta_.get());
+  block_prec_kkt_->SetDiagonalBlock(3, prec_lam_.get());
+
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    minres_kkt_ = std::make_unique<MINRESSolver>(pfes_->GetComm());
+  } else
+#endif
+  {
+    minres_kkt_ = std::make_unique<MINRESSolver>();
+  }
+  projected_op_kkt_ =
+      std::make_unique<ProjectedOperator>(*block_op_kkt_, *projector_kkt_);
+  minres_kkt_->SetOperator(*projected_op_kkt_);
+  projected_prec_kkt_ = std::make_unique<ProjectedSolver>(*projector_kkt_);
+  projected_prec_kkt_->SetSolver(*block_prec_kkt_);
+  minres_kkt_->SetPreconditioner(*projected_prec_kkt_);
+  minres_kkt_->SetRelTol(rel_tol_);
+  minres_kkt_->SetAbsTol(0.0);
+  minres_kkt_->SetMaxIter(30000);
+  minres_kkt_->SetPrintLevel(print_level_);
+  minres_kkt_->iterative_mode = true;
+
+  projected_kkt_ = std::make_unique<ProjectedSolver>(*projector_kkt_);
+  projected_kkt_->SetSolver(*minres_kkt_);
+  projected_kkt_->iterative_mode = true;
+
+  if (!Xk_ || Xk_->Size() != offsets_kkt_.Last()) {
+    Xk_ = std::make_unique<BlockVector>(offsets_kkt_);
+    *Xk_ = 0.0;
+  }
+  Bk_ = std::make_unique<BlockVector>(offsets_kkt_);
+}
+
+bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystemKKT(
+    const Vector& B, Vector& X) {
+  Bk_->GetBlock(0) = B;
+  Bk_->GetBlock(1) = 0.0;
+  Bk_->GetBlock(2) = B_zeta_;
+  Bk_->GetBlock(3) = 0.0;
+  jump_history_.clear();
+  const real_t norm_b = std::sqrt(Dot(*Bk_, *Bk_));
+  if (norm_b == 0.0) {
+    *Xk_ = 0.0;
+    X = 0.0;
+    Zeta_true_ = 0.0;
+    *u_f_ = 0.0;
+    lambda_.SetSize(offsets_kkt_[4] - offsets_kkt_[3]);
+    lambda_ = 0.0;
+    DistributePotential(Zeta_true_);
+    return true;
+  }
+
+  // The constraint is exact per solve; the outer loop is the fluid-gauge
+  // Tikhonov refinement alone, bounded by SetConstraint()'s iteration
+  // count, with the inexact-sweep schedule of the AL loop.
+  const real_t loose = std::max(sweep_loose_rel_, rel_tol_);
+  const real_t decay =
+      al_iterations_ > 2
+          ? std::pow(rel_tol_ / loose, real_t{1} / real_t(al_iterations_ - 2))
+          : rel_tol_ / loose;
+  bool ok = true;
+  int outer = 0;
+  real_t N0 = 0.0;
+  BlockVector rhs(offsets_kkt_);
+  Vector js(offsets_kkt_[1]), tmp_s(offsets_kkt_[1]), Bjs(offsets_kkt_[1]);
+  for (int k = 0; k < al_iterations_; k++) {
+    const bool last = k == al_iterations_ - 1;
+    if (k == 0) {
+      minres_kkt_->SetRelTol(last ? rel_tol_ : loose);
+      minres_kkt_->SetAbsTol(0.0);
+    } else {
+      const real_t tol =
+          last ? rel_tol_ : std::max(rel_tol_, loose * std::pow(decay, k));
+      minres_kkt_->SetAbsTol(tol * N0);
+      minres_kkt_->SetRelTol(0.0);
+    }
+    rhs = *Bk_;
+    op_Qf_->AddMult(Xk_->GetBlock(1), rhs.GetBlock(1));
+    projected_kkt_->Mult(rhs, *Xk_);
+    ok = minres_kkt_->GetConverged() && ok;
+    outer += minres_kkt_->GetNumIterations();
+    if (k == 0) {
+      N0 = minres_kkt_->GetInitialNorm();
+    }
+
+    // Normal-jump energy, as a diagnostic only (the multiplier enforces
+    // the constraint within each solve).
+    js = Xk_->GetBlock(0);
+    op_J_->Mult(Xk_->GetBlock(1), tmp_s);
+    js -= tmp_s;
+    op_Bn_->Mult(js, Bjs);
+    jump_history_.push_back(std::sqrt(std::abs(Dot(js, Bjs))));
+  }
+  outer_its_ = outer;
+  NoteIterations(outer);
+
+  X = Xk_->GetBlock(0);
+  Zeta_true_ = Xk_->GetBlock(2);
+  u_f_->SetFromTrueDofs(Xk_->GetBlock(1));
+  lambda_ = Xk_->GetBlock(3);
+  DistributePotential(Zeta_true_);
+  return ok;
+}
+
+real_t LinearQuasiStaticReferentialSelfGravitatingSlipProblem::BlockNullPairResidual(
     const Vector& us_true, const Vector& uf_true) {
   MFEM_VERIFY(!broken_zeta_,
               "BlockNullPairResidual: not available in the broken-zeta "
@@ -3617,7 +3978,7 @@ real_t LinearQuasiStaticSlipReferentialProblem::BlockNullPairResidual(
 }
 
 std::vector<real_t>
-LinearQuasiStaticSlipReferentialProblem::SlipRigidPairResiduals() {
+LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SlipRigidPairResiduals() {
   EnsureOperator();
   std::vector<real_t> out;
   if (broken_zeta_) {
@@ -3677,9 +4038,9 @@ LinearQuasiStaticSlipReferentialProblem::SlipRigidPairResiduals() {
   return out;
 }
 
-void LinearQuasiStaticSlipReferentialProblem::RegisterFields(
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::RegisterFields(
     DataCollection& dc) {
-  LinearQuasiStaticReferentialProblem::RegisterFields(dc);
+  LinearQuasiStaticReferentialSelfGravitatingProblem::RegisterFields(dc);
   dc.RegisterField("fluid_displacement", u_f_.get());
   if (broken_zeta_) {
     dc.RegisterField("zeta_outer", zeta_o_gf_.get());

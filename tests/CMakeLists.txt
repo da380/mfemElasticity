@@ -75,16 +75,16 @@ if(USE_MPI)
     target_link_libraries(TestQuasiStaticProblemPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestViscoelasticPar TestViscoelasticPar.cpp)
     target_link_libraries(TestViscoelasticPar PRIVATE mfemElasticity MPI::MPI_CXX)
-    add_executable(TestSelfGravitatingPar TestSelfGravitatingPar.cpp)
-    target_link_libraries(TestSelfGravitatingPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestMixedProblemPar TestMixedProblemPar.cpp)
+    target_link_libraries(TestMixedProblemPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestBoundaryNormalIntegratorsPar TestBoundaryNormalIntegratorsPar.cpp)
     target_link_libraries(TestBoundaryNormalIntegratorsPar PRIVATE mfemElasticity MPI::MPI_CXX)
-    add_executable(TestSelfGravitatingFluidPar TestSelfGravitatingFluidPar.cpp)
-    target_link_libraries(TestSelfGravitatingFluidPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestMixedProblemFluidPar TestMixedProblemFluidPar.cpp)
+    target_link_libraries(TestMixedProblemFluidPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestFluidGaugePar TestFluidGaugePar.cpp)
     target_link_libraries(TestFluidGaugePar PRIVATE mfemElasticity MPI::MPI_CXX)
-    add_executable(TestSelfGravitatingGaugedPar TestSelfGravitatingGaugedPar.cpp)
-    target_link_libraries(TestSelfGravitatingGaugedPar PRIVATE mfemElasticity MPI::MPI_CXX)
+    add_executable(TestMixedProblemGaugedPar TestMixedProblemGaugedPar.cpp)
+    target_link_libraries(TestMixedProblemGaugedPar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestSlidingInterfacePar TestSlidingInterfacePar.cpp)
     target_link_libraries(TestSlidingInterfacePar PRIVATE mfemElasticity MPI::MPI_CXX)
     add_executable(TestReferentialProblemPar TestReferentialProblemPar.cpp)
@@ -108,21 +108,21 @@ if(USE_MPI)
         add_test(NAME TestViscoelasticPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestViscoelasticPar>)
-        add_test(NAME TestSelfGravitatingPar_np${np}
+        add_test(NAME TestMixedProblemPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
-                         $<TARGET_FILE:TestSelfGravitatingPar>)
+                         $<TARGET_FILE:TestMixedProblemPar>)
         add_test(NAME TestBoundaryNormalIntegratorsPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestBoundaryNormalIntegratorsPar>)
-        add_test(NAME TestSelfGravitatingFluidPar_np${np}
+        add_test(NAME TestMixedProblemFluidPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
-                         $<TARGET_FILE:TestSelfGravitatingFluidPar>)
+                         $<TARGET_FILE:TestMixedProblemFluidPar>)
         add_test(NAME TestFluidGaugePar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestFluidGaugePar>)
-        add_test(NAME TestSelfGravitatingGaugedPar_np${np}
+        add_test(NAME TestMixedProblemGaugedPar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
-                         $<TARGET_FILE:TestSelfGravitatingGaugedPar>)
+                         $<TARGET_FILE:TestMixedProblemGaugedPar>)
         add_test(NAME TestSlidingInterfacePar_np${np}
                  COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${np}
                          $<TARGET_FILE:TestSlidingInterfacePar>)
@@ -202,13 +202,13 @@ add_executable(TestTransformedDiffusionIntegrator TestTransformedDiffusionIntegr
 target_link_libraries(TestTransformedDiffusionIntegrator PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestTransformedDiffusionIntegrator)
 
-add_executable(TestSelfGravitating TestSelfGravitating.cpp)
-target_link_libraries(TestSelfGravitating PRIVATE mfemElasticity gtest_main)
-gtest_discover_tests(TestSelfGravitating)
+add_executable(TestMixedProblem TestMixedProblem.cpp)
+target_link_libraries(TestMixedProblem PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestMixedProblem)
 
-add_executable(TestSelfGravitatingFluid TestSelfGravitatingFluid.cpp)
-target_link_libraries(TestSelfGravitatingFluid PRIVATE mfemElasticity gtest_main)
-gtest_discover_tests(TestSelfGravitatingFluid)
+add_executable(TestMixedProblemFluid TestMixedProblemFluid.cpp)
+target_link_libraries(TestMixedProblemFluid PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestMixedProblemFluid)
 
 add_executable(TestFluidGauge TestFluidGauge.cpp)
 target_link_libraries(TestFluidGauge PRIVATE mfemElasticity gtest_main)
@@ -238,6 +238,6 @@ add_executable(TestSlidingInterface TestSlidingInterface.cpp)
 target_link_libraries(TestSlidingInterface PRIVATE mfemElasticity gtest_main)
 gtest_discover_tests(TestSlidingInterface)
 
-add_executable(TestSelfGravitatingGauged TestSelfGravitatingGauged.cpp)
-target_link_libraries(TestSelfGravitatingGauged PRIVATE mfemElasticity gtest_main)
-gtest_discover_tests(TestSelfGravitatingGauged)
+add_executable(TestMixedProblemGauged TestMixedProblemGauged.cpp)
+target_link_libraries(TestMixedProblemGauged PRIVATE mfemElasticity gtest_main)
+gtest_discover_tests(TestMixedProblemGauged)

@@ -3,7 +3,7 @@
 //
 // Self-gravitating elastic deformation of a body under a surface mass load
 // or a tidal potential, as a driver of
-// LinearQuasiStaticSelfGravitatingProblem (mfemElasticity/self_gravitating.hpp).
+// LinearQuasiStaticMixedSelfGravitatingProblem (mfemElasticity/mixed_problem.hpp).
 // The models and loads are those of layered_model.hpp, chosen by the mesh:
 //
 //   uniform      a solid of constant density and moduli (-rho, -kappa, -mu),
@@ -84,7 +84,7 @@ using FieldType = GridFunction;
 bool Root() { return true; }
 #endif
 
-using Problem = LinearQuasiStaticSelfGravitatingProblem;
+using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 
 // The largest absolute value of a field, over all ranks.
 real_t MaxAbs(const FieldType& f) {

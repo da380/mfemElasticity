@@ -1,5 +1,5 @@
 /*
-  Parallel tests for LinearQuasiStaticReferentialProblem with the
+  Parallel tests for LinearQuasiStaticReferentialSelfGravitatingProblem with the
   prescribed vacuum extension (see TestReferentialProblem.cpp for the
   serial suite and the model). Run with 1, 2 and 4 ranks; a standalone MPI
   program returning the number of failed checks.
@@ -122,7 +122,7 @@ void RunCase(int order, const std::string& label) {
     H1_FECollection fec(order, dim);
     FiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&smesh, &fec);
     FiniteElementSpace fes_buffer(&buffer, &fec, dim);
-    LinearQuasiStaticReferentialProblem problem(&fes_u, &fes_zeta, rheology,
+    LinearQuasiStaticReferentialSelfGravitatingProblem problem(&fes_u, &fes_zeta, rheology,
                                                 rho, kG, kDtNDegree);
     auto E = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
     problem.SetPrescribedVacuumExtension(fes_buffer, *E);
@@ -144,7 +144,7 @@ void RunCase(int order, const std::string& label) {
   H1_FECollection fec(order, dim);
   ParFiniteElementSpace fes_u(&body, &fec, dim), fes_zeta(&pmesh, &fec);
   ParFiniteElementSpace fes_buffer(&buffer, &fec, dim);
-  LinearQuasiStaticReferentialProblem problem(&fes_u, &fes_zeta, rheology,
+  LinearQuasiStaticReferentialSelfGravitatingProblem problem(&fes_u, &fes_zeta, rheology,
                                               rho, kG, kDtNDegree);
   auto E = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
   problem.SetPrescribedVacuumExtension(fes_buffer, *E);
@@ -224,7 +224,7 @@ void RunSlipCase(int order, const std::string& label) {
     FiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
     FiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&smesh, &fec);
     auto marker = interface_marker(solid);
-    LinearQuasiStaticSlipReferentialProblem problem(
+    LinearQuasiStaticReferentialSelfGravitatingSlipProblem problem(
         &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
         marker, kG, kDtNDegree);
     auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);
@@ -252,7 +252,7 @@ void RunSlipCase(int order, const std::string& label) {
   ParFiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
   ParFiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&pmesh, &fec);
   auto marker = interface_marker(solid);
-  LinearQuasiStaticSlipReferentialProblem problem(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem problem(
       &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
       marker, kG, kDtNDegree);
   auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);
@@ -336,7 +336,7 @@ void RunBrokenSlipCase(int order, const std::string& label) {
     FiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
     FiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&smesh, &fec);
     auto marker = interface_marker(solid);
-    LinearQuasiStaticSlipReferentialProblem problem(
+    LinearQuasiStaticReferentialSelfGravitatingSlipProblem problem(
         &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
         marker, kG, kDtNDegree);
     auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);
@@ -366,7 +366,7 @@ void RunBrokenSlipCase(int order, const std::string& label) {
   ParFiniteElementSpace fes_s(&solid, &fec, dim), fes_f(&fluid, &fec, dim);
   ParFiniteElementSpace fes_buffer(&buffer, &fec, dim), fes_zeta(&pmesh, &fec);
   auto marker = interface_marker(solid);
-  LinearQuasiStaticSlipReferentialProblem problem(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem problem(
       &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(), bg.Pressure(),
       marker, kG, kDtNDegree);
   auto Evac = NewRadialVacuumExtension(fes_s, fes_buffer, 1.0, r_out);

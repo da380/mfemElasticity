@@ -12,7 +12,7 @@ target_sources(${PROJECT_NAME} PRIVATE null_space.cpp
                                        relaxation_law.cpp
                                        quasi_static_problem.cpp
                                        referential_problem.cpp
-    self_gravitating.cpp
+    mixed_problem.cpp
                                        viscoelastic.cpp
                                        elastic_tensor.cpp
                                        submesh.cpp

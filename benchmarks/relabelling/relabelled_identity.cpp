@@ -112,7 +112,7 @@ struct Side {
   std::unique_ptr<ReferentialElasticRheology> rheology;
   std::unique_ptr<PWConstCoefficient> pi_c;
   std::unique_ptr<HypreParMatrix> Evac;
-  std::unique_ptr<LinearQuasiStaticReferentialProblem> problem;
+  std::unique_ptr<LinearQuasiStaticReferentialSelfGravitatingProblem> problem;
 
   // On a SubMesh, the transplant of a parent field.
   ParGridFunction* OnMesh(const ParGridFunction& f, ParSubMesh& sub) {
@@ -318,7 +318,7 @@ int main(int argc, char* argv[]) {
 
     if (!slip) {
       side->problem =
-          std::make_unique<LinearQuasiStaticReferentialProblem>(
+          std::make_unique<LinearQuasiStaticReferentialSelfGravitatingProblem>(
               side->fes_u.get(), side->fes_zeta.get(), *side->rheology,
               *rho_use, G, dtn_degree);
       if (fluid_attributes.Size() > 0) {
@@ -355,7 +355,7 @@ int main(int argc, char* argv[]) {
       Array<int> interface_marker =
           MeshManifest::Marker(Array<int>({b_itf}), n_bdr);
       auto slip_problem =
-          std::make_unique<LinearQuasiStaticSlipReferentialProblem>(
+          std::make_unique<LinearQuasiStaticReferentialSelfGravitatingSlipProblem>(
               side->fes_u.get(), side->fes_f.get(), side->fes_zeta.get(),
               *side->rheology, *rho_use, *side->pi_c, interface_marker, G,
               dtn_degree);

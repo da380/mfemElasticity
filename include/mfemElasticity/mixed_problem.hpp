@@ -1,9 +1,18 @@
 /**
- * @file self_gravitating.hpp
- * @brief Quasi-static elasticity of a self-gravitating body: the displacement
- * on a SubMesh of the body coupled to the gravitational potential
- * perturbation on the enclosing ball, with a Dirichlet-to-Neumann outer
- * condition.
+ * @file mixed_problem.hpp
+ * @brief Quasi-static elasticity of a self-gravitating body in the *mixed*
+ * referential–spatial formulation: the (referential) displacement on a
+ * SubMesh of the body coupled to the *spatial* (Eulerian) gravitational
+ * potential perturbation on the enclosing ball, with a
+ * Dirichlet-to-Neumann outer condition.
+ *
+ * On the naming axes (see quasi_static_problem.hpp): the formulation slot
+ * distinguishes how the *gravity* is described — the elasticity is
+ * referential in every problem class. Mixed is the Dahlen-style
+ * organisation, and it *requires* a hydrostatic, natural reference state
+ * (Al-Attar & Crawford 2016: the particle label is the equilibrium
+ * position). The fully referential classes
+ * (referential_problem.hpp) lift both restrictions.
  */
 
 #pragma once
@@ -23,7 +32,7 @@ namespace mfemElasticity {
 
 /**
  * @brief A fluid region of a self-gravitating body (see
- * LinearQuasiStaticSelfGravitatingProblem): a set of parent-mesh attributes
+ * LinearQuasiStaticMixedSelfGravitatingProblem): a set of parent-mesh attributes
  * carrying no displacement unknown, its density, and its interfaces with the
  * solid.
  *
@@ -64,11 +73,22 @@ struct FluidRegion {
 };
 
 /**
- * @brief Self-gravitating linear quasi-static problem (eq. 3 of Yu,
- * Al-Attar, Syvret & Lloyd 2025, with the fluid regions of their Appendix A
- * / Al-Attar & Tromp 2014 eq. 2.52), implementing
- * LinearQuasiStaticProblem so that the viscoelastic layer runs on it
- * unchanged.
+ * @brief Self-gravitating linear quasi-static problem in the mixed
+ * referential–spatial formulation (eq. 3 of Yu, Al-Attar, Syvret & Lloyd
+ * 2025, with the fluid regions of their Appendix A / Al-Attar & Tromp 2014
+ * eq. 2.52), implementing LinearQuasiStaticProblem so that the
+ * viscoelastic layer runs on it unchanged.
+ *
+ * **Formulation and reference state.** The displacement is referential;
+ * the potential perturbation @f$\phi@f$ is the *Eulerian* (spatial) one.
+ * The derivation assumes the reference state is **hydrostatic** (the
+ * equilibrium stress is @f$-p_0 I@f$, entering through @f$\Phi_0@f$ and
+ * the fluid terms) and **natural** in the sense of Al-Attar & Crawford
+ * 2016 — the particle label is the equilibrium position
+ * (@f$\varphi_e = \mathrm{id}@f$). These are requirements of this class,
+ * not defaults: for a non-hydrostatic or non-natural reference state use
+ * LinearQuasiStaticReferentialSelfGravitatingProblem, which takes the
+ * general @f$(\hat C, \mathbf{S}_e, \varphi_e)@f$.
  *
  * **Geometry.** The body @f$M = M_S \cup M_F@f$ is a region of a ball
  * @f$B@f$ whose external boundary is a sphere (a circle in 2-D). The
@@ -190,7 +210,7 @@ struct FluidRegion {
  * inner-core rotations in this mode (AddRegionRotations()): with the fluid
  * meshed they cost @f$O(\epsilon)@f$ energy and the penalty handles them.
  */
-class LinearQuasiStaticSelfGravitatingProblem
+class LinearQuasiStaticMixedSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase {
  public:
   enum class SolverType { SchurCG, BlockMINRES };
@@ -209,7 +229,7 @@ class LinearQuasiStaticSelfGravitatingProblem
    * @param fluids Fluid regions (copied); their coefficients must outlive
    * the problem. Empty for a solid body.
    */
-  LinearQuasiStaticSelfGravitatingProblem(
+  LinearQuasiStaticMixedSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_phi,
       const mfemElasticity::Rheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
@@ -402,12 +422,12 @@ class LinearQuasiStaticSelfGravitatingProblem
   /** @brief @f$S x = A_{uu} x - C A_{\phi\phi}^{-1} C^T x@f$. */
   class SchurOperator : public mfem::Operator {
    public:
-    SchurOperator(const LinearQuasiStaticSelfGravitatingProblem& p,
+    SchurOperator(const LinearQuasiStaticMixedSelfGravitatingProblem& p,
                   const mfem::Operator& A_uu);
     void Mult(const mfem::Vector& x, mfem::Vector& y) const override;
 
    private:
-    const LinearQuasiStaticSelfGravitatingProblem* p_;
+    const LinearQuasiStaticMixedSelfGravitatingProblem* p_;
     const mfem::Operator* A_uu_;
     mutable mfem::Vector t_, w_, cw_;
   };

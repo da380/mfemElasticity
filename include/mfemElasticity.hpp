@@ -15,7 +15,7 @@
 #include "mfemElasticity/relaxation_law.hpp"
 #include "mfemElasticity/rheology.hpp"
 #include "mfemElasticity/referential_problem.hpp"
-#include "mfemElasticity/self_gravitating.hpp"
+#include "mfemElasticity/mixed_problem.hpp"
 #include "mfemElasticity/null_space.hpp"
 #include "mfemElasticity/spherical_harmonics.hpp"
 #include "mfemElasticity/submesh.hpp"

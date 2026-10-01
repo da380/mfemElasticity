@@ -1,8 +1,8 @@
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
-  Tests for LinearQuasiStaticReferentialProblem, the general linearised
+  Tests for LinearQuasiStaticReferentialSelfGravitatingProblem, the general linearised
   referential problem (doc/gravitating_elasticity.md), on the canned
   uniform-body meshes.
 
@@ -121,7 +121,7 @@ TEST(ReferentialProblem, TranslationsAreExactNullPairs) {
   });
   ReferentialElasticRheology rheology(dim, C, S, phi);
   ConstantCoefficient rho(kRho);
-  LinearQuasiStaticReferentialProblem problem(s.fes_u.get(), s.fes_zeta.get(),
+  LinearQuasiStaticReferentialSelfGravitatingProblem problem(s.fes_u.get(), s.fes_zeta.get(),
                                               rheology, rho, kG, kDtNDegree);
 
   const auto res = problem.RigidPairResiduals();
@@ -152,7 +152,7 @@ TEST(ReferentialProblem, RotationResidualDecreasesWithOrder) {
     });
     ReferentialElasticRheology rheology(dim, C, S, phi);
     ConstantCoefficient rho(kRho);
-    LinearQuasiStaticReferentialProblem problem(
+    LinearQuasiStaticReferentialSelfGravitatingProblem problem(
         s.fes_u.get(), s.fes_zeta.get(), rheology, rho, kG, kDtNDegree);
     const auto res = problem.RigidPairResiduals();
     rot.push_back(res.back());
@@ -172,7 +172,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
     IsotropicElasticRheology e_rheology(dim, kappa, mu);
     FunctionCoefficient sigma(SurfaceLoad);
     auto surface = SurfaceMarker(*s.body);
-    LinearQuasiStaticSelfGravitatingProblem eulerian(
+    LinearQuasiStaticMixedSelfGravitatingProblem eulerian(
         s.fes_u.get(), s.fes_zeta.get(), e_rheology, rho, kG, kDtNDegree);
     eulerian.SetSurfaceLoad(sigma, surface);
     eulerian.SetRelTol(1e-11);
@@ -204,7 +204,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
     s2.parent->GetBoundingBox(bb_min, bb_max);
     const double r_out = bb_max.Normlinf();
 
-    LinearQuasiStaticReferentialProblem referential(
+    LinearQuasiStaticReferentialSelfGravitatingProblem referential(
         s2.fes_u.get(), s2.fes_zeta.get(), r_rheology, rho, kG, kDtNDegree);
     auto E = NewRadialVacuumExtension(*s2.fes_u, fes_buffer, 1.0, r_out);
     referential.SetPrescribedVacuumExtension(fes_buffer, *E);
@@ -222,7 +222,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
       Setting s3(dim, order);
       SubMesh buffer3(SubMesh::CreateFromDomain(*s3.parent, buffer_attr));
       FiniteElementSpace fes_buffer3(&buffer3, s3.fec.get(), dim);
-      LinearQuasiStaticReferentialProblem ref3(
+      LinearQuasiStaticReferentialSelfGravitatingProblem ref3(
           s3.fes_u.get(), s3.fes_zeta.get(), r_rheology, rho, kG,
           kDtNDegree);
       auto E3 =
@@ -313,7 +313,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
     IsotropicElasticRheology e_rheology(dim, kappa, mu);
     FunctionCoefficient sigma(SurfaceLoad);
     auto surface = SurfaceMarker(*s.body);
-    LinearQuasiStaticSelfGravitatingProblem eulerian(
+    LinearQuasiStaticMixedSelfGravitatingProblem eulerian(
         s.fes_u.get(), s.fes_zeta.get(), e_rheology, rho, kG, kDtNDegree);
     eulerian.SetSurfaceLoad(sigma, surface);
     eulerian.SetRelTol(1e-11);
@@ -348,7 +348,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
 
     auto solve_ball = [&](double eps, GridFunction& u_out,
                           GridFunction& z_out) {
-      LinearQuasiStaticReferentialProblem problem(
+      LinearQuasiStaticReferentialSelfGravitatingProblem problem(
           &fes_u2, &fes_zeta2, r_rheology, rho_pw, kG, kDtNDegree);
       Array<int> buffer(parent2.attributes.Max());
       buffer = 0;
@@ -664,7 +664,7 @@ TEST(ReferentialProblem, FluidRelabellingNullPair) {
       RadialHydrostaticBackground bg(
           dim, [](double) { return kRho; }, [](double) { return kKappa; },
           [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
-      LinearQuasiStaticReferentialProblem problem(
+      LinearQuasiStaticReferentialSelfGravitatingProblem problem(
           &fes_u, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
       GridFunction w_gf(&fes_u);
       w_gf.ProjectCoefficient(w_coeff);
@@ -719,7 +719,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
     return x.Norml2() < r_cmb ? 0.0 : kMu;
   });
   IsotropicElasticRheology e_rheology(dim, kappa_c, mu_c);
-  LinearQuasiStaticSelfGravitatingProblem eulerian(
+  LinearQuasiStaticMixedSelfGravitatingProblem eulerian(
       &fes_u, &fes_phi, e_rheology, rho, kG, kDtNDegree);
   eulerian.SetGaugedFluid(fluid_marker, mu_gauge, eps, nref);
   eulerian.SetSurfaceLoad(sigma, surface);
@@ -732,7 +732,7 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
   RadialHydrostaticBackground bg(
       dim, [](double) { return kRho; }, [](double) { return kKappa; },
       [r_cmb](double r) { return r < r_cmb ? 0.0 : kMu; }, kG, 1.0);
-  LinearQuasiStaticReferentialProblem referential(
+  LinearQuasiStaticReferentialSelfGravitatingProblem referential(
       &fes_u2, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
   auto E = NewRadialVacuumExtension(fes_u2, fes_buffer, 1.0, r_out);
   referential.SetPrescribedVacuumExtension(fes_buffer, *E);
@@ -894,7 +894,7 @@ TEST(ReferentialProblem, EllipticalPrestressLoading) {
 
     auto run = [&](MatrixCoefficient& S, GridFunction& u_out) {
       ReferentialElasticRheology rheology(dim, C, S, phi_e);
-      LinearQuasiStaticReferentialProblem problem(
+      LinearQuasiStaticReferentialSelfGravitatingProblem problem(
           s.fes_u.get(), s.fes_zeta.get(), rheology, rho, G, kDtNDegree);
       auto E = NewRadialVacuumExtension(*s.fes_u, fes_buffer, 1.0, r_out);
       problem.SetPrescribedVacuumExtension(fes_buffer, *E);
@@ -943,7 +943,7 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
     Vector bb_min, bb_max;
     s.parent->GetBoundingBox(bb_min, bb_max);
     const double r_out = bb_max.Normlinf();
-    LinearQuasiStaticReferentialProblem ref(s.fes_u.get(), s.fes_zeta.get(),
+    LinearQuasiStaticReferentialSelfGravitatingProblem ref(s.fes_u.get(), s.fes_zeta.get(),
                                             bg.Rheology(), bg.Density(), kG,
                                             kDtNDegree);
     auto E = NewRadialVacuumExtension(*s.fes_u, fes_buffer, 1.0, r_out);
@@ -961,7 +961,7 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
     RelabelledBackground rel_bg(bg, xi);
     SubMesh buffer2(SubMesh::CreateFromDomain(*s2.parent, buffer_attr));
     FiniteElementSpace fes_buffer2(&buffer2, s2.fec.get(), dim);
-    LinearQuasiStaticReferentialProblem rel(
+    LinearQuasiStaticReferentialSelfGravitatingProblem rel(
         s2.fes_u.get(), s2.fes_zeta.get(), rel_bg.Rheology(),
         rel_bg.Density(), kG, kDtNDegree);
     auto E2 = NewRadialVacuumExtension(*s2.fes_u, fes_buffer2, 1.0, r_out);

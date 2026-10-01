@@ -178,7 +178,7 @@ rotating) and `g = ∇Φ₀`.
 
    Constant-coefficient Laplacian (assembled once, DtN on a fixed outer
    sphere), local coupling `∫ρ∇φ¹·w`. This is what
-   `LinearQuasiStaticSelfGravitatingProblem` does, with the `∇∇Φ₀` term
+   `LinearQuasiStaticMixedSelfGravitatingProblem` does, with the `∇∇Φ₀` term
    integrated by parts into the symmetrised form.
 
 2. **Mixed, referential potential** (Maitra & Al-Attar 2024, eq. 21):
@@ -748,6 +748,34 @@ core.
 
 ## 7. Implementation map
 
+### Problem classes and terminology
+
+The problem-class names are built from axis slots —
+`[Linear|Nonlinear] [QuasiStatic|Dynamic] [Mixed|Referential]?
+[SelfGravitating]? [variant] Problem` — with the conventions:
+
+- The elasticity is referential in **every** class; the formulation slot
+  names how the *gravity* is described, and so exists only when the
+  problem self-gravitates. `Mixed` is the referential–spatial
+  organisation (referential displacement, Eulerian potential
+  perturbation `φ¹`: Dahlen's arrangement,
+  `LinearQuasiStaticMixedSelfGravitatingProblem`); `Referential` is the
+  fully referential one (`ζ¹`;
+  `LinearQuasiStaticReferentialSelfGravitatingProblem`, slip variant
+  appending `Slip`). A non-gravitating problem is referential by
+  default and carries no slot
+  (`LinearQuasiStaticTractionProblem`/`...ClampedProblem`).
+- Reference-state properties are carried by the rheology, not the
+  names. Two independent distinctions, in the terminology of Al-Attar &
+  Crawford 2016: **hydrostatic** vs non-hydrostatic equilibrium stress
+  (`S_e = −p⁰1` vs general), and **natural** vs non-natural particle
+  labels (natural: the label is the equilibrium position,
+  `φ_e = id`; non-natural: any other labelling, `φ_e ≠ id`). The
+  referential classes take the general `(Ĉ, S_e, φ_e)`; the mixed
+  class *requires* a hydrostatic, natural reference state — that
+  restriction, not the gravity description alone, is what the
+  referential premium buys off.
+
 What the general linearised quasi-static problem needs, against what
 exists:
 
@@ -757,7 +785,7 @@ exists:
 | PREM → bare conversion `C = C^eff − p⁰(δδ−δδ−δδ)` | small `ElasticTensorCoefficient` decorator — **new**, trivial |
 | initial-stress term `∫ T⁰_AB ∂_A u_k ∂_B v_k` | matrix-coefficient vector diffusion — **new integrator**, small |
 | background state `Φ₀, p⁰, T⁰` | `background.hpp`: `RadialHydrostaticBackground` (hydrostatic `g`/`p⁰` by cumulative quadrature, bare conversion, `S_e = −p⁰1`, identity map, assembled rheology), `RelabelledBackground` (the transformation-law chains, owned here — drivers never hand-roll), and the AW10 generators `MinimumNormEquilibriumStress` (elastic BVP) / `MinimumDeviatoricEquilibriumStress` (Taylor–Hood Stokes) for general aspherical `S_e` (§6); an arbitrary `S_e` may still be supplied as a coefficient (equilibrium consistency is then the modeller's burden) |
-| gravity, mixed Eulerian | exists (`self_gravitating.*`) |
+| gravity, mixed Eulerian | exists (`mixed_problem.*`) |
 | gravity, mixed referential | `TransformedDiffusionIntegrator` + linearised-coefficient coupling — mostly exists via mappings |
 | fluid–solid slip, linearised | pairing + penalty/AL machinery exists; the `ϖ⁰ Q/S` equilibrium-geometry terms — **new**, from AC18 eqs. 121/137 |
 | `∇∇Φ₀`/centrifugal terms | exist (hydrostatic form); general-`T⁰` arrangement follows (M) with no rearrangement |

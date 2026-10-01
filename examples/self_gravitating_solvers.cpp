@@ -283,13 +283,13 @@ int main(int argc, char* argv[]) {
     std::vector<FluidRegion> fluids{core};
     for (const bool schur : {true, false}) {
       auto t0 = Clock::now();
-      LinearQuasiStaticSelfGravitatingProblem dahlen(
+      LinearQuasiStaticMixedSelfGravitatingProblem dahlen(
           &fes_s, &fes_phi, rheology, rho_c, kG, kDtNDegree, nullptr,
           fluids);
       dahlen.SetSurfaceLoad(sigma, surface_s);
       dahlen.SetSolverType(
-          schur ? LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG
-                : LinearQuasiStaticSelfGravitatingProblem::SolverType::
+          schur ? LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG
+                : LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::
                       BlockMINRES);
       dahlen.SetRelTol(rel_tol);
       dahlen.AssembleForce(0.0);
@@ -311,7 +311,7 @@ int main(int argc, char* argv[]) {
     FunctionCoefficient mu_layered(
         [](const Vector& x) { return x.Norml2() < kRc ? 0.0 : kMu; });
     IsotropicElasticRheology rheology(dim, kappa_c, mu_layered);
-    LinearQuasiStaticSelfGravitatingProblem gauged(
+    LinearQuasiStaticMixedSelfGravitatingProblem gauged(
         &fes_body, &fes_phi, rheology, rho_c, kG, kDtNDegree);
     Array<int> gauge_marker(body.attributes.Max());
     gauge_marker = 0;
@@ -332,7 +332,7 @@ int main(int argc, char* argv[]) {
   // --- 4: the welded gauged referential formulation.
   {
     auto t0 = Clock::now();
-    LinearQuasiStaticReferentialProblem referential(
+    LinearQuasiStaticReferentialSelfGravitatingProblem referential(
         &fes_body, &fes_zeta, bg.Rheology(), bg.Density(), kG, kDtNDegree);
     auto Evac = NewRadialVacuumExtension(fes_body, fes_b, 1.0, r_out);
     referential.SetPrescribedVacuumExtension(fes_b, *Evac);
@@ -356,7 +356,7 @@ int main(int argc, char* argv[]) {
   if (with_slip) {
     for (const bool broken : {false, true}) {
       auto t0 = Clock::now();
-      LinearQuasiStaticSlipReferentialProblem slip(
+      LinearQuasiStaticReferentialSelfGravitatingSlipProblem slip(
           &fes_s, &fes_f, &fes_zeta, bg.Rheology(), bg.Density(),
           bg.Pressure(), interface_s, kG, kDtNDegree);
       auto Evac = NewRadialVacuumExtension(fes_s, fes_b, 1.0, r_out);

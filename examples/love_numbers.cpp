@@ -3,7 +3,7 @@
 //
 // Load and tidal Love numbers of a homogeneous self-gravitating elastic
 // sphere (3-D) or disc (2-D), one solve per degree, through
-// LinearQuasiStaticSelfGravitatingProblem and the harmonic analysis of
+// LinearQuasiStaticMixedSelfGravitatingProblem and the harmonic analysis of
 // spherical_harmonics.hpp.
 //
 // For each degree l (order m = 0; in 2-D the cosine mode) the surface load
@@ -180,7 +180,7 @@ int main(int argc, char* argv[]) {
   SpaceType fes_u(&body, &fec, dim), fes_phi(&parent, &fec);
   ConstantCoefficient kappa_c(kappa), mu_c(mu), rho_c(rho);
   IsotropicElasticRheology rheology(dim, kappa_c, mu_c);
-  LinearQuasiStaticSelfGravitatingProblem problem(&fes_u, &fes_phi, rheology,
+  LinearQuasiStaticMixedSelfGravitatingProblem problem(&fes_u, &fes_phi, rheology,
                                                   rho_c, G, dtn_degree);
   problem.SetRelTol(rel_tol);
 

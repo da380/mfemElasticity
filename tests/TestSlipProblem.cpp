@@ -1,10 +1,10 @@
 #include <numbers>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
-  Tests for LinearQuasiStaticSlipReferentialProblem (the three-block
+  Tests for LinearQuasiStaticReferentialSelfGravitatingSlipProblem (the three-block
   slip-interface solver of doc/slip_interface.tex, "the collected
   operator") on the two-layer disc: fluid core (attribute 1), solid
   mantle (2), buffer shell (3), DtN sphere.
@@ -228,7 +228,7 @@ TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
   ConstantCoefficient mu_gauge(kKappa);
 
   // --- The slipping three-block problem.
-  LinearQuasiStaticSlipReferentialProblem slip(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem slip(
       s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
       s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
   auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
@@ -242,7 +242,8 @@ TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
   slip.AssembleForce(0.0);
   ASSERT_TRUE(slip.Solve());
 
-  // The AL iterations contract the normal jump.
+  // The AL iterations contract the normal jump (inexact early sweeps;
+  // the final sweep runs at the full tolerance).
   const auto& jumps = slip.NormalJumpHistory();
   ASSERT_EQ(static_cast<int>(jumps.size()), kALIterations);
   EXPECT_LT(jumps.back(), 0.05 * jumps.front());
@@ -276,7 +277,7 @@ TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
 
   // --- The welded gauged reference: the same physical problem through
   // the verified general class (continuous space over both layers).
-  LinearQuasiStaticReferentialProblem welded(
+  LinearQuasiStaticReferentialSelfGravitatingProblem welded(
       s.fes_body.get(), s.fes_zeta_ref.get(), s.bg->Rheology(),
       s.bg->Density(), kG, kDtNDegree);
   auto Evac_b =
@@ -337,7 +338,7 @@ TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
   // --- Extension invariance: a taper-power-3 fluid extension must give
   // the same observables (the interior rule is gauge).
   {
-    LinearQuasiStaticSlipReferentialProblem slip3(
+    LinearQuasiStaticReferentialSelfGravitatingSlipProblem slip3(
         s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
         s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
     slip3.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
@@ -372,6 +373,64 @@ TEST(SlipProblem, TwoLayerBarotropicCrossCheck) {
 // load keeps the comparison away from the Dahlen degree-0 gap. This is
 // a genuinely two-sided check: the two formulations share no interface
 // machinery.
+// KKT enforcement against the penalty + AL iterations on the same
+// two-layer problem: the multiplier block enforces the normal-jump
+// constraint within each solve (the jump lands at the solver floor at
+// once), and the observables agree with the AL endpoint at the level of
+// the AL iteration's own remaining constraint error.
+TEST(SlipProblem, KKTMatchesAugmentedLagrangian) {
+  const int order = 2;
+  Setting s(order);
+  auto interface = RadialBdrMarker(*s.solid, 0.9 * kRc, 1.1 * kRc);
+  auto surface_s = RadialBdrMarker(*s.solid, 0.9, 1.1);
+  FunctionCoefficient sigma(SurfaceSigma);
+  ConstantCoefficient mu_gauge(kKappa);
+  FiniteElementSpace lam_fes(s.solid.get(), s.fec.get());
+
+  auto solve = [&](bool kkt) {
+    auto p = std::make_unique<
+        LinearQuasiStaticReferentialSelfGravitatingSlipProblem>(
+        s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
+        s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
+    auto Evac =
+        NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
+    p->SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
+    auto Ef = NewRadialFluidExtension(*s.fes_s, *s.fes_f, kRc);
+    p->SetFluidExtension(*Ef);
+    p->SetFluidGauge(mu_gauge, kEps);
+    p->SetConstraint(kTheta, kkt ? 3 : kALIterations);
+    if (kkt) {
+      p->EnableKKT(&lam_fes);
+    }
+    p->SetSurfaceLoad(sigma, surface_s);
+    p->SetRelTol(1e-10);
+    p->AssembleForce(0.0);
+    EXPECT_TRUE(p->Solve());
+    return p;
+  };
+
+  auto al = solve(false);
+  auto kkt = solve(true);
+
+  // Both enforcements land at the same DISCRETE constraint floor: the
+  // multiplier zeroes the jump weakly (against the multiplier space),
+  // so the L2 jump is the projection remainder — comparable to the
+  // converged AL jump, and reached within one solve.
+  const double j_al = al->NormalJumpHistory().back();
+  const double j_kkt = kkt->NormalJumpHistory().back();
+  std::cout << "KKT jump " << j_kkt << " vs AL converged jump " << j_al
+            << "\n";
+  EXPECT_LT(j_kkt, 5.0 * j_al);
+
+  // Observables agree at the AL endpoint's residual-constraint level.
+  Vector du(al->Displacement());
+  du -= kkt->Displacement();
+  const double rel =
+      du.Normlinf() / std::max(al->Displacement().Normlinf(), 1e-300);
+  std::cout << "KKT vs AL displacement relative diff " << rel << "\n";
+  EXPECT_LT(rel, 1e-3);
+}
+
 TEST(SlipProblem, ReducesToDahlenOnSphere) {
   const int order = 2;
   Setting s(order);
@@ -383,7 +442,7 @@ TEST(SlipProblem, ReducesToDahlenOnSphere) {
   ConstantCoefficient mu_gauge(kKappa);
 
   // The slipping three-block problem.
-  LinearQuasiStaticSlipReferentialProblem slip(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem slip(
       s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
       s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
   auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
@@ -410,7 +469,7 @@ TEST(SlipProblem, ReducesToDahlenOnSphere) {
   core.density_gradient = &zero;
   core.interface_marker = interface;
   std::vector<FluidRegion> fluids{core};
-  LinearQuasiStaticSelfGravitatingProblem dahlen(
+  LinearQuasiStaticMixedSelfGravitatingProblem dahlen(
       &fes_u_d, &fes_phi, e_rheology, rho_c, kG, kDtNDegree, nullptr, fluids);
   FunctionCoefficient sigma_d(SurfaceSigmaDegree2);
   dahlen.SetSurfaceLoad(sigma_d, surface_s);
@@ -473,7 +532,7 @@ TEST(SlipProblem, PressureFreeReducesToSlidingCavity) {
       dim, [](double) { return 0.0; }, [](double) { return kKappa; },
       [](double r) { return r < kRc ? 0.0 : kMu; }, kG, 1.0);
 
-  LinearQuasiStaticSlipReferentialProblem slip(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem slip(
       s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), bg0.Rheology(),
       bg0.Density(), bg0.Pressure(), interface, kG, kDtNDegree);
   auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
@@ -557,7 +616,7 @@ TEST(SlipProblem, BrokenZetaHeadToHead) {
   ConstantCoefficient mu_gauge(kKappa);
 
   // --- The single-valued reference (the verified path).
-  LinearQuasiStaticSlipReferentialProblem sv(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem sv(
       s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
       s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
   auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
@@ -577,7 +636,7 @@ TEST(SlipProblem, BrokenZetaHeadToHead) {
   SubMesh outer(SubMesh::CreateFromDomain(*s.parent, outer_attr));
   auto fes_zo = SubMeshDofInjection::MakeShadowSpace(*s.fes_zeta, outer);
 
-  LinearQuasiStaticSlipReferentialProblem bz(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem bz(
       s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
       s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
   bz.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
@@ -589,12 +648,13 @@ TEST(SlipProblem, BrokenZetaHeadToHead) {
   bz.AssembleForce(0.0);
   ASSERT_TRUE(bz.Solve());
 
-  // Both constraints contract under the AL iterations.
+  // Both constraints contract under the AL iterations (inexact early
+  // sweeps, as in the single-valued test).
   {
     const auto& jn = bz.NormalJumpHistory();
     const auto& jz = bz.ZetaJumpHistory();
     ASSERT_EQ(static_cast<int>(jn.size()), kALIterations);
-    ASSERT_EQ(static_cast<int>(jz.size()), kALIterations);
+    ASSERT_EQ(jn.size(), jz.size());
     EXPECT_LT(jn.back(), 0.05 * jn.front());
     EXPECT_LT(jz.back(), 0.2 * jz.front());
     std::cout << "broken-zeta normal jump: first " << jn.front() << ", last "
@@ -644,7 +704,7 @@ TEST(SlipProblem, RigidPairsNearNull) {
   auto interface = RadialBdrMarker(*s.solid, 0.9 * kRc, 1.1 * kRc);
   ConstantCoefficient mu_gauge(kKappa);
 
-  LinearQuasiStaticSlipReferentialProblem slip(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem slip(
       s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
       s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
   auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
@@ -669,7 +729,7 @@ TEST(SlipProblem, RigidPairsNearNull) {
     Array<int> outer_attr({2, 3});
     SubMesh outer(SubMesh::CreateFromDomain(*s.parent, outer_attr));
     auto fes_zo = SubMeshDofInjection::MakeShadowSpace(*s.fes_zeta, outer);
-    LinearQuasiStaticSlipReferentialProblem bz(
+    LinearQuasiStaticReferentialSelfGravitatingSlipProblem bz(
         s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
         s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
     bz.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
@@ -713,7 +773,7 @@ TEST(SlipProblem, BrokenZetaRelabelledEquilibrium) {
   SubMesh outer(SubMesh::CreateFromDomain(*s.parent, outer_attr));
   auto fes_zo = SubMeshDofInjection::MakeShadowSpace(*s.fes_zeta, outer);
   auto Evac = NewRadialVacuumExtension(*s.fes_s, *s.fes_buffer, 1.0, s.r_out);
-  LinearQuasiStaticSlipReferentialProblem ref(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem ref(
       s.fes_s.get(), s.fes_f.get(), s.fes_zeta.get(), s.bg->Rheology(),
       s.bg->Density(), s.bg->Pressure(), interface, kG, kDtNDegree);
   ref.SetPrescribedVacuumExtension(*s.fes_buffer, *Evac);
@@ -738,7 +798,7 @@ TEST(SlipProblem, BrokenZetaRelabelledEquilibrium) {
       dim, [&](const Vector& x, Vector& y) { xi_def.Map(x, y); },
       [&](const Vector& x, DenseMatrix& F) { xi_def.Grad(x, F); });
   RelabelledBackground rel_bg(*s2.bg, xi);
-  LinearQuasiStaticSlipReferentialProblem rel(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem rel(
       s2.fes_s.get(), s2.fes_f.get(), s2.fes_zeta.get(), rel_bg.Rheology(),
       rel_bg.Density(), rel_bg.Pressure(), interface2, kG, kDtNDegree);
   rel.SetPrescribedVacuumExtension(*s2.fes_buffer, *Evac2);

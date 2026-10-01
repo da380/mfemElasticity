@@ -2,9 +2,9 @@
 // referential_elastogravity.cpp
 //
 // The general linearised referential problem
-// (LinearQuasiStaticReferentialProblem, doc/gravitating_elasticity.md)
+// (LinearQuasiStaticReferentialSelfGravitatingProblem, doc/gravitating_elasticity.md)
 // beside the traditional Eulerian one
-// (LinearQuasiStaticSelfGravitatingProblem, doc/self_gravitation.md), on a
+// (LinearQuasiStaticMixedSelfGravitatingProblem, doc/self_gravitation.md), on a
 // uniform self-gravitating body under a degree-2 surface mass load: two
 // mathematically equivalent formalisms solving one physical problem — the
 // self-benchmarking principle in one program.
@@ -197,7 +197,7 @@ int main(int argc, char* argv[]) {
   // --- The Eulerian problem: seismological moduli go in directly. -----------
   ConstantCoefficient kappa(kKappa), mu(kMu);
   IsotropicElasticRheology e_rheology(dim, kappa, mu);
-  LinearQuasiStaticSelfGravitatingProblem eulerian(
+  LinearQuasiStaticMixedSelfGravitatingProblem eulerian(
       &fes_u, &fes_phi, e_rheology, rho, kG, kDtNDegree);
   eulerian.SetSurfaceLoad(sigma, surface);
   eulerian.SetRelTol(1e-11);
@@ -244,7 +244,7 @@ int main(int argc, char* argv[]) {
   parent2.GetBoundingBox(bb_min, bb_max);
   const double r_out = bb_max.Normlinf();
 
-  LinearQuasiStaticReferentialProblem referential(
+  LinearQuasiStaticReferentialSelfGravitatingProblem referential(
       &fes_u2, &fes_zeta, r_rheology, rho, kG, kDtNDegree);
   auto E = NewRadialVacuumExtension(fes_u2, fes_buffer, 1.0, r_out);
   referential.SetPrescribedVacuumExtension(fes_buffer, *E);

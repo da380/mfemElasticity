@@ -1,15 +1,15 @@
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
-  Tests for the gauged-fluid mode of LinearQuasiStaticSelfGravitatingProblem
+  Tests for the gauged-fluid mode of LinearQuasiStaticMixedSelfGravitatingProblem
   on the three-layer meshes: the displacement SubMesh carries all three
   layers, the outer core has its bulk modulus and no shear, and
   SetGaugedFluid() supplies the gauge penalty and the Tikhonov refinement;
   no FluidRegions, so the interface terms (F2)-(F3) and the fluid mass term
   never enter (doc/gauged_fluid.md).
 
-  The reference is the Dahlen path of TestSelfGravitatingFluid. The two
+  The reference is the Dahlen path of TestMixedProblemFluid. The two
   formulations agree exactly when the fluid is materially barotropic, so
   the fluid's bulk modulus is built from the Adams-Williamson condition
   kappa = rho^2 |grad Phi0| / |drho/dr| on the problem's own discrete
@@ -55,7 +55,7 @@ struct GaugedCase {
   std::unique_ptr<IsotropicElasticRheology> rheology;
   FunctionCoefficient sigma;
   Array<int> surface, fluid;
-  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> problem;
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> problem;
 
   GaugedCase(int dim, int order, bool zero_mean_load = false)
       : sigma(zero_mean_load
@@ -72,7 +72,7 @@ struct GaugedCase {
     rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
     surface = SurfaceMarker(*body);
     fluid = Array<int>({0, 1, 0});
-    problem = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+    problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, rho, kG, kDtNDegree);
     kappa.g = &problem->BackgroundGravity();
     problem->SetGaugedFluid(fluid, mu_gauge, kEps, kRefine);
@@ -81,7 +81,7 @@ struct GaugedCase {
   }
 };
 
-// The Dahlen reference (as in TestSelfGravitatingFluid).
+// The Dahlen reference (as in TestMixedProblemFluid).
 struct DahlenCase {
   std::unique_ptr<Mesh> parent;
   std::unique_ptr<SubMesh> solid;
@@ -93,7 +93,7 @@ struct DahlenCase {
   FunctionCoefficient sigma;
   Array<int> surface;
   std::vector<FluidRegion> fluids;
-  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> problem;
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> problem;
 
   DahlenCase(int dim, int order, bool zero_mean_load = false)
       : sigma(zero_mean_load
@@ -111,7 +111,7 @@ struct DahlenCase {
     rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
     surface = SurfaceMarker(*solid);
     fluids.push_back(OuterCore(*solid, rho_f));
-    problem = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+    problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, rho_s, kG, kDtNDegree, nullptr,
         fluids);
     problem->SetSurfaceLoad(sigma, surface);
@@ -126,7 +126,7 @@ double RelDiff(const GridFunction& a, const GridFunction& b) {
   return self_grav_test::L2Norm(d) / self_grav_test::L2Norm(b);
 }
 
-TEST(SelfGravitatingGauged, MatchesDahlenZeroMeanLoad2D) {
+TEST(MixedProblemGauged, MatchesDahlenZeroMeanLoad2D) {
   const int dim = 2, order = 2;
   GaugedCase g(dim, order, true);
   DahlenCase d(dim, order, true);
@@ -158,7 +158,7 @@ TEST(SelfGravitatingGauged, MatchesDahlenZeroMeanLoad2D) {
 // fluid is described by the potential alone and never sees the fluid's
 // bulk modulus at l = 0, while the gauged fluid carries it (as pyslfp
 // does). This pins the known degree-0 gap to the fluid treatment.
-TEST(SelfGravitatingGauged, Degree0DiffersFromDahlen2D) {
+TEST(MixedProblemGauged, Degree0DiffersFromDahlen2D) {
   const int dim = 2, order = 2;
   GaugedCase g(dim, order);
   DahlenCase d(dim, order);
@@ -169,7 +169,7 @@ TEST(SelfGravitatingGauged, Degree0DiffersFromDahlen2D) {
   EXPECT_GT(RelDiff(g.problem->Potential(), d.problem->Potential()), 1.0e-2);
 }
 
-TEST(SelfGravitatingGauged, SolversAgree2D) {
+TEST(MixedProblemGauged, SolversAgree2D) {
   const int dim = 2, order = 2;
   GaugedCase g(dim, order);
   auto& p = *g.problem;
@@ -179,14 +179,14 @@ TEST(SelfGravitatingGauged, SolversAgree2D) {
   GridFunction u1(p.Displacement());
   GridFunction phi1(p.Potential());
 
-  p.SetSolverType(LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+  p.SetSolverType(LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   p.AssembleForce(0.0);
   EXPECT_TRUE(p.Solve());
   EXPECT_LT(RelDiff(p.Displacement(), u1), 1.0e-6);
   EXPECT_LT(RelDiff(p.Potential(), phi1), 1.0e-6);
 }
 
-TEST(SelfGravitatingGauged, UniformTidalGradientIsRigid2D) {
+TEST(MixedProblemGauged, UniformTidalGradientIsRigid2D) {
   const int dim = 2, order = 2;
   GaugedCase g(dim, order);
   auto& p = *g.problem;
@@ -237,7 +237,7 @@ TEST(SelfGravitatingGauged, UniformTidalGradientIsRigid2D) {
   EXPECT_LT(u_tidal / u_scale, 5.0e-2);
 }
 
-TEST(SelfGravitatingGauged, Runs3D) {
+TEST(MixedProblemGauged, Runs3D) {
   const int dim = 3, order = 1;
   GaugedCase g(dim, order);
   auto& p = *g.problem;

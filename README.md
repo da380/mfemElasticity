@@ -26,7 +26,7 @@ pieces are
 - the self-gravitating problem: displacement on a SubMesh of the
   body coupled to the potential perturbation on the enclosing ball with the
   DtN outer condition, implementing the same interface so the viscoelastic
-  layer runs on it unchanged (`self_gravitating.hpp`);
+  layer runs on it unchanged (`mixed_problem.hpp`);
 - rigid-body and general null-space projectors for singular systems
   (`null_space.hpp`);
 - real orthonormal harmonics on a circle or sphere, synthesis of surface
@@ -120,7 +120,7 @@ is built with MPI and serial otherwise.
 | `transformed_diffusion` | Laplace equation on a mapped domain solved on the reference domain with `TransformedDiffusionIntegrator` |
 | `submesh_injection` / `_p` | Tour of `SubMeshDofInjection`: moving fields and assembling coupling blocks between a mesh and a submesh |
 | `coupled_poisson` / `_p` | Two Poisson equations, one on a submesh, coupled and solved monolithically |
-| `elastogravity_layered` | `LinearQuasiStaticSelfGravitatingProblem` under a surface mass load or a tidal potential, Schur CG and block MINRES solvers compared, rigid-mode diagnostics (uniform solid of any shape; two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
+| `elastogravity_layered` | `LinearQuasiStaticMixedSelfGravitatingProblem` under a surface mass load or a tidal potential, Schur CG and block MINRES solvers compared, rigid-mode diagnostics (uniform solid of any shape; two-layer: fluid core + mantle; three-layer: solid inner core + fluid outer core + mantle, one disconnected solid SubMesh) |
 | `self_gravitating_relaxation` | Viscoelastic relaxation of the layered self-gravitating model with a fluid core under a Heaviside surface load (Maxwell mantle, elastic inner core) |
 | `quasi_static_elasticity` | Driver for the `LinearQuasiStaticProblem` interface |
 | `love_numbers` | Load and tidal Love numbers of a homogeneous self-gravitating sphere (disc) by degree, one solve each, against the incompressible-sphere formulas |

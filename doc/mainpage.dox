@@ -54,7 +54,7 @@
  * the body (CompositeRheology).
  *
  * @subsection sec_selfgrav Self-gravitation
- * LinearQuasiStaticSelfGravitatingProblem couples the displacement on a
+ * LinearQuasiStaticMixedSelfGravitatingProblem couples the displacement on a
  * SubMesh of the solid body to the potential perturbation on the enclosing
  * ball, with the DtN outer condition and optional fluid regions
  * (FluidRegion). It implements the same interface, so the viscoelastic layer

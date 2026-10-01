@@ -349,7 +349,7 @@ int main(int argc, char* argv[]) {
   PullbackStressCoefficient S_rel(dim, S_e, xi);
   ReferentialElasticRheology rheology(dim, C_rel, S_rel, xi);
 
-  LinearQuasiStaticReferentialProblem problem(&fes_u, &fes_zeta, rheology,
+  LinearQuasiStaticReferentialSelfGravitatingProblem problem(&fes_u, &fes_zeta, rheology,
                                               rho_tilde, G, dtn_degree);
   Vector bb_min, bb_max;
   parent.GetBoundingBox(bb_min, bb_max);

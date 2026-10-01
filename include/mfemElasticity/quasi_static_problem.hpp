@@ -9,6 +9,33 @@
  * viscoelastic is decided by its Rheology; the problem assembles the
  * rheology's (effective) elastic stiffness and never sees the internal
  * variables, which the viscoelastic layer evolves around it.
+ *
+ * **Naming convention for problem classes.** Names are built from fixed
+ * axis slots, left to right:
+ * @verbatim
+ *   [Linear|Nonlinear] [QuasiStatic|Dynamic]
+ *     [Mixed|Referential]? [SelfGravitating]? [variant] Problem
+ * @endverbatim
+ * - Linearity and time regime always appear (Static needs no slot of its
+ *   own: it is QuasiStatic at fixed data).
+ * - The elasticity is *referential in every class*; the formulation slot
+ *   says how the *gravity* is described, so it exists only for
+ *   self-gravitating problems: `Mixed` = referential displacement with
+ *   the spatial (Eulerian) potential perturbation (the Dahlen-style
+ *   organisation, mixed_problem.hpp); `Referential` = fully referential,
+ *   including the potential (referential_problem.hpp). Without gravity
+ *   there is nothing to mix and the slot is omitted: the classes in this
+ *   file are referential, trivially so when the body is unstressed.
+ * - Properties of the *reference state* — hydrostatic vs non-hydrostatic
+ *   equilibrium stress, and natural vs non-natural particle labels in the
+ *   sense of Al-Attar & Crawford 2016 (natural: the label *is* the
+ *   equilibrium position, @f$\varphi_e = \mathrm{id}@f$) — are carried by
+ *   the Rheology, not by class names; a class that *requires* a special
+ *   reference state (the mixed formulation requires hydrostatic +
+ *   natural) says so in its documentation.
+ * - The variant tail names a boundary-condition or interface
+ *   specialisation (`Traction`, `Clamped`, `Slip`), and a derived class
+ *   extends its parent's name rightward.
  */
 
 #pragma once
@@ -425,6 +452,19 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
  * load and the warm start are projected before the solve and the solution
  * after it, so any net force or torque is removed and the displacement is
  * orthogonal to the rigid modes in the true-dof inner product.
+ *
+ * **Reference state.** The class is reference-state aware through its
+ * rheology: with a ReferentialElasticRheology the stiffness is the mapped
+ * material + geometric split for the general @f$(\hat C, \mathbf{S}_e,
+ * \varphi_e)@f$ (the non-gravitating referential problem), and the rigid
+ * rotations of the projector are those of the *mapped* positions
+ * @f$W\varphi_e@f$ (Rheology::EquilibriumMapping()); translations are
+ * exact null modes either way, rotations null through moment balance of
+ * the background state — RigidPairResiduals() verifies both. The
+ * traction is per unit *referential* area; for a spatial traction on a
+ * mapped boundary compose with NansonAreaCoefficient (mappings.hpp) —
+ * composition is the problem layer's/driver's business, coefficients
+ * stay referential.
  */
 class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
  public:
@@ -443,10 +483,23 @@ class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
    * (unit @f$\rho@f$ when null), instead of orthogonality to the rigid
    * modes in the true-dof inner product (the default). Only the rigid
    * component of the displacement changes. May be called at any time.
+   * With a non-natural reference state the rotational condition reads
+   * @f$b \times \varphi_e(x)@f$ (the projector's mapped modes) with the
+   * *referential* density @f$\rho@f$ — the referential statement of zero
+   * angular momentum, no extra Jacobian factor.
    */
   void SetMassWeightedGauge(mfem::Coefficient* rho = nullptr);
   /** @brief Back to the true-dof (Euclidean) gauge. */
   void SetEuclideanGauge();
+
+  /**
+   * @brief Diagnostic: @f$\|A n\| / (\|A\|_{\max}\|n\|)@f$ for each rigid
+   * mode of the projector under the assembled stiffness (assembles if
+   * needed). Translations are exact discrete null vectors (round-off);
+   * with a pre-stressed/mapped reference state the mapped rotations are
+   * near-null through moment balance, decreasing with refinement.
+   */
+  std::vector<mfem::real_t> RigidPairResiduals();
 
  protected:
   void SetupSolver(mfem::OperatorHandle& A) override;
@@ -467,9 +520,16 @@ class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
 };
 
 /**
- * @brief Mixed problem: the displacement is prescribed on one set of
- * boundary attributes and a traction applied on another; all other
- * boundaries are traction-free.
+ * @brief Essential/natural problem: the displacement is prescribed on one
+ * set of boundary attributes and a traction applied on another; all other
+ * boundaries are traction-free. ("Mixed" in the boundary-condition sense
+ * only — no relation to the mixed *formulation* of the self-gravitating
+ * classes.)
+ *
+ * Reference-state aware exactly as LinearQuasiStaticTractionProblem (the
+ * stiffness is the rheology's; prescribed values and tractions are
+ * referential fields), with no null-space machinery to adapt: the
+ * essential conditions remove the rigid modes.
  */
 class LinearQuasiStaticClampedProblem : public LinearQuasiStaticProblemBase {
  public:

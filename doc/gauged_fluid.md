@@ -2,7 +2,7 @@
 
 Method notes for the gauged-fluid option of `LinearQuasiStaticProblemBase`
 (`SetGaugedFluid()`) and its self-gravitating specialisation
-(`quasi_static_problem.hpp`, `self_gravitating.hpp`). The formulation
+(`quasi_static_problem.hpp`, `mixed_problem.hpp`). The formulation
 follows Maitra & Al-Attar (2024, §3.7.3) as developed in the working notes
 of 25 September 2026 (`doc/BenchmarkPapers/research_notes_2026-09-25.pdf`,
 §4): the fluid keeps its displacement in a fully referential description,
@@ -71,7 +71,7 @@ junk, and both improve with mesh refinement. The worst case is a load
 aligned with a near-null mode: a *uniform* tidal gradient (a rigid-mode
 load) leaks ~3% of a comparable physical response into the solid on the
 coarse test mesh at `eps = 1e-2`, k = 3, growing like `k / eps` beyond
-(`TestSelfGravitatingGauged`); physical (degree-2) loads do not sit on the
+(`TestMixedProblemGauged`); physical (degree-2) loads do not sit on the
 near-kernel.
 
 ## 2. Why no displacement discontinuity is needed (linear problem)
@@ -118,7 +118,7 @@ solution by the `O(eps)` restoring they actually feel).
 
 ## 3. What changes against Dahlen's treatment
 
-In `LinearQuasiStaticSelfGravitatingProblem` the gauged mode is selected by
+In `LinearQuasiStaticMixedSelfGravitatingProblem` the gauged mode is selected by
 construction: **no FluidRegions** — the fluid attributes join the
 displacement SubMesh, the rheology gives them `kappa_f` with zero shear,
 the `density` coefficient covers them, and `SetGaugedFluid()` adds the
@@ -152,7 +152,7 @@ N^2 = 0   <=>   kappa_f = rho^2 |grad Phi0| / |d rho / d r|      (Adams–Willia
 ```
 
 Then the static `kappa`-response coincides with Dahlen's secular response,
-and `TestSelfGravitatingGauged` (which builds `kappa_f` from the
+and `TestMixedProblemGauged` (which builds `kappa_f` from the
 Adams–Williamson condition on the discrete background gravity) confirms
 agreement of solid displacement and potential to the discretisation level
 under a zero-mean load. For a two-parameter fluid (`N^2 != 0`) the static
@@ -170,7 +170,7 @@ described by the potential alone and never sees `kappa_f`, which is the
 recorded degree-0 gap of the Love-number campaign (pyslfp uses the fluid's
 bulk modulus at `l = 0`). The gauged fluid carries `kappa_f` at every
 degree, restoring the compressible degree-0 physics;
-`TestSelfGravitatingGauged.Degree0DiffersFromDahlen2D` pins the gap to the
+`TestMixedProblemGauged.Degree0DiffersFromDahlen2D` pins the gap to the
 fluid treatment, and the benchmark comparison at `l = 0` is the decisive
 check against pyslfp.
 
@@ -289,8 +289,8 @@ cross-check and the non-linear path.
 - **Contraction and eps-independence.** Residual decay ~0.1 per step at
   `eps = 1e-2, mu_g = kappa_f`; observables agree to ~1e-4..1e-5 between
   `eps = 1e-2` and `1e-3` after refinement.
-- **Self-gravitating equivalence** (`TestSelfGravitatingGauged`,
-  `TestSelfGravitatingGaugedPar`): against the Dahlen path on the
+- **Self-gravitating equivalence** (`TestMixedProblemGauged`,
+  `TestMixedProblemGaugedPar`): against the Dahlen path on the
   three-layer model with an Adams–Williamson core, solid displacement and
   potential to 2e-2 (the two discretisations' own error) under a zero-mean
   load; the degree-0 difference asserted present; SchurCG and BlockMINRES

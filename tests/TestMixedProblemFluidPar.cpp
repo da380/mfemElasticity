@@ -1,5 +1,5 @@
 /*
-  Parallel tests for LinearQuasiStaticSelfGravitatingProblem with fluid
+  Parallel tests for LinearQuasiStaticMixedSelfGravitatingProblem with fluid
   regions, on the three-layer meshes with ONE disconnected ParSubMesh for
   the inner core and the mantle and the outer core as a FluidRegion. Run
   with 1, 2 and 4 ranks; a standalone MPI program returning the number of
@@ -21,7 +21,7 @@
 #include <string>
 #include <vector>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
@@ -56,7 +56,7 @@ struct Setup {
   std::unique_ptr<IsotropicMaxwellRheology> rheology;
   std::vector<FluidRegion> fluids;
   Array<int> surface, inner_core{Array<int>({1})};
-  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> problem;
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> problem;
 
   Setup(FiniteElementSpace& fes_u, FiniteElementSpace& fes_phi,
         Mesh& solid) {
@@ -66,7 +66,7 @@ struct Setup {
         IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau));
     surface = SurfaceMarker(solid);
     fluids.push_back(OuterCore(solid, rho_f));
-    problem = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+    problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         &fes_u, &fes_phi, *rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
     problem->SetSurfaceLoad(sigma, surface);
     problem->SetTidalPotential(psi);
@@ -125,10 +125,10 @@ void RunCase(int dim, int order, const std::string& label) {
   Check(lo < 3.0 * lo_ref ? 0.0 : 1.0, 0.0, label + " smallest Ritz value");
 
   for (auto type :
-       {LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES,
-        LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG}) {
+       {LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES,
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG}) {
     const std::string name =
-        type == LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES
+        type == LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES
             ? " minres"
             : " schur";
     p.SetSolverType(type);
@@ -142,7 +142,7 @@ void RunCase(int dim, int order, const std::string& label) {
 
   // Time scaling of both loads (surface and tidal), in parallel.
   p.SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES);
   p.AssembleForce(2.0);
   Check(p.Solve() ? 0.0 : 1.0, 0.0, label + " solve at t = 2");
   Check(RelErr(L2Norm(p.Displacement()), 3.0 * u_ref), 1e-8,

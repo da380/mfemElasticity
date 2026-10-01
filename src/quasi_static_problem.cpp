@@ -408,9 +408,43 @@ LinearQuasiStaticTractionProblem::LinearQuasiStaticTractionProblem(
 
 const NullSpaceProjector& LinearQuasiStaticTractionProblem::RigidModes() {
   if (!projector_) {
-    projector_ = MakeRigidModeProjector(*fes_);
+    // Rotations of the mapped positions when the rheology carries a
+    // non-natural reference state; identical to the plain rotations at
+    // the identity (nullptr for a natural reference state).
+    projector_ = MakeRigidModeProjector(*fes_, Rheology().EquilibriumMapping());
   }
   return *projector_;
+}
+
+std::vector<real_t> LinearQuasiStaticTractionProblem::RigidPairResiduals() {
+  EnsureOperator();
+  real_t a_max = 0.0;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto* hyp = A_.As<HypreParMatrix>();
+    SparseMatrix diag, offd;
+    HYPRE_BigInt* cmap = nullptr;
+    hyp->GetDiag(diag);
+    hyp->GetOffd(offd, cmap);
+    real_t local = std::max(diag.MaxNorm(), offd.MaxNorm());
+    MPI_Allreduce(&local, &a_max, 1, MPITypeMap<real_t>::mpi_type, MPI_MAX,
+                  pfes_->GetComm());
+  } else
+#endif
+  {
+    a_max = A_.As<SparseMatrix>()->MaxNorm();
+  }
+  const auto& P = RigidModes();
+  std::vector<real_t> out;
+  Vector r(A_.Ptr()->Height());
+  for (int i = 0; i < P.Size(); i++) {
+    const Vector& n = P.Basis(i);
+    A_.Ptr()->Mult(n, r);
+    const real_t norm = std::sqrt(P.Dot(n, n));
+    out.push_back(std::sqrt(P.Dot(r, r)) /
+                  (a_max * std::max(norm, real_t{1e-300})));
+  }
+  return out;
 }
 
 void LinearQuasiStaticTractionProblem::SetupSolver(OperatorHandle& A) {

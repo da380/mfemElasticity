@@ -14,7 +14,7 @@
 #include <memory>
 #include <string>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 

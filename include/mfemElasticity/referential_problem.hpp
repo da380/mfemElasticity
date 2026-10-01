@@ -270,7 +270,9 @@ class ReferentialElasticRheology : public Rheology {
 
   mfem::MatrixCoefficient& ElasticTensor() const { return *C_; }
   mfem::MatrixCoefficient& EquilibriumStress() const { return *S_; }
-  Diffeomorphism& EquilibriumMapping() const { return *map_; }
+  /** @brief Never null here: the rheology always carries a mapping
+   * (identity for a natural reference state). */
+  Diffeomorphism* EquilibriumMapping() const override { return map_; }
 
  private:
   int dim_;
@@ -282,9 +284,19 @@ class ReferentialElasticRheology : public Rheology {
 /**
  * @brief The linearised quasi-static problem of a self-gravitating,
  * arbitrarily pre-stressed elastic body in the fully referential
- * formulation (doc/gravitating_elasticity.md; solids only at present).
+ * formulation (doc/gravitating_elasticity.md): both the displacement and
+ * the potential perturbation @f$\zeta^1@f$ are referential fields on the
+ * fixed reference body.
  *
- * **Geometry.** As for LinearQuasiStaticSelfGravitatingProblem: the body
+ * **Reference state.** The class takes the general constitutive state
+ * @f$(\hat C, \mathbf{S}_e, \varphi_e)@f$ through its
+ * ReferentialElasticRheology: hydrostatic (@f$\mathbf{S}_e = -p_0 I@f$)
+ * and natural (@f$\varphi_e = \mathrm{id}@f$; Al-Attar & Crawford 2016)
+ * reference states are special *values*, not special cases of the code.
+ * The mixed formulation (mixed_problem.hpp) requires both restrictions;
+ * this class is where they are lifted.
+ *
+ * **Geometry.** As for LinearQuasiStaticMixedSelfGravitatingProblem: the body
  * on a (Par)SubMesh of a ball whose outer boundary carries the DtN
  * condition; the displacement @f$u@f$ on the SubMesh, the *referential*
  * potential perturbation @f$\zeta^1@f$ on the ball. The reference body is
@@ -330,7 +342,7 @@ class ReferentialElasticRheology : public Rheology {
  * block and on the shifted mapped Laplacian). Serial and parallel in one
  * class, as throughout.
  */
-class LinearQuasiStaticReferentialProblem
+class LinearQuasiStaticReferentialSelfGravitatingProblem
     : public LinearQuasiStaticProblemBase {
  public:
   /**
@@ -352,7 +364,7 @@ class LinearQuasiStaticReferentialProblem
    * @param background_zeta0 Optional @f$\zeta^0@f$ (projected onto
    * @p fes_zeta); solved from the density when null.
    */
-  LinearQuasiStaticReferentialProblem(
+  LinearQuasiStaticReferentialSelfGravitatingProblem(
       mfem::FiniteElementSpace* fes_u, mfem::FiniteElementSpace* fes_zeta,
       const ReferentialElasticRheology& rheology, mfem::Coefficient& density,
       mfem::real_t gravitational_constant, int dtn_degree,
@@ -640,8 +652,8 @@ class LinearQuasiStaticReferentialProblem
  * one fluid region inside a solid shell (nested-shell/two-sided
  * extensions with the inner-core work).
  */
-class LinearQuasiStaticSlipReferentialProblem
-    : public LinearQuasiStaticReferentialProblem {
+class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
+    : public LinearQuasiStaticReferentialSelfGravitatingProblem {
  public:
   /**
    * @param fes_s Solid displacement space on a SubMesh of the ball; the
@@ -661,7 +673,7 @@ class LinearQuasiStaticSlipReferentialProblem
    * @param background_zeta0 Optional @f$\zeta^0@f$; when null it is
    * solved from the density over solid *and* fluid.
    */
-  LinearQuasiStaticSlipReferentialProblem(
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem(
       mfem::FiniteElementSpace* fes_s, mfem::FiniteElementSpace* fes_f,
       mfem::FiniteElementSpace* fes_zeta,
       const ReferentialElasticRheology& rheology, mfem::Coefficient& density,
@@ -697,6 +709,51 @@ class LinearQuasiStaticSlipReferentialProblem
    * augmented-Lagrangian iterations per Solve() (each interleaves one
    * Tikhonov refinement of the fluid gauge). */
   void SetConstraint(mfem::real_t theta, int al_iterations);
+
+  /**
+   * @brief KKT (monolithic saddle-point) enforcement of the normal-jump
+   * constraint, replacing the penalty + augmented-Lagrangian iterations
+   * of the single-valued organisation: a multiplier @f$\lambda@f$ on the
+   * interface trace joins the unknowns, the constraint row is the
+   * Nanson-exact flux kernel @f$\oint \lambda\,(\nu\cdot
+   * [\![\mathbf{v}]\!])\,dS@f$ (BoundaryNormalScalarIntegrator — exact
+   * under mappings, all area factors cancelling), and one MINRES solves
+   * @f$[S, C^T; C, 0]@f$ with the @f$\theta@f$-augmented blocks kept in
+   * @f$S@f$ (Golub–Greif) and the @f$1/\theta@f$-scaled lumped interface
+   * mass preconditioning the multiplier block. The outer loop shrinks to
+   * the gauge refinements (no multiplier updates); SetConstraint()'s
+   * iteration count bounds those refinements. Single-valued organisation
+   * only (EnableBrokenZeta() and EnableKKT() are mutually exclusive for
+   * now).
+   *
+   * @param fes_scalar_solid Scalar space on the solid SubMesh sharing
+   * the displacement order; the multiplier is its restriction to the
+   * interface boundary dofs. Not owned.
+   */
+  void EnableKKT(mfem::FiniteElementSpace* fes_scalar_solid);
+
+  /** @brief Whether KKT enforcement is active. */
+  bool KKTEnabled() const { return kkt_; }
+
+  /** @brief The multiplier (interface normal-traction perturbation
+   * paired with @f$\nu@f$) of the last KKT Solve(), on the interface
+   * dofs of the space passed to EnableKKT(). */
+  const mfem::Vector& KKTMultiplier() const { return lambda_; }
+
+  /**
+   * @brief Inexact AL sweeps: the inner tolerance of the early sweeps is
+   * relaxed to @p loose_rel and tightens geometrically to the solver's
+   * relative tolerance, the final sweep always running at full
+   * tolerance. Roughly halves the cost on the 3-D benchmarks at a
+   * solver-endpoint shift an order below the mesh error (measured
+   * 1e-3 on fluid_core h = 0.3; doc/slip_interface.tex). The default
+   * @p loose_rel = 0 keeps every sweep at full tolerance — the
+   * reproducible-endpoint mode that strict comparisons and
+   * finite-difference studies must use.
+   */
+  void SetSweepTolerance(mfem::real_t loose_rel) {
+    sweep_loose_rel_ = loose_rel;
+  }
 
   /**
    * @brief Switch to the broken-@f$\zeta@f$ organisation
@@ -828,6 +885,7 @@ class LinearQuasiStaticSlipReferentialProblem
   mfem::real_t fluid_gauge_eps_ = 0.0;
   mfem::real_t theta_ = 1.0e2;
   int al_iterations_ = 8;
+  mfem::real_t sweep_loose_rel_ = 0.0;  ///< 0: every sweep at full tol
 
   // assembled physical blocks, the solver blocks with the constraint
   // penalty folded in (S**, A11_solve_), the penalty kernel Bn and the
@@ -847,6 +905,31 @@ class LinearQuasiStaticSlipReferentialProblem
                        *op_S10_ = nullptr, *op_S11_ = nullptr,
                        *op_Qf_ = nullptr, *op_Bn_ = nullptr,
                        *op_J_ = nullptr, *op_Jt_ = nullptr;
+
+  // ---- KKT enforcement (EnableKKT) ----
+  bool kkt_ = false;
+  mfem::FiniteElementSpace* fes_lam_ = nullptr;
+  mfem::Array<int> lam_dofs_;  ///< interface true dofs of fes_lam_
+  // Constraint kernel N (u test x scalar trial) on true dofs; the
+  // constraint row is its transpose restricted to lam_dofs_.
+  std::unique_ptr<mfem::SparseMatrix> Nlam_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pNlam_;
+#endif
+  const mfem::Operator* op_Nlam_ = nullptr;
+  mfem::Vector lambda_, lam_mass_diag_;
+  mfem::Array<int> offsets_kkt_;
+  std::unique_ptr<NullSpaceProjector> projector_kkt_;
+  std::unique_ptr<mfem::BlockOperator> block_op_kkt_;
+  std::unique_ptr<mfem::BlockDiagonalPreconditioner> block_prec_kkt_;
+  std::unique_ptr<mfem::Solver> prec_lam_;
+  std::vector<std::unique_ptr<mfem::Operator>> kkt_ops_;
+  std::unique_ptr<ProjectedOperator> projected_op_kkt_;
+  std::unique_ptr<ProjectedSolver> projected_kkt_, projected_prec_kkt_;
+  std::unique_ptr<mfem::MINRESSolver> minres_kkt_;
+  std::unique_ptr<mfem::BlockVector> Xk_, Bk_;
+  void SetupSolverKKT(mfem::OperatorHandle& A);
+  bool SolveLinearSystemKKT(const mfem::Vector& B, mfem::Vector& X);
 
   // three-block solver
   mfem::Array<int> offsets3_;

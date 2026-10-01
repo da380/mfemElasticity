@@ -1,6 +1,6 @@
 /*
   Parallel tests for the gauged-fluid mode of
-  LinearQuasiStaticSelfGravitatingProblem (see TestSelfGravitatingGauged.cpp
+  LinearQuasiStaticMixedSelfGravitatingProblem (see TestMixedProblemGauged.cpp
   for the serial suite and the model). Run with 1, 2 and 4 ranks; a
   standalone MPI program returning the number of failed checks.
 
@@ -18,7 +18,7 @@
 #include <string>
 #include <vector>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
@@ -56,13 +56,13 @@ struct Setup {
   FunctionCoefficient sigma{ZeroMeanSurfaceLoad};
   std::unique_ptr<IsotropicElasticRheology> rheology;
   Array<int> surface, fluid{Array<int>({0, 1, 0})};
-  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> problem;
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> problem;
 
   Setup(FiniteElementSpace& fes_u, FiniteElementSpace& fes_phi, Mesh& body) {
     const int dim = body.Dimension();
     rheology = std::make_unique<IsotropicElasticRheology>(dim, kappa, mu);
     surface = SurfaceMarker(body);
-    problem = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+    problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         &fes_u, &fes_phi, *rheology, rho, kG, kDtNDegree);
     kappa.g = &problem->BackgroundGravity();
     problem->SetGaugedFluid(fluid, mu_gauge, kEps, kRefine);

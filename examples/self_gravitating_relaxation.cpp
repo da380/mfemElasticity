@@ -8,7 +8,7 @@
 // core carries an elastic rheology, the mantle a Maxwell one), and a surface
 // mass load switched on at t = 0 (a Heaviside load: the elastic response is
 // followed by the viscous relaxation towards isostasy). ViscoelasticOperator
-// runs on LinearQuasiStaticSelfGravitatingProblem unchanged; the potential
+// runs on LinearQuasiStaticMixedSelfGravitatingProblem unchanged; the potential
 // and the fluid core come along for free.
 //
 // Time is measured in Maxwell times of the mantle, tau = eta / mu evaluated
@@ -161,7 +161,7 @@ int main(int argc, char* argv[]) {
     f.interface_marker = InterfaceMarker(solid);
     fluids.push_back(f);
   }
-  LinearQuasiStaticSelfGravitatingProblem problem(
+  LinearQuasiStaticMixedSelfGravitatingProblem problem(
       &fes_u, &fes_phi, rheology, rho, 1.0, dtn_degree, nullptr, fluids);
   // A Heaviside load: the surface load coefficient is constant in time, so
   // switching it on at t = 0 is simply starting from an unloaded state.

@@ -9,7 +9,7 @@ set(EXAMPLES
     transformed_diffusion       # pull-back Laplacian on a mapped domain
     submesh_injection           # tour of SubMeshDofInjection
     coupled_poisson             # coupled Poisson pair across mesh / submesh
-    elastogravity_layered       # LinearQuasiStaticSelfGravitatingProblem: uniform, fluid core (+ inner core)
+    elastogravity_layered       # LinearQuasiStaticMixedSelfGravitatingProblem: uniform, fluid core (+ inner core)
     quasi_static_elasticity     # quasi_static_problem.hpp driver
     gauged_fluid_cavity         # gauged fluid region, purely elastic (SetGaugedFluid)
     sliding_fluid_ellipse       # sliding interface (displacement discontinuity) on an elliptical body

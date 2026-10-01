@@ -1,7 +1,7 @@
 # The self-gravitating quasi-static problem
 
-Method notes for `LinearQuasiStaticSelfGravitatingProblem`
-(`self_gravitating.hpp`): the equations, how each term is assembled, the
+Method notes for `LinearQuasiStaticMixedSelfGravitatingProblem`
+(`mixed_problem.hpp`): the equations, how each term is assembled, the
 solvers and the null space, and what the verification runs have shown. The
 weak form follows Al-Attar & Tromp (2014, eq. 2.52) and Yu, Al-Attar, Syvret
 & Lloyd (2025, eq. 3 and Appendix A). The fluid treatment described here is

@@ -1,5 +1,5 @@
 /*
-  Parallel tests for LinearQuasiStaticSelfGravitatingProblem on
+  Parallel tests for LinearQuasiStaticMixedSelfGravitatingProblem on
   ParFiniteElementSpaces (ParSubMesh body inside a ParMesh ball). Run with 1, 2
   and 4 ranks; a standalone MPI program returning the number of failed checks.
 
@@ -17,7 +17,7 @@
 #include <memory>
 #include <string>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 
@@ -52,7 +52,7 @@ struct SerialCase {
   std::unique_ptr<IsotropicMaxwellRheology> rheology;
   FunctionCoefficient sigma{SurfaceLoad};
   Array<int> surface;
-  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> problem;
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> problem;
 
   SerialCase(Mesh& mesh, int dim, int order) {
     parent = std::make_unique<Mesh>(mesh);
@@ -66,7 +66,7 @@ struct SerialCase {
     rheology = std::make_unique<IsotropicMaxwellRheology>(
         IsotropicMaxwellRheology::Maxwell(dim, kappa, mu, tau));
     surface = SurfaceMarker(*body);
-    problem = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+    problem = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology, rho, kG, kDtNDegree);
     problem->SetSurfaceLoad(sigma, surface);
     problem->SetRelTol(1e-11);
@@ -96,7 +96,7 @@ void RunCase(int dim, int order, const std::string& label) {
   FunctionCoefficient sigma(SurfaceLoad);
   Array<int> surface = SurfaceMarker(body);
 
-  LinearQuasiStaticSelfGravitatingProblem p(&fes_u, &fes_phi, rheology, rho, kG,
+  LinearQuasiStaticMixedSelfGravitatingProblem p(&fes_u, &fes_phi, rheology, rho, kG,
                                             kDtNDegree);
   p.SetSurfaceLoad(sigma, surface);
   p.SetRelTol(1e-11);
@@ -112,10 +112,10 @@ void RunCase(int dim, int order, const std::string& label) {
   }
 
   for (auto type :
-       {LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES,
-        LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG}) {
+       {LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES,
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG}) {
     const std::string name =
-        type == LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES
+        type == LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES
             ? " minres"
             : " schur";
     p.SetSolverType(type);
@@ -125,7 +125,7 @@ void RunCase(int dim, int order, const std::string& label) {
     // tolerance; across types the gauge regularisation differs at the level
     // of the rigid-mode residuals, so compare with the serial default.
     const double tol =
-        type == LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES
+        type == LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES
             ? 1e-8
             : (order == 1 ? 1e-4 : 1e-5);
     Check(RelErr(L2Norm(p.Displacement()), u_ref), tol,
@@ -136,7 +136,7 @@ void RunCase(int dim, int order, const std::string& label) {
 
   // Time scaling of the load, in parallel.
   p.SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES);
   p.AssembleForce(2.0);
   Check(p.Solve() ? 0.0 : 1.0, 0.0, label + " solve at t = 2");
   Check(RelErr(L2Norm(p.Displacement()), 3.0 * u_ref), 1e-8,

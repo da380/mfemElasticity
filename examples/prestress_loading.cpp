@@ -17,7 +17,7 @@
 //      the reference body): S_e = J F^{-1}(-p 1 + 2 mu grad_s u) F^{-T},
 //      with the body force the EXACT self-gravity of the homogeneous
 //      elliptical cylinder, rho grad Phi = 4 pi G rho^2/(a+b) (b x, a y).
-//   3. Loading responses from LinearQuasiStaticReferentialProblem
+//   3. Loading responses from LinearQuasiStaticReferentialSelfGravitatingProblem
 //      (mapped Poisson background, referential gravity, prescribed
 //      vacuum extension, surface load mapped with the Nanson area
 //      factor) computed TWICE, differing ONLY in the equilibrium
@@ -390,7 +390,7 @@ int main(int argc, char* argv[]) {
     auto run = [&](MatrixCoefficient& S, GridFunction& u_out,
                    GridFunction& z_out, int& its) -> bool {
       ReferentialElasticRheology rheology(dim, C, S, phi_e);
-      LinearQuasiStaticReferentialProblem problem(
+      LinearQuasiStaticReferentialSelfGravitatingProblem problem(
           &fes_u, &fes_zeta, rheology, rho, G, kDtNDegree);
       auto E = NewRadialVacuumExtension(fes_u, fes_buffer, 1.0, r_out);
       problem.SetPrescribedVacuumExtension(fes_buffer, *E);

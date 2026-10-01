@@ -1,8 +1,8 @@
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
-  Tests for LinearQuasiStaticSelfGravitatingProblem with fluid regions on
+  Tests for LinearQuasiStaticMixedSelfGravitatingProblem with fluid regions on
   the canned three-layer meshes (solid inner core, fluid outer core, solid
   mantle; one disconnected solid SubMesh) and the two-layer disc (fluid
   core, mantle).
@@ -59,11 +59,11 @@ struct Case {
     fluids.push_back(OuterCore(*solid, rho_f));
   }
 
-  std::unique_ptr<LinearQuasiStaticSelfGravitatingProblem> Problem(
+  std::unique_ptr<LinearQuasiStaticMixedSelfGravitatingProblem> Problem(
       bool with_load = true, bool region_rotations = true,
       const std::vector<FluidRegion>* regions = nullptr,
       Coefficient* solid_density = nullptr, double G = kG) {
-    auto p = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         fes_u.get(), fes_phi.get(), *rheology,
         solid_density ? *solid_density : rho_s, G, kDtNDegree, nullptr,
         regions ? *regions : fluids);
@@ -110,21 +110,21 @@ double RelDiff(const GridFunction& a, const GridFunction& b) {
   return L2Norm(d) / L2Norm(b);
 }
 
-class SelfGravitatingFluidTest : public testing::TestWithParam<Param> {};
+class MixedProblemFluidTest : public testing::TestWithParam<Param> {};
 
-TEST_P(SelfGravitatingFluidTest, SchurAndMinresAgree) {
+TEST_P(MixedProblemFluidTest, SchurAndMinresAgree) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
 
   auto schur = s.Problem();
   schur->SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   schur->AssembleForce(0.0);
   ASSERT_TRUE(schur->Solve());
 
   auto minres = s.Problem();
   minres->SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES);
   minres->AssembleForce(0.0);
   ASSERT_TRUE(minres->Solve());
 
@@ -147,7 +147,7 @@ TEST_P(SelfGravitatingFluidTest, SchurAndMinresAgree) {
   EXPECT_LT(RelDiff(schur->Potential(), minres->Potential()), tol);
 }
 
-TEST(SelfGravitatingFluidModes, ResidualsDecreaseWithOrder) {
+TEST(MixedProblemFluidModes, ResidualsDecreaseWithOrder) {
   for (int dim : {2, 3}) {
     std::vector<double> worst_global, worst_region, translation;
     for (int order : {1, 2}) {
@@ -190,7 +190,7 @@ TEST(SelfGravitatingFluidModes, ResidualsDecreaseWithOrder) {
   }
 }
 
-TEST(SelfGravitatingFluidModes, UnprojectedSolutionDiffersByRotation) {
+TEST(MixedProblemFluidModes, UnprojectedSolutionDiffersByRotation) {
   const int dim = 2, order = 2;
   Case s(dim, order);
   auto with = s.Problem(true, true);
@@ -215,7 +215,7 @@ TEST(SelfGravitatingFluidModes, UnprojectedSolutionDiffersByRotation) {
   EXPECT_LT(RelDiff(without->Potential(), with->Potential()), tol);
 }
 
-TEST_P(SelfGravitatingFluidTest, TidalLoad) {
+TEST_P(MixedProblemFluidTest, TidalLoad) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
   FunctionCoefficient psi(TidalPotential);
@@ -262,7 +262,7 @@ TEST_P(SelfGravitatingFluidTest, TidalLoad) {
 
     auto q = s.Problem(false);
     q->SetSolverType(
-        LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+        LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
     q->SetTidalPotential(psi);
     q->AssembleForce(1.0);
     ASSERT_TRUE(q->Solve());
@@ -272,7 +272,7 @@ TEST_P(SelfGravitatingFluidTest, TidalLoad) {
   }
 }
 
-TEST_P(SelfGravitatingFluidTest, SuppliedDensityGradient) {
+TEST_P(MixedProblemFluidTest, SuppliedDensityGradient) {
   const auto [dim, order] = GetParam();
   Case s(dim, order);
   auto p = s.Problem();
@@ -295,7 +295,7 @@ TEST_P(SelfGravitatingFluidTest, SuppliedDensityGradient) {
   EXPECT_LT(RelDiff(q->Potential(), p->Potential()), 1e-9);
 }
 
-TEST(SelfGravitatingFluidBlock, PositivityDiagnostic) {
+TEST(MixedProblemFluidBlock, PositivityDiagnostic) {
   for (int dim : {2, 3}) {
     Case s(dim, 1);
     auto p = s.Problem(false);
@@ -322,7 +322,7 @@ TEST(SelfGravitatingFluidBlock, PositivityDiagnostic) {
   }
 }
 
-TEST(SelfGravitatingFluidTwoLayer, SchurAndMinresAgree) {
+TEST(MixedProblemFluidTwoLayer, SchurAndMinresAgree) {
   // Fluid core, solid mantle: the fluid is enclosed by the solid only.
   Mesh parent("../data/elastogravity_two_layer_2d.msh", 1, 1);
   ASSERT_EQ(parent.Dimension(), 2);
@@ -342,8 +342,8 @@ TEST(SelfGravitatingFluidTwoLayer, SchurAndMinresAgree) {
   std::vector<FluidRegion> fluids{core};
   Array<int> surface({0, 1});
 
-  auto make = [&](LinearQuasiStaticSelfGravitatingProblem::SolverType type) {
-    auto p = std::make_unique<LinearQuasiStaticSelfGravitatingProblem>(
+  auto make = [&](LinearQuasiStaticMixedSelfGravitatingProblem::SolverType type) {
+    auto p = std::make_unique<LinearQuasiStaticMixedSelfGravitatingProblem>(
         &fes_u, &fes_phi, rheology, rho_s, kG, kDtNDegree, nullptr, fluids);
     p->SetSurfaceLoad(sigma, surface);
     p->SetRelTol(1e-11);
@@ -353,9 +353,9 @@ TEST(SelfGravitatingFluidTwoLayer, SchurAndMinresAgree) {
     return p;
   };
   auto schur =
-      make(LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+      make(LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   auto minres =
-      make(LinearQuasiStaticSelfGravitatingProblem::SolverType::BlockMINRES);
+      make(LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES);
   EXPECT_GT(L2Norm(schur->Displacement()), 0.0);
   EXPECT_LT(RelDiff(schur->Displacement(), minres->Displacement()), 1e-7);
   EXPECT_LT(RelDiff(schur->Potential(), minres->Potential()), 1e-7);
@@ -364,7 +364,7 @@ TEST(SelfGravitatingFluidTwoLayer, SchurAndMinresAgree) {
   }
 }
 
-TEST_P(SelfGravitatingFluidTest, ViscoelasticCreep) {
+TEST_P(MixedProblemFluidTest, ViscoelasticCreep) {
   const auto [dim, order] = GetParam();
   if (dim == 3) {
     return;
@@ -373,7 +373,7 @@ TEST_P(SelfGravitatingFluidTest, ViscoelasticCreep) {
   ConstantCoefficient tau(1.0);
   IsotropicMaxwellRheology maxwell =
       IsotropicMaxwellRheology::Maxwell(dim, s.kappa, s.mu, tau);
-  LinearQuasiStaticSelfGravitatingProblem p(s.fes_u.get(), s.fes_phi.get(),
+  LinearQuasiStaticMixedSelfGravitatingProblem p(s.fes_u.get(), s.fes_phi.get(),
                                             maxwell, s.rho_s, kG, kDtNDegree,
                                             nullptr, s.fluids);
   p.SetSurfaceLoad(s.sigma, s.surface);
@@ -402,7 +402,7 @@ TEST_P(SelfGravitatingFluidTest, ViscoelasticCreep) {
   }
 }
 
-TEST_P(SelfGravitatingFluidTest, LoadPotentialIgnoresTheFluidMass) {
+TEST_P(MixedProblemFluidTest, LoadPotentialIgnoresTheFluidMass) {
   const auto [dim, order] = GetParam();
   Case c(dim, order);
   ConstantCoefficient zero(0.0);
@@ -427,7 +427,7 @@ TEST_P(SelfGravitatingFluidTest, LoadPotentialIgnoresTheFluidMass) {
 // = constant interface density with the fluid mass term dropped, 'winkler'
 // = uniform without the interface potential coupling (F3). Both stay
 // symmetric (the two solvers agree), and both move the answer.
-TEST(SelfGravitatingFluidCMB, ApproximateConditions) {
+TEST(MixedProblemFluidCMB, ApproximateConditions) {
   Case c(2, 2);
   ConstantCoefficient zero(0.0);
   ConstantCoefficient rho_c(1.1);  // the core-top density of the profile
@@ -466,7 +466,7 @@ TEST(SelfGravitatingFluidCMB, ApproximateConditions) {
   // A sign slip in dropping one half of F3 would break the symmetry the
   // two solvers share; their agreement is the sharpest check.
   winkler->SetSolverType(
-      LinearQuasiStaticSelfGravitatingProblem::SolverType::SchurCG);
+      LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   winkler->AssembleForce(0.0);
   ASSERT_TRUE(winkler->Solve());
   EXPECT_LT(rel_diff(winkler->Potential(), phi_winkler), 1e-6);
@@ -476,7 +476,7 @@ TEST(SelfGravitatingFluidCMB, ApproximateConditions) {
   EXPECT_GT(rel_diff(phi_uniform, phi_winkler), 1e-3);
 }
 
-INSTANTIATE_TEST_SUITE_P(SelfGravitatingFluid, SelfGravitatingFluidTest,
+INSTANTIATE_TEST_SUITE_P(MixedProblemFluid, MixedProblemFluidTest,
                          testing::Values(Param{2, 1}, Param{2, 2},
                                          Param{3, 1}));
 
