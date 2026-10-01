@@ -238,6 +238,7 @@ struct CaseOptions {
   int al_iterations = 8;
   real_t sweep_tol = 1e-3;
   bool kkt = false;
+  int kkt_order = 0;
   real_t map_amplitude = 0.0;
   bool map_interp = false;
   real_t map_shift = 0.0;
@@ -288,6 +289,11 @@ struct CaseOptions {
     args.AddOption(&al_iterations, "-al", "--al-iterations",
                    "Augmented-Lagrangian iterations per solve (slipping "
                    "methods).");
+    args.AddOption(&kkt_order, "-kkt-order", "--kkt-multiplier-order",
+                   "Polynomial order of the KKT multiplier space "
+                   "(0: the potential space's order). Lower orders "
+                   "shrink the multiplier block and improve the "
+                   "inf-sup margin of equal-order traces.");
     args.AddOption(&kkt, "-kkt", "--kkt", "-no-kkt", "--no-kkt",
                    "Enforce the slip constraint by a monolithic KKT "
                    "multiplier block (single-valued slip only) instead "
@@ -1223,8 +1229,16 @@ class Case {
       if (options.kkt) {
         MFEM_VERIFY(method == "slip",
                     "-kkt: single-valued slip only for now.");
-        fes_lam_bench_ = std::make_unique<ParFiniteElementSpace>(
-            static_cast<ParMesh*>(fes_u->GetMesh()), fes_phi->FEColl());
+        auto* solid_mesh = static_cast<ParMesh*>(fes_u->GetMesh());
+        if (options.kkt_order > 0) {
+          fec_lam_ = std::make_unique<H1_FECollection>(
+              options.kkt_order, solid_mesh->Dimension());
+          fes_lam_bench_ = std::make_unique<ParFiniteElementSpace>(
+              solid_mesh, fec_lam_.get());
+        } else {
+          fes_lam_bench_ = std::make_unique<ParFiniteElementSpace>(
+              solid_mesh, fes_phi->FEColl());
+        }
         slip_problem->EnableKKT(fes_lam_bench_.get());
       }
       if (method == "slip") {
@@ -1330,6 +1344,7 @@ class Case {
   std::unique_ptr<ParSubMesh> buffer_sub_, fluid_sub_, outer_sub_;
   std::unique_ptr<ParFiniteElementSpace> fes_buffer_, fes_f_, fes_zo_,
       fes_lam_bench_;
+  std::unique_ptr<H1_FECollection> fec_lam_;
   std::unique_ptr<ParGridFunction> p0_solid_, p0_fluid_, rho_fluid_,
       kappa_fluid_, mu_fluid_;
   std::unique_ptr<GridFunctionCoefficient> p0_c_, kappa_fluid_c_;

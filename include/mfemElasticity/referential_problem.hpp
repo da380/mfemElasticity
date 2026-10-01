@@ -918,6 +918,14 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 #endif
   const mfem::Operator* op_Nlam_ = nullptr;
   mfem::Vector lambda_, lam_mass_diag_;
+  // Consistent theta-augmentation of the KKT solver blocks: theta *
+  // N Mhat^{-1} N^T replaces theta * Bn (same kernel as the constraint
+  // row, clustering the Schur complement at M_lam / theta).
+  std::unique_ptr<mfem::SparseMatrix> SK00_, SK01_, SK10_, SK11_;
+#ifdef MFEM_USE_MPI
+  std::unique_ptr<mfem::HypreParMatrix> pSK00_, pSK01_, pSK10_, pSK11_;
+#endif
+  std::unique_ptr<mfem::Solver> prec11_kkt_;
   mfem::Array<int> offsets_kkt_;
   std::unique_ptr<NullSpaceProjector> projector_kkt_;
   std::unique_ptr<mfem::BlockOperator> block_op_kkt_;

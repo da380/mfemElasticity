@@ -3775,11 +3775,88 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverKKT(
     m.Finalize();
     m.SpMat().GetDiag(mdiag);
   }
+  // The Schur complement of the theta-augmented system is spectrally
+  // close to M_Sigma / theta, so the preconditioner applies its inverse:
+  // theta * M_lumped^{-1}.
   lam_mass_diag_.SetSize(nlam);
   for (int i = 0; i < nlam; i++) {
-    lam_mass_diag_(i) = theta_ * mdiag(lam_dofs_[i]);
+    lam_mass_diag_(i) = theta_ / mdiag(lam_dofs_[i]);
   }
   prec_lam_ = std::make_unique<DiagonalScaleSolver>(lam_mass_diag_);
+
+  // Consistent augmentation: the solver blocks carry theta * N Mhat^{-1}
+  // N^T in place of theta * Bn — the same kernel as the constraint row,
+  // so the Schur complement clusters at M_lam / theta (Golub–Greif) and
+  // prec_lam_ matches it. D = 1/mhat on the interface dofs (N's other
+  // columns are zero, so D elsewhere is irrelevant).
+  const mfem::Operator *op_SK00, *op_SK01, *op_SK10, *op_SK11;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    auto* plam = static_cast<ParFiniteElementSpace*>(fes_lam_);
+    Vector dinv(plam->GetTrueVSize());
+    dinv = 0.0;
+    for (int i = 0; i < nlam; i++) {
+      dinv(lam_dofs_[i]) = 1.0 / mdiag(lam_dofs_[i]);
+    }
+    std::unique_ptr<HypreParMatrix> Nt(pNlam_->Transpose());
+    Nt->ScaleRows(dinv);
+    std::unique_ptr<HypreParMatrix> W(ParMult(pNlam_.get(), Nt.get()));
+    pSK00_.reset(mfem::Add(1.0, *pA00_, theta_, *W));
+    std::unique_ptr<HypreParMatrix> WJ(ParMult(W.get(), pJ_.get()));
+    pSK01_.reset(mfem::Add(1.0, *pA01_, -theta_, *WJ));
+    pSK10_.reset(pSK01_->Transpose());
+    std::unique_ptr<HypreParMatrix> JtWJ(mfem::RAP(W.get(), pJ_.get()));
+    std::unique_ptr<HypreParMatrix> acc(
+        mfem::Add(1.0, *pA11_, theta_, *JtWJ));
+    pSK11_.reset(mfem::Add(1.0, *acc, 1.0, *pQf_));
+    op_SK00 = pSK00_.get();
+    op_SK01 = pSK01_.get();
+    op_SK10 = pSK10_.get();
+    op_SK11 = pSK11_.get();
+    auto amg = std::make_unique<HypreBoomerAMG>(*pSK11_);
+    amg->SetSystemsOptions(dim_);
+    amg->SetPrintLevel(0);
+    prec11_kkt_ = std::move(amg);
+  } else
+#endif
+  {
+    Vector dinv(fes_lam_->GetTrueVSize());
+    dinv = 0.0;
+    for (int i = 0; i < nlam; i++) {
+      dinv(lam_dofs_[i]) = 1.0 / mdiag(lam_dofs_[i]);
+    }
+    std::unique_ptr<SparseMatrix> Nt(Transpose(*Nlam_));
+    Nt->ScaleRows(dinv);
+    std::unique_ptr<SparseMatrix> W(mfem::Mult(*Nlam_, *Nt));
+    SK00_.reset(Add(1.0, *A00_, theta_, *W));
+    std::unique_ptr<SparseMatrix> WJ(mfem::Mult(*W, *J_));
+    SK01_.reset(Add(1.0, *A01_, -theta_, *WJ));
+    SK10_.reset(Transpose(*SK01_));
+    std::unique_ptr<SparseMatrix> JtWJ(mfem::Mult(*Jt_, *WJ));
+    std::unique_ptr<SparseMatrix> acc(Add(1.0, *A11_, theta_, *JtWJ));
+    SK11_.reset(Add(1.0, *acc, 1.0, *Qf_));
+    op_SK00 = SK00_.get();
+    op_SK01 = SK01_.get();
+    op_SK10 = SK10_.get();
+    op_SK11 = SK11_.get();
+    prec11_kkt_ = std::make_unique<GSSmoother>(*SK11_);
+  }
+  {
+    // The displacement-block preconditioner is rebuilt on the
+    // consistently augmented block (the 3-block solver is unused in
+    // KKT mode).
+    OperatorHandle SK00h;
+#ifdef MFEM_USE_MPI
+    if (pfes_) {
+      SK00h.Reset(pSK00_.get(), false);
+    } else
+#endif
+    {
+      SK00h.Reset(SK00_.get(), false);
+    }
+    prec_stale_ = true;
+    SetupDefaultPreconditioner(SK00h);
+  }
 
   offsets_kkt_.SetSize(5);
   offsets_kkt_[0] = 0;
@@ -3800,10 +3877,10 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverKKT(
       *op_Nlam_, lam_dofs_, op_Jt_, -1.0, true));  // (1,3)
 
   block_op_kkt_ = std::make_unique<BlockOperator>(offsets_kkt_);
-  block_op_kkt_->SetBlock(0, 0, const_cast<Operator*>(op_S00_));
-  block_op_kkt_->SetBlock(0, 1, const_cast<Operator*>(op_S01_));
-  block_op_kkt_->SetBlock(1, 0, const_cast<Operator*>(op_S10_));
-  block_op_kkt_->SetBlock(1, 1, const_cast<Operator*>(op_S11_));
+  block_op_kkt_->SetBlock(0, 0, const_cast<Operator*>(op_SK00));
+  block_op_kkt_->SetBlock(0, 1, const_cast<Operator*>(op_SK01));
+  block_op_kkt_->SetBlock(1, 0, const_cast<Operator*>(op_SK10));
+  block_op_kkt_->SetBlock(1, 1, const_cast<Operator*>(op_SK11));
   block_op_kkt_->SetBlock(0, 2, const_cast<Operator*>(op_A02_));
   block_op_kkt_->SetBlock(2, 0, const_cast<Operator*>(op_A20_));
   block_op_kkt_->SetBlock(1, 2, const_cast<Operator*>(op_A12_));
@@ -3836,7 +3913,7 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SetupSolverKKT(
   block_prec_kkt_ =
       std::make_unique<BlockDiagonalPreconditioner>(offsets_kkt_);
   block_prec_kkt_->SetDiagonalBlock(0, prec_.get());
-  block_prec_kkt_->SetDiagonalBlock(1, prec11_.get());
+  block_prec_kkt_->SetDiagonalBlock(1, prec11_kkt_.get());
   block_prec_kkt_->SetDiagonalBlock(2, prec_zeta_.get());
   block_prec_kkt_->SetDiagonalBlock(3, prec_lam_.get());
 
