@@ -4075,6 +4075,80 @@ real_t LinearQuasiStaticReferentialSelfGravitatingSlipProblem::BlockNullPairResi
   return std::sqrt(Dot(r, r)) / (a_max * std::max(norm, real_t{1e-300}));
 }
 
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::ApplyBrokenBlock(
+    int i, int j, const Vector& x, Vector& y) {
+  MFEM_VERIFY(broken_zeta_,
+              "ApplyBrokenBlock: the broken-zeta organisation only "
+              "(EnableBrokenZeta).");
+  MFEM_VERIFY(i >= 0 && i < 4 && j >= 0 && j < 4,
+              "ApplyBrokenBlock: slots are 0..3.");
+  const Operator* op = nullptr;
+#ifdef MFEM_USE_MPI
+  if (pfes_) {
+    op = pbzS_[4 * i + j].get();
+  } else
+#endif
+  {
+    op = bzS_[4 * i + j].get();
+  }
+  MFEM_VERIFY(op,
+              "ApplyBrokenBlock: blocks not assembled — Solve() first.");
+  y.SetSize(op->Height());
+  op->Mult(x, y);
+}
+
+FiniteElementSpace&
+LinearQuasiStaticReferentialSelfGravitatingSlipProblem::BrokenSpace(int i) {
+  MFEM_VERIFY(broken_zeta_ && fes_zo_ && shadow_zeta_fluid_,
+              "BrokenSpace: the broken-zeta organisation only "
+              "(EnableBrokenZeta).");
+  switch (i) {
+    case 0:
+      return *fes_;
+    case 1:
+      return *fes_f_;
+    case 2:
+      return *fes_zo_;
+    case 3:
+      return *shadow_zeta_fluid_;
+    default:
+      MFEM_ABORT("BrokenSpace: slots are 0..3.");
+      return *fes_;
+  }
+}
+
+void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::ApplyBrokenKernel(
+    const std::string& kernel, const Vector& x, Vector& y) {
+  MFEM_VERIFY(broken_zeta_,
+              "ApplyBrokenKernel: the broken-zeta organisation only "
+              "(EnableBrokenZeta).");
+  const Operator* op = nullptr;
+  bool transpose = false;
+  if (kernel == "Bn") {
+    op = op_Bn_;
+  } else if (kernel == "Pb") {
+    op = op_Pb_;
+  } else if (kernel == "Mz") {
+    op = op_Mz_;
+  } else if (kernel == "Kvz") {
+    op = op_Kvz_;
+  } else if (kernel == "KvzT") {
+    op = op_Kvz_;
+    transpose = true;
+  } else {
+    MFEM_ABORT("ApplyBrokenKernel: kernels are Bn, Pb, Mz, Kvz, KvzT.");
+  }
+  MFEM_VERIFY(op,
+              "ApplyBrokenKernel: kernels not assembled — Solve() first.");
+  if (transpose) {
+    y.SetSize(op->Width());
+    op->MultTranspose(x, y);
+  } else {
+    y.SetSize(op->Height());
+    op->Mult(x, y);
+  }
+}
+
 std::vector<real_t>
 LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SlipRigidPairResiduals() {
   EnsureOperator();

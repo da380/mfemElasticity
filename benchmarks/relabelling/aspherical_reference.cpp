@@ -259,6 +259,44 @@ int main(int argc, char* argv[]) {
   }
   if (root) args.PrintOptions(std::cout);
 
+  // The shape parameters: a mesh built since aspherical_body.py wrote
+  // them records eps, beta (and buffer) in the manifest beside the
+  // mesh, which is then authoritative — the by-hand matching of the
+  // flags to the mesh was a recorded mistake (a stored "eps 0.02"
+  // comparison that had run on the stock eps 0.05 mesh). The flags
+  // cover older meshes without the meta; a flag that contradicts the
+  // manifest is refused unless it still holds its default.
+  {
+    std::string mmpath(mesh_file);
+    const auto ext = mmpath.rfind(".mesh");
+    if (ext != std::string::npos) {
+      mmpath = mmpath.substr(0, ext) + ".json";
+      if (std::ifstream(mmpath).good()) {
+        const MeshManifest mesh_manifest(mmpath);
+        auto adopt = [&](const char* key, double& value, double def) {
+          if (!mesh_manifest.HasMeta(key)) {
+            return;
+          }
+          const double recorded = mesh_manifest.MetaNumber(key);
+          MFEM_VERIFY(value == def || std::abs(value - recorded) < 1e-12,
+                      "-" << key << " " << value
+                          << " contradicts the mesh manifest (" << recorded
+                          << " in " << mmpath
+                          << "); drop the flag, the manifest is "
+                             "authoritative.");
+          value = recorded;
+        };
+        adopt("eps", eps, 0.05);
+        adopt("beta", beta, 0.5);
+        adopt("buffer", buffer, 0.2);
+        if (root && mesh_manifest.HasMeta("eps")) {
+          std::cout << "shape from the mesh manifest: eps " << eps
+                    << ", beta " << beta << ", buffer " << buffer << "\n";
+        }
+      }
+    }
+  }
+
   // The model data of the spherical case: profiles, reference, G.
   const MeshManifest manifest(case_file);
   const real_t G = manifest.G();

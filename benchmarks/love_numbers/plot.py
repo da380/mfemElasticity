@@ -287,6 +287,20 @@ def relative_error(run: Run, ref: dict, key: str) -> dict[int, float]:
             if l in ref[key] and ref[key][l] != 0.0}
 
 
+def scaled_error(run: Run, ref: dict, key: str) -> dict[int, float]:
+    """The error against the quantity's own scale, max over the degrees
+    of |reference|, rather than the pointwise value: a quantity passing
+    near zero at one degree (l'_2 crosses zero on fluid_core) otherwise
+    dominates a worst-of-six column with a large ratio that says nothing
+    about the method."""
+    values = ref.get(key, {})
+    scale = max((abs(v) for v in values.values()), default=0.0)
+    if scale == 0.0:
+        return {}
+    return {l: abs(v - values[l]) / scale
+            for l, v in run.values[key].items() if l in values}
+
+
 def print_table(runs: list[Run], ref: dict) -> None:
     for run in runs:
         print(f"\n{run.label}: {run.unknowns} unknowns, {run.ranks} ranks, "
@@ -810,7 +824,7 @@ def plot_model(directory: Path) -> list[str]:
         worst = {}
         if run is not None:
             for l in (2, 5):
-                errors = [relative_error(run, ref, q).get(l)
+                errors = [scaled_error(run, ref, q).get(l)
                           for q, *_ in QUANTITIES]
                 errors = [e for e in errors if e is not None]
                 worst[l] = f"{max(errors):.1e}" if errors else "-"
@@ -847,10 +861,10 @@ def main() -> None:
         summary += plot_model(directory)
     if not summary:
         raise SystemExit(f"no results under {args.directory}")
-    lines = ["| model | run | method | unknowns | worst error, degree 2 | "
-             "worst error, degree 5 | field error, u | field error, phi | "
-             "setup s | total s |", "|---|---|---|---|---|---|---|---|---|"
-             "---|", *summary]
+    lines = ["| model | run | method | unknowns | worst scaled error, "
+             "degree 2 | worst scaled error, degree 5 | field error, u | "
+             "field error, phi | setup s | total s |",
+             "|---|---|---|---|---|---|---|---|---|---|", *summary]
     out = (args.directory if len(directories) > 1
            else args.directory.parent) / "summary.md"
     if len(directories) > 1:

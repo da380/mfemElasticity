@@ -236,6 +236,7 @@ struct CaseOptions {
   const char* cmb = "full";
   const char* method = "dahlen";
   real_t slip_theta = 1e2;
+  real_t gs_scale = 1.0;
   int al_iterations = 8;
   real_t sweep_tol = 1e-3;
   bool kkt = false;
@@ -291,6 +292,11 @@ struct CaseOptions {
     args.AddOption(&al_iterations, "-al", "--al-iterations",
                    "Augmented-Lagrangian iterations per solve (slipping "
                    "methods).");
+    args.AddOption(&gs_scale, "-gs-scale", "--gravity-interface-scale",
+                   "DIAGNOSTIC (slip_broken): scale on the broken-zeta "
+                   "gravity interface form G_Sigma and its vz couplings; "
+                   "0 drops them. Changes the physics — for differential "
+                   "mapped-vs-unmapped leakage tests only.");
     args.AddOption(&gauge_kkt, "-gauge-kkt", "--gauge-kkt",
                    "Gauged method only: enforce the fluid gauge by the "
                    "exact KKT saddle instead of the epsilon penalty "
@@ -714,6 +720,26 @@ class Case {
           std::cout << " " << r;
         }
         std::cout << "\n";
+      }
+    }
+    if (options.diagnostics && !eulerian) {
+      // The slipping methods' rigid null pairs (common translations,
+      // then the independent solid and fluid mapped rotations): their
+      // residuals under the full block operator say whether the
+      // equilibrium-condition cancellation that the degree-1 response
+      // rests on survives the assembly (a mapped run that breaks it
+      // leaks into the unforced degree-1 orders).
+      if (auto* sp = dynamic_cast<
+              LinearQuasiStaticReferentialSelfGravitatingSlipProblem*>(
+              ref_problem.get())) {
+        const auto residuals = sp->SlipRigidPairResiduals();
+        if (root) {
+          std::cout << "Slip rigid-pair residuals:";
+          for (const auto r : residuals) {
+            std::cout << " " << r;
+          }
+          std::cout << "\n";
+        }
       }
     }
     setup_seconds = Seconds(start);
@@ -1292,6 +1318,13 @@ class Case {
                                   options.gauge_eps);
       slip_problem->SetConstraint(options.slip_theta,
                                   options.al_iterations);
+      if (options.gs_scale != 1.0) {
+        slip_problem->ScaleBrokenGravityInterface(options.gs_scale);
+        if (root) {
+          std::cout << "DIAGNOSTIC: G_Sigma scaled by " << options.gs_scale
+                    << "\n";
+        }
+      }
       // Shift (finite-difference) runs need the reproducible endpoint:
       // every sweep at full tolerance, whatever -sweep-tol says.
       slip_problem->SetSweepTolerance(

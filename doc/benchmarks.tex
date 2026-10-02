@@ -564,6 +564,19 @@ $\text{order}+1$ (dotted). Redrawn with the corrected \code{plot.py}.}
 \label{fig:fieldconv}
 \end{figure}
 
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{fc_convergence_uncapped.png}
+\includegraphics[width=0.75\textwidth]{fc_field_convergence_uncapped.png}
+\caption{The UNCAPPED ladder (2 Oct, \ref{r:ladder}'s rerun:
+\code{--angular 1.0}, so every rung refines the CMB; current code,
+\code{runs\_campaign/ladder}). The order-3 flat-then-cliff of
+Figure~\ref{fig:conv} is gone and the field errors fall throughout;
+the Love-number columns still carry cancellation (the implied degree-2
+rate is superconvergent), so the field rates are the quotable ones.}
+\label{fig:convuncapped}
+\end{figure}
+
 \paragraph{Cross-method comparison (Figures~\ref{fig:methods}--\ref{fig:timing}).}
 On \code{fluid\_core}, $h=0.3$, order 2, every formulation agrees with
 pyslfp to 0.2--4\,\% in $h'$ and $k'$ at degrees 0--4, which is the
@@ -812,8 +825,9 @@ from the gauge refinement (contraction 0.95)\review{r:identityheader}.
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.75\textwidth]{talk_identity.png}
-\caption{Talk figure: the identity per case. The slip value is hard-coded
-in the script from the 30 Sep measurement.}
+\caption{Talk figure: the identity per case. The slip value now comes
+from the campaign's slip identity log (2 Oct; the script falls back to
+the measured constant where no log exists).}
 \end{figure}
 
 \subsection{Leg C: an aspherical reference body (\code{aspherical\_reference})}
@@ -1306,6 +1320,12 @@ recorded, not fixed.
   The 0.40 error of the gauged \code{fluid\_core} run is this artefact.
   The norm should be restricted to the solid attributes, or the fluid
   excluded from the comparison.
+  \emph{Status 2 Oct:} fixed — \code{field\_benchmark} now takes the
+  $u$ error over the solid elements alone and writes the fluid's norm
+  separately (\code{u\_fluid\_norm}, a gauge diagnostic). Measured on
+  \code{fluid\_core} h\,0.3/o2: gauged $u$ (solid) $1.9\times10^{-2}$
+  (dahlen $1.3\times10^{-2}$), fluid gauge norm $0.046$ — the artefact
+  explanation is confirmed.
 \item \label{r:aspherical} \textbf{The stored amplitude comparison was
   not one.} \code{talk\_data/aspherical\_eps0.02\_o2.json} records
   $\eps=0.05$ and the stock mesh (built at the default
@@ -1316,6 +1336,14 @@ recorded, not fixed.
   figure state it on the wrong evidence. The driver's default
   \code{-eps 0.05} must match the mesh's $\eps$ by hand; nothing checks
   this (the mesh manifest could carry it).
+  \emph{Status 2 Oct:} the mislabelled JSON is deleted;
+  \code{aspherical\_body.py} now records $\eps$, $\beta$ and the buffer
+  in the mesh manifest's \code{meta} block, and
+  \code{aspherical\_reference} adopts them (a contradicting flag
+  aborts). The driver also had, since commit \code{eac0b91}, a
+  geometric seatbelt (the pulled-back surface must land on the unit
+  sphere to $10^{-2}$) that would have refused a mismatched invocation
+  — though not a misnamed output file, which is what actually happened.
 \item \label{r:slipleak} \textbf{Lateral leakage in mapped slip\_broken.}
   Mapped slip\_broken runs have \code{spurious} 0.6 at $l=1$ and
   $6\times10^{-2}$ at $l\ge2$, against $3$--$8\times10^{-3}$ unmapped and
@@ -1323,6 +1351,43 @@ recorded, not fixed.
   forms not being covariant (identity $1.2\times10^{-2}$), but the README
   describes the mapped runs as reproducing the unmapped ones without
   this caveat.
+  \emph{Status 2 Oct:} the README now carries the caveat, and the code
+  narrows the suspects: the $\varphi_e=\mathrm{id}$ mismatch-piece
+  limitation documented in \code{referential\_problem.hpp} belongs to
+  the \emph{single-valued} organisation, which refuses maps outright,
+  while the broken-$\zeta$ organisation that slip\_broken uses is
+  intended fully mapped — so some term of it is non-covariant in a way
+  its own documentation does not know.
+  \emph{Further, same day:} the identity driver now probes the sixteen
+  broken-$\zeta$ blocks and the stored constraint kernels. Every
+  $\zeta$--$\zeta$ block agrees to machine precision; every
+  $u$-involving block differs at $1$--$2.5\times10^{-4}$; the kernels
+  are exonerated ($B_n$ at $2\times10^{-16}$ — the Nanson
+  $\nu=\mathrm{adj}(F)^T n$ is invariant under face-fixing shears of
+  $F$ — and $P_b$, $K_{vz}$ at $10^{-7}$), and the base rows are
+  welded-certified, so by elimination the non-covariant content sits in
+  $B_\Sigma$/$G_\Sigma$ themselves: the $P_T F^{-1}$ slot and the
+  gravity $\mathbf{A}$-vector are not invariant under those shears,
+  which the interpolated $F$ carries on the interface (MFEM evaluates
+  $F$ from the adjacent volume element). The identity residual
+  \emph{anti-converges} ($u$ $1.2\times10^{-2}$ at $h=0.3$,
+  $4.5\times10^{-2}$ at $h=0.2$), a genuine defect rather than
+  interpolation noise. Two further probes of the exact-$F$ benchmark
+  leakage: (i) $G_\Sigma$ cannot be scaled out differentially — at
+  \code{-gs-scale 0.5} even the \emph{unmapped} degree-1 spurious blows
+  up to $0.46$ (and the mapped solve diverges), so $G_\Sigma$ sits
+  inside a razor-sharp degree-1 cancellation and the mapped leakage is
+  plausibly a small relative perturbation of it, hugely amplified;
+  (ii) the slip rigid null-pair residuals (now printed by
+  \code{love\_benchmark -diag}) survive the map essentially unchanged
+  (translations $2.4$ vs $2.6\times10^{-3}$, rotations doubled at
+  $\sim10^{-3}$), so the null-pair structure itself is not broken.
+  Settling the exact-$F$ mechanism needs either a $B_\Sigma$
+  counterpart of the scale hook, a difference-field map of the
+  mapped-vs-unmapped solutions, or a theory pass on the mapped
+  $B_\Sigma$/$G_\Sigma$ derivation (doc/slip\_interface.tex) — the
+  degree-1 cancellation identifies exactly which combination must be
+  preserved by the mapped assembly.
 \item \label{r:pertslip} \textbf{slip\_broken degree-2 derivatives.} The
   README says the slip\_broken derivatives agree ``at the few-percent
   level'' for degrees 3--4. The 1 Oct data give $h'_2$ 25\,\%, $k'_2$
@@ -1330,13 +1395,16 @@ recorded, not fixed.
   referential on the same mesh. The two methods share the shift map and
   the reference, so the difference sits in the slipping forms under a
   moving interface. Possibly the same non-covariance as
-  \ref{r:slipleak}.
+  \ref{r:slipleak}. \emph{Status 2 Oct:} open; see \ref{r:slipleak}'s
+  status — the same scheduled diagnostic covers both.
 \item \label{r:cmbclaim} \textbf{``Loading-safe, $\le0.1\,\%$''.} The top-level
   README states the CMB approximations are within 0.1\,\% for loading at
   $l\ge2$. That holds for $h'$ (the table in \code{cmb\_conditions.md} is
   $h'$ only). $l'_2$ and $k'_2$ deviate by about 0.3\,\%, and the talk
   figure shows $k'_2$ at 0.29\,\%. Still below the mesh error, but the
   sentence should say which number.
+  \emph{Status 2 Oct:} fixed — the README names $h'$ and the
+  $\sim0.3\,\%$ of $l'_2$, $k'_2$.
 \item \label{r:ladder} \textbf{The \code{fluid\_core} ladder is not
   asymptotic.} Order 3 is flat from $h=0.3$ to $0.15$ and then drops by
   10--100$\times$ at $0.12$ alone, and the geometry-order-3 ladder is
@@ -1346,12 +1414,34 @@ recorded, not fixed.
   drop. Candidates: a cancellation at $0.12$, a floor from the DtN
   degree (16) or the reference, or the geometry. The fitted rates of
   this ladder should not be quoted as convergence orders.
+  \emph{Status 2 Oct:} the cap arithmetic is confirmed in planetmodel
+  ($\min(h, 0.3r)$ with $r_{\text{cmb}}=0.549\to0.165$); an uncapped
+  ladder (\code{--angular 1.0}, every rung refining the CMB) now lives
+  in \code{runs\_campaign/ladder}. On it the order-3 flat-then-cliff is
+  gone: the degree-2 scaled error falls monotonically-ish
+  ($7.7\times10^{-3}\to2.5\times10^{-5}$ over $h=0.3\to0.12$, one
+  non-monotone rung at $0.15$), and the field errors fall throughout —
+  but the implied degree-2 rate ($\sim6$) is superconvergent, so the
+  Love-number columns still carry cancellation and fitted rates should
+  still not be quoted; the field-error rates are the quotable ones.
 \item \label{r:gaugedprofile} \textbf{Gauged $\phi_1$ inside the core.}
   In \code{profiles.png} the gauged method's degree-1 potential leaves the
   reference inside the fluid core ($r\lesssim0.5$) while matching at the
   interfaces. It may be the degree-one frame correction (applied with the
   background gravity of the profile layer) or the gauge, but it is
   unexplained.
+  \emph{Status 2 Oct:} measured and sharpened — it is the formulation,
+  not the plot. The degree-1 $\phi$ profile's relative RMS deviation
+  from the reference is, for the gauged method, $0.119$ in the core and
+  $0.053$ in the mantle at $h=0.3$, and $0.120$/$0.056$ at $h=0.2$ —
+  flat in $h$ — while dahlen's falls with refinement
+  ($0.013\to0.010$ core). It is also flat in the gauge
+  $\eps\in[10^{-2},10^{-1}]$ and in the refinement count, and $\phi$ is
+  gauge-invariant under exact relabellings, so this is a systematic
+  $\sim12\,\%$ defect of the gauged formulation's degree-1 interior
+  response (its surface values stay at the 1\,\% level). The gauged
+  formulation's degree-1 terms need review before the method is used
+  for interior fields.
 \item \label{r:identityheader} \textbf{Stale header in
   \code{relabelled\_identity.cpp}.} The header comment still says that the
   gauge penalty is ``the one non-covariant assembly piece'' and that the
@@ -1360,12 +1450,22 @@ recorded, not fixed.
   say otherwise. The same run prints a gauge semi-convergence warning
   (contraction 0.95 at $\eps=10^{-2}$), which does not affect the identity
   but says the gauge refinement is not contracting on that mesh.
+  \emph{Status 2 Oct:} the header is rewritten to match the code (strict
+  on every welded case; the slip leg informational with the
+  non-covariant term unlocalised). The semi-convergence itself remains
+  open — the gauged field run on \code{fluid\_core} h\,0.3 prints
+  contraction $1.013$, and the gauged solid field error is insensitive
+  to $\eps\in[10^{-2},1]$ and to the refinement count.
 \item \label{r:worst} \textbf{``Worst error'' columns are $l'$ columns.}
   The summaries' worst-of-six error at degree 2 is nearly always $l'_2$,
   a small number (e.g.\ $-0.0175$ on \code{fluid\_core}), so the column
   reads 17\,\% for methods whose $h'$, $k'$ are at 1\,\%. A relative error
   against $\max(|x_{\text{ref}}|,\text{scale})$, or per-number columns,
   would be more informative.
+  \emph{Status 2 Oct:} fixed — the summary columns now use a scaled
+  error (each quantity against its own largest reference value over the
+  degrees) and are headed ``worst scaled error''; \code{fluid\_core}
+  degree 2 reads $1$--$2\times10^{-2}$ across the methods.
 \item \label{r:derivlabel} \textbf{``Perturbation theory'' label.} The
   1-D side of the derivative check is a central difference of pyslfp
   solves, not a perturbation-theory kernel. The old talk figure's axis
@@ -1380,6 +1480,17 @@ recorded, not fixed.
   made before the outward-shift fix. The talk figures read from both.
   Before any external use the methods and model sweeps should be rerun
   on the current code; the campaign script can do this unattended.
+  \emph{Status 2 Oct:} done — \code{runs\_campaign}'s stale results
+  (its slip rows, 30 Sep, predated the 1 Oct slip fix) were moved to
+  \code{runs\_campaign\_stale\_20261002} and the local campaign, the
+  model sweep (h\,0.2, orders 2 and 3, eight models), the prem\_4 CMB
+  variants and the uncapped ladder were rerun on the current code (all
+  stages ok); \code{talk\_figures.py}'s defaults now read
+  \code{runs\_campaign} throughout and all nine talk figures are
+  regenerated, retiring \code{love\_numbers/runs} and
+  \code{runs\_methods}. On the current code the mapped slip\_broken
+  leakage persists at about half strength (\code{spurious} 0.36 at
+  $l=1$, $6$--$9\times10^{-2}$ at $l\ge2$).
 \end{enumerate}
 
 \end{document}

@@ -275,6 +275,17 @@ def main() -> None:
                      "-map", prof["map_amplitude"]],
                     log_file=out / "relabelling" /
                     f"identity_{model}_h{h:g}.txt"))
+                # The slipping-interface leg (informational, with the
+                # broken-block and kernel probes) on the slip models.
+                if model in SLIP_MODELS:
+                    stage(f"identity:{model}:h{h:g}:slip", sh(
+                        [mpiexec, "-np", prof["np"],
+                         programs / "relabelled_identity", "-c", case,
+                         "-o", max(prof["orders"]),
+                         "-map", prof["map_amplitude"],
+                         "-method", "slip_broken"],
+                        log_file=out / "relabelling" /
+                        f"identity_{model}_slip_h{h:g}.txt"))
 
     # 6. The independently meshed aspherical body (single solid layer).
     # The stock mesh serves at scale one; a finer profile regenerates it.

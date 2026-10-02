@@ -848,6 +848,35 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * the independent solid and fluid mapped rotations. */
   std::vector<mfem::real_t> SlipRigidPairResiduals();
 
+  /** @brief Diagnostic (broken mode, after a Solve): the assembled
+   * broken solver block @f$(i, j)@f$ applied to a true-dof vector —
+   * the relabelled identity's per-block probes, localising a
+   * non-covariant assembly term to its block. Slots: 0 the solid
+   * displacement, 1 the fluid displacement, 2 @f$\zeta_o@f$, 3
+   * @f$\zeta_f@f$. The blocks carry the constraint penalties
+   * (@f$\theta@f$, @f$\theta_\zeta@f$) folded in, as the solver sees
+   * them; the (2,2) block EXCLUDES the DtN fold, which differs between
+   * a relabelled pair by the mesh-centroid centring alone. Serial and
+   * parallel. */
+  void ApplyBrokenBlock(int i, int j, const mfem::Vector& x,
+                        mfem::Vector& y);
+
+  /** @brief The space of broken slot @p i, for building probe fields
+   * (see ApplyBrokenBlock). */
+  mfem::FiniteElementSpace& BrokenSpace(int i);
+
+  /** @brief Diagnostic (broken mode, after a Solve): one stored
+   * interface kernel applied to a true-dof vector — the second level of
+   * the relabelled identity's probes, separating the constraint kernels
+   * by their mapping ingredients. Kernels: "Bn" the normal-jump
+   * @f$\nu\cdot\,\cdot\;\nu\cdot\,\cdot@f$ (solid u slot; the Nanson
+   * @f$\nu@f$ alone), "Pb" the scalar-jump @f$b\otimes b@f$ mass (solid
+   * u slot; the mapped @f$b = F^{-T}\nabla\zeta^0@f$), "Kvz" the mixed
+   * @f$b@f$-kernel (zeta_s trial, solid u test), and "Mz" the plain
+   * interface scalar mass (zeta_s slot; no mapping ingredient). */
+  void ApplyBrokenKernel(const std::string& kernel, const mfem::Vector& x,
+                         mfem::Vector& y);
+
   /** @brief The base-class gauged fluid is not meaningful here (the fluid
    * has its own space); use SetFluidGauge(). */
   void SetGaugedFluid(const mfem::Array<int>&, mfem::Coefficient&,

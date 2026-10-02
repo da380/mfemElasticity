@@ -1,0 +1,58 @@
+\contentsline {section}{\numberline {1}Common setting}{2}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Organisation}{2}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}The physical problem}{3}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}Units}{3}{subsection.1.3}%
+\contentsline {subsection}{\numberline {1.4}The models}{3}{subsection.1.4}%
+\contentsline {subsection}{\numberline {1.5}Cases}{4}{subsection.1.5}%
+\contentsline {subsection}{\numberline {1.6}The reference: pyslfp}{4}{subsection.1.6}%
+\contentsline {subsection}{\numberline {1.7}Forcings and the Love numbers read from a 3-D solution}{5}{subsection.1.7}%
+\contentsline {paragraph}{Degree one: the centre-of-mass frame.}{5}{section*.2}%
+\contentsline {paragraph}{Degree zero with a fluid layer.}{5}{section*.3}%
+\contentsline {paragraph}{Spurious coefficients.}{5}{section*.4}%
+\contentsline {paragraph}{Radial functions of a 3-D solution.}{5}{section*.5}%
+\contentsline {paragraph}{Combined solves.}{6}{section*.6}%
+\contentsline {subsection}{\numberline {1.8}Error measures}{6}{subsection.1.8}%
+\contentsline {subsection}{\numberline {1.9}Provenance of the figures}{6}{subsection.1.9}%
+\contentsline {section}{\numberline {2}The Love-number family}{6}{section.2}%
+\contentsline {subsection}{\numberline {2.1}What is tested, and the aim}{6}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}The formulations compared}{7}{subsection.2.2}%
+\contentsline {paragraph}{Assumption: what ``agreement'' means for a non-neutral fluid.}{7}{section*.7}%
+\contentsline {subsection}{\numberline {2.3}The CMB treatments}{8}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}The field benchmark}{8}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Resolution and the $h$-ladder}{9}{subsection.2.5}%
+\contentsline {subsection}{\numberline {2.6}Results}{9}{subsection.2.6}%
+\contentsline {paragraph}{Every model, orders 2 and 3 (Figure~\ref {fig:models}).}{9}{section*.8}%
+\contentsline {paragraph}{The $h$-ladder on \texttt {fluid\_core} (Figures~\ref {fig:ladder}, \ref {fig:conv}).}{9}{section*.9}%
+\contentsline {paragraph}{Cross-method comparison (Figures~\ref {fig:methods}--\ref {fig:timing}).}{11}{section*.10}%
+\contentsline {paragraph}{Radial profiles (Figure~\ref {fig:profiles}).}{13}{section*.11}%
+\contentsline {paragraph}{Fields (Figures~\ref {fig:fieldmap}, \ref {fig:spectrum}).}{14}{section*.12}%
+\contentsline {subsection}{\numberline {2.7}The CMB approximations: results}{15}{subsection.2.7}%
+\contentsline {section}{\numberline {3}The relabelling family}{16}{section.3}%
+\contentsline {subsection}{\numberline {3.1}What is tested, and the aim}{16}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}The interior relabelling}{16}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Leg A: mapped Love numbers (\texttt {love\_benchmark -map})}{16}{subsection.3.3}%
+\contentsline {subsection}{\numberline {3.4}Leg B: the discrete change-of-variables identity (\texttt {relabelled\_identity})}{17}{subsection.3.4}%
+\contentsline {subsection}{\numberline {3.5}Leg C: an aspherical reference body (\texttt {aspherical\_reference})}{18}{subsection.3.5}%
+\contentsline {section}{\numberline {4}The perturbation family}{19}{section.4}%
+\contentsline {subsection}{\numberline {4.1}What is tested, and the aim}{19}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Assumptions and implementation details}{19}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Results}{19}{subsection.4.3}%
+\contentsline {section}{\numberline {5}The viscoelastic family}{22}{section.5}%
+\contentsline {subsection}{\numberline {5.1}The stepping survey}{22}{subsection.5.1}%
+\contentsline {paragraph}{What is tested, and the aim.}{22}{section*.13}%
+\contentsline {paragraph}{Results (Figure~\ref {fig:survey}).}{22}{section*.14}%
+\contentsline {subsection}{\numberline {5.2}The Laplace-domain reference}{23}{subsection.5.2}%
+\contentsline {paragraph}{The correspondence principle.}{23}{section*.15}%
+\contentsline {paragraph}{Gaver--Stehfest inversion.}{23}{section*.16}%
+\contentsline {paragraph}{The instability horizon.}{23}{section*.17}%
+\contentsline {paragraph}{The relaxed limit is not $t\to \infty $.}{24}{section*.18}%
+\contentsline {paragraph}{Sanity checks.}{24}{section*.19}%
+\contentsline {subsection}{\numberline {5.3}The finite-element histories}{24}{subsection.5.3}%
+\contentsline {paragraph}{The driver.}{24}{section*.20}%
+\contentsline {paragraph}{The comparison metrics (\texttt {compare.py}).}{24}{section*.21}%
+\contentsline {paragraph}{Results.}{25}{section*.22}%
+\contentsline {paragraph}{Time series (new, Figure~\ref {fig:series}).}{26}{section*.23}%
+\contentsline {section}{\numberline {6}Figure review}{27}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Changes made to the plotting scripts}{27}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Further suggestions (not done)}{28}{subsection.6.2}%
+\contentsline {section}{\numberline {7}Points for review}{28}{section.7}%

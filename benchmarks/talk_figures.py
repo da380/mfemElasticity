@@ -198,10 +198,14 @@ def identity_figure(campaign: Path, out: Path) -> None:
         path = campaign / log
         if path.exists():
             bars.append((label, measured(path), GOOD))
-    # The slipping interface, measured 30 Sep 2026 (fluid_core,
-    # A = 0.02, h = 0.3): the interface constraint forms are not yet
-    # certified covariant.
-    bars.append(("fluid core (slip interface)", 1.2e-2, WARN))
+    # The slipping interface: read the campaign's slip identity log when
+    # it exists; the fallback constant is the 2 Oct 2026 measurement
+    # (fluid_core, A = 0.02, h = 0.3; the interface forms B_Sigma /
+    # G_Sigma are not yet certified covariant).
+    slip_log = campaign / "identity_fluid_core_slip_h0.3.txt"
+    bars.append(("fluid core (slip interface)",
+                 measured(slip_log) if slip_log.exists() else 1.2e-2,
+                 WARN))
     fig, ax = plt.subplots(figsize=(9.2, 4.2))
     y = range(len(bars))[::-1]
     ax.barh(y, [b[1] for b in bars], color=[b[2] for b in bars],
@@ -537,12 +541,16 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    base = Path("love_numbers")
+    # Defaults read the campaign tree (runs_campaign), regenerated on
+    # the current code 2 Oct 2026; the retired love_numbers/runs and
+    # runs_methods trees (28–30 Sep) predate the slip fix, the covariant
+    # gauge penalty and the AL tolerance change.
+    base = Path("runs_campaign/love_numbers")
     p.add_argument("--out", type=Path, default=Path("talk"))
     p.add_argument("--methods-case", type=Path,
-                   default=base / "runs_methods/fluid_core/h0.3")
+                   default=base / "fluid_core/h0.3")
     p.add_argument("--cmb-case", type=Path,
-                   default=base / "runs/prem_4_cmb/h0.2")
+                   default=base / "prem_4/h0.2")
     p.add_argument("--identity-logs", type=Path,
                    default=Path("runs_campaign/relabelling"))
     p.add_argument("--aspherical", type=Path, default=Path("talk_data"))
@@ -552,8 +560,11 @@ def main() -> None:
                         "and references (the slip_broken shift runs "
                         "before 1 Oct 2026 carry the outward-shift defect)")
     p.add_argument("--ladder", type=Path,
-                   default=base / "runs/fluid_core")
-    p.add_argument("--models", type=Path, default=base / "runs")
+                   default=Path("runs_campaign/ladder/fluid_core"),
+                   help="the UNCAPPED ladder (--angular 1.0: every rung "
+                        "refines the CMB; the capped rungs held it at "
+                        "0.165 for h >= 0.165)")
+    p.add_argument("--models", type=Path, default=base)
     p.add_argument("--viscoelastic", type=Path,
                    default=Path("viscoelastic_series"))
     p.add_argument("--field", type=Path,

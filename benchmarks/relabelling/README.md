@@ -29,6 +29,13 @@ mpiexec -np 8 ../bin/aspherical_reference \
   unmapped). Needs a case with `radial_profiles.txt` (re-make older
   cases); the mapped runs' `spurious` column now measures lateral
   leakage, a free check that the lateral machinery cancels exactly.
+  `referential` meets this; **mapped `slip_broken` currently does
+  not** — on fluid_core h 0.3 / o2 its spurious column is 0.63 at
+  l = 1 and 6–7e-2 at l >= 2, against 3–8e-3 unmapped and for mapped
+  `referential` — consistent with the identity leg below staying
+  informational through the slipping interface. The non-covariant
+  term has not been localised yet; treat mapped `slip_broken` numbers
+  as unverified until it is (open item).
 - `aspherical_reference` (exact F, independent mesh): the
   independently-meshed leg — the same spherical physics described from
   an ASPHERICAL reference body whose mesh comes from its own generator
@@ -62,9 +69,28 @@ mpiexec -np 8 ../bin/aspherical_reference \
   pulled-back deviatoric tensor through `ElasticTensorIntegrator`'s
   mapped form — note it must be that integrator: the material-stiffness
   form expects a RELABELLED tensor and is not the plain pull-back).
-  Through the slipping interface the run stays informational (u 1.2e-2
-  at A = 0.02: the interface constraint forms are not yet certified
-  covariant). The driver also prints per-attribute differences and
-  operator-action probes (the same field through both sides' assembled
-  operators, and the penalty alone), which localise any future
-  non-covariant term to its block.
+  Through the slipping interface the run stays
+  informational (u 1.2e-2, zeta 8e-3 at A = 0.02, h = 0.3 on
+  fluid_core; 4.5e-2/5.6e-2 at h = 0.2 — it does NOT decay with
+  refinement, so this is not interpolation noise). The driver's probes
+  now cover the broken organisation too: the sixteen assembled solver
+  blocks (`ApplyBrokenBlock`) and the stored constraint kernels
+  (`ApplyBrokenKernel`). Measured (A = 0.02, h = 0.3): every
+  zeta-zeta block agrees to machine precision, every u-involving
+  block differs at 1-2.5e-4; the kernels are exonerated (Bn 2e-16 —
+  the Nanson nu = adj(F)^T n is invariant under shears of F that fix
+  the face — and Pb/Kvz at 1e-7), and the base solid row and C
+  couplings are welded-certified, so by elimination the non-covariant
+  content sits in the slip interface forms B_Sigma / G_Sigma
+  themselves: their `P_T F^{-1}` slot and the gravity A-vector are NOT
+  invariant under face-fixing shears of the interpolated F, which MFEM
+  evaluates from the adjacent volume element. The exact-F benchmark
+  leakage is a separate, still-open mechanism: G_Sigma sits inside a
+  razor-sharp degree-1 cancellation (`-gs-scale 0.5` blows up even the
+  unmapped spurious to 0.46), so the mapped leakage is plausibly a
+  small relative perturbation of that cancellation, hugely amplified;
+  the slip rigid null-pair residuals (`love_benchmark -diag`) survive
+  the map essentially unchanged, so the null-pair structure itself is
+  not broken. Next instruments: a B_Sigma scale hook, a
+  difference-field map of mapped-vs-unmapped solutions, or the theory
+  pass on the mapped B_Sigma/G_Sigma forms.

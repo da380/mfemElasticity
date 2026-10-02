@@ -79,12 +79,14 @@ def build(dim: int, buffer: bool, args) -> None:
                                  name="tapered shape"))
         spec = MeshSpec(geometry, sizing, dimension=dim, order=2,
                         shells=[Shell(ratio=BUFFER, name="buffer")],
-                        outer_boundary="spherical")
+                        outer_boundary="spherical",
+                        meta={"eps": eps, "beta": beta, "buffer": BUFFER})
         name = f"aspherical_buffer_{dim}d{suffix}"
     else:
         geometry = body.stretched(CallableDisplacement(my_shape,
                                                        name="shape"))
-        spec = MeshSpec(geometry, sizing, dimension=dim, order=2)
+        spec = MeshSpec(geometry, sizing, dimension=dim, order=2,
+                        meta={"eps": eps, "beta": beta})
         name = f"aspherical_{dim}d{suffix}"
 
     # The reference (spherical) mesh, then the MFEM file with the nodes moved.

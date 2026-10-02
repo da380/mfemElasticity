@@ -38,17 +38,22 @@
 //    show up linearly, which is what this driver detects). The vacuum
 //    extension, which is gauge DATA, is shared between the sides.
 //
-//  - The fluid GAUGE PENALTY is the one non-covariant assembly piece:
-//    a stock (unmapped) integrator on each side's own fluid geometry,
-//    so the two sides gauge-fix differently and the gauge subspace,
-//    whose stiffness is O(eps), turns an O(eps A) operator difference
-//    into O(A) gauge shifts (measured: u 4e-3 welded-gauged, 1e-1
-//    through the slipping interface forms, at A = 0.02, h = 0.35,
-//    while zeta stays 1e-4 — the physics is gauge-invariant, the
-//    discrete representative is not). The identity is therefore
-//    STRICT on gauge-free cases (solid models, welded) and
-//    informational where gauge machinery runs; a mapping-aware gauge
-//    penalty would make those exact too and is noted as the follow-up.
+//  - The fluid GAUGE PENALTY is assembled covariantly — the
+//    pulled-back deviatoric tensor through ElasticTensorIntegrator's
+//    mapped form; it must be that integrator, since the
+//    material-stiffness form expects a RELABELLED tensor, not the
+//    plain pull-back — so the two sides gauge-fix identically and
+//    every WELDED case is STRICT, the gauged fluid included
+//    (u 1.6e-7 at A = 0.02, h = 0.3, the DtN-centring floor).
+//    Through the SLIPPING interface the run stays informational
+//    (u 1.2e-2, zeta 8e-3 at A = 0.02, h = 0.3 on fluid_core): some
+//    term of the broken-zeta organisation is not covariant, and it is
+//    not yet localised — the per-attribute breakdown and the
+//    operator-action probes below cover the welded organisation only,
+//    and extending them to the broken blocks is the follow-up. (The
+//    single-valued slip organisation assembles its gravity MISMATCH
+//    pieces at phi_e = id and refuses maps outright; that documented
+//    limitation is a separate matter.)
 //
 // Both parallel meshes are built from the same serial partition, so the
 // true-dof numbering coincides and the solutions compare entrywise.
@@ -58,8 +63,10 @@
 //    mpiexec -np 8 ./relabelled_identity -c case.json -method slip_broken
 // ============================================================================
 
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
 
 #include "benchmark_case.hpp"
@@ -476,6 +483,99 @@ int main(int argc, char* argv[]) {
   const bool okA = A->problem->Solve();
   const bool okB = B->problem->Solve();
 
+  // Per-block probes of the broken-zeta organisation (after the solves:
+  // the sixteen solver blocks are assembled by SetupSolverBroken): one
+  // smooth field per slot (u_s, u_f, zeta_o, zeta_f), projected once on
+  // side A's spaces — the sides share the dof layout — and pushed
+  // through both sides' blocks. A non-covariant assembly term shows up
+  // in its block's column; the (2,2) entry excludes the DtN fold, which
+  // differs by the mesh-centroid centring alone.
+  if (slip) {
+    using SlipProblem = LinearQuasiStaticReferentialSelfGravitatingSlipProblem;
+    auto* SA = dynamic_cast<SlipProblem*>(A->problem.get());
+    auto* SB = dynamic_cast<SlipProblem*>(B->problem.get());
+    MFEM_VERIFY(SA && SB, "broken-block probes: unexpected problem type.");
+    Vector x[4];
+    for (int j = 0; j < 4; j++) {
+      auto* pfes =
+          dynamic_cast<ParFiniteElementSpace*>(&SA->BrokenSpace(j));
+      MFEM_VERIFY(pfes, "broken-block probes: parallel spaces expected.");
+      ParGridFunction g(pfes);
+      if (pfes->GetVDim() > 1) {
+        VectorFunctionCoefficient c(
+            pfes->GetVDim(), [](const Vector& p, Vector& v) {
+              for (int k = 0; k < v.Size(); k++) {
+                v[k] = std::sin(3.0 * p[0] + k) * std::cos(2.0 * p[1]) +
+                       0.3 * p[2] + 0.1 * (k + 1);
+              }
+            });
+        g.ProjectCoefficient(c);
+      } else {
+        FunctionCoefficient c([](const Vector& p) {
+          return std::sin(2.0 * p[0]) * std::cos(p[1]) + 0.3 * p[2];
+        });
+        g.ProjectCoefficient(c);
+      }
+      g.GetTrueDofs(x[j]);
+    }
+    const char* slots[4] = {"u_s", "u_f", "z_o", "z_f"};
+    if (Mpi::Root()) {
+      std::cout << "\n  broken-block probes, |(S_A - S_B) x| / |S_B x| "
+                   "(columns: x in u_s, u_f, z_o, z_f):\n";
+    }
+    for (int i = 0; i < 4; i++) {
+      std::ostringstream line;
+      for (int j = 0; j < 4; j++) {
+        Vector yA, yB;
+        SA->ApplyBrokenBlock(i, j, x[j], yA);
+        SB->ApplyBrokenBlock(i, j, x[j], yB);
+        real_t s[2] = {0.0, 0.0};
+        for (int k = 0; k < yA.Size(); k++) {
+          const real_t d = yA[k] - yB[k];
+          s[0] += d * d;
+          s[1] += yB[k] * yB[k];
+        }
+        MPI_Allreduce(MPI_IN_PLACE, s, 2, MPITypeMap<real_t>::mpi_type,
+                      MPI_SUM, MPI_COMM_WORLD);
+        line << "  " << std::setw(9) << std::setprecision(2)
+             << std::scientific
+             << std::sqrt(s[0] / std::max(s[1], real_t{1e-300}))
+             << std::defaultfloat;
+      }
+      if (Mpi::Root()) {
+        std::cout << "    row " << slots[i] << line.str() << "\n";
+      }
+    }
+    // Second level: the stored constraint kernels, separated by their
+    // mapping ingredient — Bn carries the Nanson nu alone (invariant
+    // under shears of F that fix the face, by nu = adj(F)^T n), Pb and
+    // Kvz carry the mapped b = F^{-T} grad zeta0 (its normal component
+    // is NOT invariant under those shears), Mz carries no mapping.
+    if (Mpi::Root()) {
+      std::cout << "  kernel probes, |(K_A - K_B) x| / |K_B x| (x the u_s "
+                   "probe):\n";
+    }
+    for (const char* k : {"Bn", "Pb", "KvzT"}) {
+      Vector yA, yB;
+      SA->ApplyBrokenKernel(k, x[0], yA);
+      SB->ApplyBrokenKernel(k, x[0], yB);
+      real_t s[2] = {0.0, 0.0};
+      for (int m = 0; m < yA.Size(); m++) {
+        const real_t d = yA[m] - yB[m];
+        s[0] += d * d;
+        s[1] += yB[m] * yB[m];
+      }
+      MPI_Allreduce(MPI_IN_PLACE, s, 2, MPITypeMap<real_t>::mpi_type,
+                    MPI_SUM, MPI_COMM_WORLD);
+      if (Mpi::Root()) {
+        std::cout << "    " << std::setw(5) << k << "  "
+                  << std::setprecision(2) << std::scientific
+                  << std::sqrt(s[0] / std::max(s[1], real_t{1e-300}))
+                  << std::defaultfloat << "\n";
+      }
+    }
+  }
+
   auto rel_diff = [&](const GridFunction& a, const GridFunction& b) {
     Vector ta, tb;
     a.GetTrueDofs(ta);
@@ -532,7 +632,8 @@ int main(int argc, char* argv[]) {
   // cases, the gauged fluid included now that the gauge penalty is
   // assembled as the exact pull-back (ElasticTensorIntegrator with the
   // pulled-back deviatoric tensor). The slipping interface remains
-  // informational until its interface forms are certified the same way.
+  // informational until its non-covariant term is localised and mapped
+  // (the probes above do not yet cover the broken-zeta blocks).
   const bool strict = !slip;
   const bool pass = okA && okB && (!strict || (du < 1e-5 && dz < 1e-5));
   if (root) {

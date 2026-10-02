@@ -115,8 +115,10 @@ family READMEs and `doc/BenchmarkPapers/cmb_conditions.md`):
   interface, and the referential family's aspherical/topography and
   adjoint machinery.
 - **The CMB approximations buy a little and cost accuracy where the
-  deep interior is sampled.** Loading-safe (`uniform`/`nomass`
-  <= 0.1 % at l >= 2), ~10× worse on tides, and the tidal column is
+  deep interior is sampled.** Loading-safe (`uniform`/`nomass`: h'
+  within 0.1 % at l >= 2, the number the cmb_conditions.md table
+  tracks; l'_2 and k'_2 reach ~0.3 %, still below the mesh error),
+  ~10× worse on tides, and the tidal column is
   what governs ROTATIONAL FEEDBACKS (the (2,1) inertia route is a
   degree-2 tidal-type response): scaled by the feedback's ~10 % share
   of the sea-level signal, `uniform`/`nomass` contribute ~0.1–0.3 % of
