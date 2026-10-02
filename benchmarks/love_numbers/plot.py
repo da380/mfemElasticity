@@ -53,6 +53,16 @@ COLOURS = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300",
 MARKERS = ("o", "s", "^", "D", "v", "P", "X", "*")
 INK, MUTED, GRID, SURFACE = "#0b0b0b", "#52514e", "#e4e3df", "#fcfcfb"
 
+#: One colour per formulation and per CMB treatment, the same in every
+#: figure of every family (talk_figures.py uses the same map), so that a
+#: series keeps its colour whatever else is drawn beside it.
+VARIANT_COLOURS = {"dahlen": "#2a78d6", "gauged": "#eb6834",
+                   "referential": "#eda100", "slip": "#008300",
+                   "slip_broken": "#4a3aa7", "nomass": "#1baf7a",
+                   "uniform": "#e87ba4", "winkler": "#e34948"}
+#: The marker of each finite-element order.
+ORDER_MARKERS = {1: "v", 2: "o", 3: "s", 4: "D"}
+
 #: The quantities compared: key, label, forcing in the results, the
 #: reference's array.
 QUANTITIES = (
@@ -85,6 +95,30 @@ class Run:
     #: wall seconds and outer iterations of the LOAD solve, by degree
     solve_seconds: dict[int, float] = None
     iterations: dict[int, int] = None
+    #: the CMB treatment of the Dahlen path ("full" otherwise)
+    cmb: str = "full"
+    map_amplitude: float = 0.0
+    schur: bool = False
+    combined: bool = False
+
+    @property
+    def variant(self) -> str:
+        """The series a run belongs to, whatever its h and order: the
+        formulation with its CMB, solver, mapping and combined tags."""
+        i = self.label.find("(")
+        return self.label[i:] if i >= 0 else ""
+
+    @property
+    def variant_name(self) -> str:
+        """The variant as a legend label: the method and its tags."""
+        name = self.method if self.cmb == "full" else f"cmb {self.cmb}"
+        if self.map_amplitude:
+            name += f", map {self.map_amplitude:g}"
+        if self.schur:
+            name += ", Schur CG"
+        if self.combined:
+            name += ", combined"
+        return name
 
 
 def style() -> None:
@@ -163,7 +197,78 @@ def read_run(path: Path, *, fluid: bool) -> Run:
                unknowns=r["displacement_unknowns"] + r["potential_unknowns"],
                values=values, label=label, method=method, tag=tag,
                setup_seconds=r["setup_seconds"],
-               solve_seconds=solve_seconds, iterations=iterations)
+               solve_seconds=solve_seconds, iterations=iterations,
+               cmb=cmb, map_amplitude=map_amplitude, schur=schur,
+               combined=combined)
+
+
+def blend(colour: str, towards: str, t: float) -> str:
+    """`colour` moved the fraction t of the way to `towards`."""
+    a = np.array(matplotlib.colors.to_rgb(colour))
+    b = np.array(matplotlib.colors.to_rgb(towards))
+    return matplotlib.colors.to_hex((1.0 - t) * a + t * b)
+
+
+def series_style(run: Run, runs: list[Run]) -> dict:
+    """The line and marker of a run: the colour of its formulation (or
+    CMB treatment), lighter for the coarser meshes of its variant; the
+    marker of its order, hollow for a mapped run; a dotted line for the
+    Schur solver and a dashed one for a combined run."""
+    key = run.method if run.cmb == "full" else run.cmb
+    colour = VARIANT_COLOURS.get(key, MUTED)
+    sizes = sorted({r.h for r in runs if r.variant == run.variant
+                    and r.order == run.order})
+    if len(sizes) > 1:
+        # finest darkest; the coarsest 55 % of the way to the background
+        colour = blend(colour, SURFACE,
+                       0.55 * sizes.index(run.h) / (len(sizes) - 1))
+    style = dict(color=colour, marker=ORDER_MARKERS.get(run.order, "o"),
+                 markeredgecolor=SURFACE, markeredgewidth=1.0,
+                 linestyle="-")
+    if run.map_amplitude:
+        style.update(markerfacecolor=SURFACE, markeredgecolor=colour,
+                     markeredgewidth=1.6)
+    if run.cmb in ("nomass", "uniform"):
+        # often indistinguishable from the full treatment: drawn lighter
+        # so that the full treatment shows through
+        style.update(linestyle="--", markersize=4.5, linewidth=1.3)
+    if run.schur:
+        style["linestyle"] = ":"
+    if run.combined:
+        style["linestyle"] = "--"
+    return style
+
+
+def outside_legend(fig, axes, *, fontsize: float = 8) -> None:
+    """One legend for the figure, to the right of the panels, from the
+    labelled series of every axis (each label once)."""
+    handles, labels = [], []
+    for ax in np.ravel(axes):
+        for h, l in zip(*ax.get_legend_handles_labels()):
+            if l not in labels:
+                handles.append(h)
+                labels.append(l)
+    if handles:
+        fig.legend(handles, labels, loc="center left",
+                   bbox_to_anchor=(1.0, 0.5), fontsize=fontsize,
+                   frameon=False)
+
+
+def size_axis(ax, sizes: list[float]) -> None:
+    """Label a logarithmic element-size axis at the sizes run: a ladder
+    spans less than a decade, where the default locator labels nothing."""
+    ax.set_xscale("log")
+    ticks = []
+    for h in sorted(sizes, reverse=True):
+        # labels closer than ~12 % in h would overprint each other
+        if not ticks or ticks[-1] / h > 1.12:
+            ticks.append(h)
+    ax.xaxis.set_major_locator(matplotlib.ticker.FixedLocator(ticks))
+    ax.xaxis.set_major_formatter(matplotlib.ticker.FormatStrFormatter("%g"))
+    ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax.xaxis.set_minor_locator(matplotlib.ticker.NullLocator())
+    lo, hi = min(sizes), max(sizes)
+    ax.set_xlim(lo / 1.12, hi * 1.12)
 
 
 def reference_values(ref: dict) -> dict[str, dict[int, float]]:
@@ -201,62 +306,62 @@ def print_table(runs: list[Run], ref: dict) -> None:
 
 
 def finest_per_order(runs: list[Run]) -> list[Run]:
-    # One entry per order and fluid/CMB treatment (each variant is its own
-    # series, tagged in the label's parenthetical).
+    # One entry per order and variant (formulation, CMB treatment,
+    # solver, mapping: each its own series).
     best: dict[tuple[int, str], Run] = {}
     for run in runs:
-        i = run.label.find("(")
-        key = (run.order, run.label[i:] if i >= 0 else "")
+        key = (run.order, run.variant)
         if key not in best or run.h < best[key].h:
             best[key] = run
     return [best[k] for k in sorted(best)]
 
 
 def plot_love_numbers(runs: list[Run], ref: dict, title: str, out: Path) -> None:
-    fig, axes = plt.subplots(2, 3, figsize=(14, 7), sharex=True)
+    fig, axes = plt.subplots(2, 3, figsize=(13, 6.6), sharex=True)
     shown = finest_per_order(runs)
     for ax, (key, label, *_) in zip(axes.flat, QUANTITIES):
         ls = sorted(l for l in ref[key] if l != 1 and any(
             l in run.values[key] for run in shown))
-        ax.plot(ls, [ref[key][l] for l in ls], color=MUTED, linewidth=1.5,
+        ax.plot(ls, [ref[key][l] for l in ls], color=INK, linewidth=1.2,
                 label="reference (pyslfp)", zorder=1)
-        for i, run in enumerate(shown):
+        for run in shown:
             rl = [l for l in ls if l in run.values[key]]
-            ax.plot(rl, [run.values[key][l] for l in rl], linestyle="none",
-                    marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)], markeredgecolor=SURFACE,
-                    markeredgewidth=1.0, label=run.label, zorder=2)
+            s = series_style(run, shown)
+            s["linestyle"] = "none"
+            ax.plot(rl, [run.values[key][l] for l in rl], label=run.label,
+                    zorder=2, **s)
         ax.set_title(label, loc="left")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
     for ax in axes[-1]:
-        ax.set_xlabel("degree")
-    axes[0, 0].legend(loc="best")
-    fig.suptitle(f"{title}: Love numbers", x=0.01, ha="left")
+        ax.set_xlabel("degree $l$")
+    fig.suptitle(f"{title}: Love numbers against the radial reference "
+                 "(degree one omitted: frame-fixed)", x=0.01, ha="left")
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    outside_legend(fig, axes)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
 def plot_errors(runs: list[Run], ref: dict, title: str, out: Path) -> None:
-    fig, axes = plt.subplots(2, 3, figsize=(14, 7), sharex=True, sharey=True)
-    shown = runs
+    fig, axes = plt.subplots(2, 3, figsize=(13, 6.6), sharex=True,
+                             sharey=True)
     for ax, (key, label, *_) in zip(axes.flat, QUANTITIES):
-        for i, run in enumerate(shown):
+        for run in runs:
             e = relative_error(run, ref, key)
             ls = sorted(e)
-            ax.semilogy(ls, [e[l] for l in ls], marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)],
-                        color=COLOURS[i % len(COLOURS)], markeredgecolor=SURFACE,
-                        markeredgewidth=1.0, label=run.label)
+            ax.semilogy(ls, [e[l] for l in ls], label=run.label,
+                        **series_style(run, runs))
         ax.set_title(label, loc="left")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
     for ax in axes[-1]:
-        ax.set_xlabel("degree")
+        ax.set_xlabel("degree $l$")
     for ax in axes[:, 0]:
         ax.set_ylabel("relative error")
-    axes[0, 0].legend(loc="best", fontsize=8)
-    fig.suptitle(f"{title}: relative error against the reference", x=0.01,
-                 ha="left")
+    fig.suptitle(f"{title}: relative error against the reference "
+                 "(darker: finer mesh)", x=0.01, ha="left")
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    outside_legend(fig, axes)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -264,29 +369,26 @@ def plot_timing(runs: list[Run], title: str, out: Path) -> None:
     """The cost comparison of the methods (and solver and interface
     variants): wall seconds and outer iterations of the load solve by
     degree, one series per run, setup times in the legend."""
-    shown = runs
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2), sharex=True)
-    for i, run in enumerate(shown):
+    for run in runs:
         ls = sorted(run.solve_seconds or {})
         if not ls:
             continue
+        s = series_style(run, runs)
         axes[0].semilogy(ls, [run.solve_seconds[l] for l in ls],
-                         marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
-                         markeredgecolor=SURFACE, markeredgewidth=1.0,
                          label=f"{run.label}; setup "
-                               f"{run.setup_seconds:.1f} s")
-        axes[1].plot(ls, [run.iterations[l] for l in ls],
-                     marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
-                     markeredgecolor=SURFACE, markeredgewidth=1.0)
+                               f"{run.setup_seconds:.1f} s", **s)
+        axes[1].semilogy(ls, [run.iterations[l] for l in ls], **s)
     axes[0].set_title("load solve, wall seconds", loc="left")
     axes[1].set_title("outer iterations", loc="left")
     for ax in axes:
-        ax.set_xlabel("degree")
+        ax.set_xlabel("degree $l$")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    axes[0].legend(loc="best", fontsize=7)
-    fig.suptitle(f"{title}: cost by method and solver", x=0.01, ha="left")
+    fig.suptitle(f"{title}: cost by method and solver (ranks as run)",
+                 x=0.01, ha="left")
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    outside_legend(fig, axes)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -300,101 +402,140 @@ def fitted_rate(h: list[float], e: list[float]) -> float | None:
     return float(np.polyfit(x, y, 1)[0])
 
 
-def ladder(runs: list[Run], order: int) -> list[Run]:
-    """The runs of one order, coarsest first: the h-refinement ladder,
-    every size a mesh of its own (run.py re-meshes for each h)."""
-    return sorted((r for r in runs if r.order == order), key=lambda r: -r.h)
+def ladder(runs: list[Run], order: int, variant: str = "") -> list[Run]:
+    """The runs of one order and variant, coarsest first: the
+    h-refinement ladder, every size a mesh of its own (run.py re-meshes
+    for each h). Variants never mix: a ladder is one formulation."""
+    return sorted((r for r in runs if r.order == order
+                   and r.variant == variant), key=lambda r: -r.h)
 
 
-def plot_convergence(runs: list[Run], ref: dict, title: str, out: Path) -> None:
+def ladders(runs: list[Run]) -> list[tuple[int, str, list[Run]]]:
+    """Every ladder of two sizes or more, as (order, variant, runs)."""
+    out = []
+    for order, variant in sorted({(r.order, r.variant) for r in runs}):
+        mine = ladder(runs, order, variant)
+        if len({r.h for r in mine}) > 1:
+            out.append((order, variant, mine))
+    return out
+
+
+def plot_convergence(runs: list[Run], ref: dict, title: str,
+                     out: Path) -> bool:
     """The h-refinement study: the relative error against the element
-    size, the orders together in each panel, at two representative
-    degrees, the observed rate of each line fitted over the ladder."""
-    orders = sorted({run.order for run in runs})
-    degrees = sorted({l for run in runs for key, *_ in QUANTITIES
-                      for l in run.values[key]})
+    size, each ladder (order and variant) its own line, at two
+    representative degrees, the observed rate of each line fitted over
+    the ladder and a guide of slope order + 1 (the L2 rate of the
+    displacement) through its coarsest point. True when there was a
+    ladder to draw."""
+    found = ladders(runs)
+    if not found:
+        return False
+    # the degrees every run of a ladder solved (a sweep extended later
+    # may reach further on some sizes than on others)
+    degrees = sorted(set.intersection(*(
+        {l for key, *_ in QUANTITIES for l in run.values[key]}
+        for _, _, mine in found for run in mine)))
     shown = list(dict.fromkeys(
         l for l in (2, max(degrees, default=2)) if l in degrees))
-    fig, axes = plt.subplots(2, 3, figsize=(12.5, 7.5), sharex=True,
+    sizes = sorted({r.h for _, _, mine in found for r in mine})
+    one_variant = len({variant for _, variant, _ in found}) == 1
+    orders = sorted({order for order, _, _ in found})
+    fig, axes = plt.subplots(2, 3, figsize=(13, 7.2), sharex=True,
                              squeeze=False)
     for ax, (key, label, *_) in zip(axes.flat, QUANTITIES):
-        for i, order in enumerate(orders):
-            mine = ladder(runs, order)
+        for order, variant, mine in found:
             errors = [relative_error(run, ref, key) for run in mine]
+            base = series_style(mine[-1], mine)
+            if one_variant:
+                # one formulation: the orders are what is compared
+                base["color"] = COLOURS[orders.index(order) % len(COLOURS)]
             for l, linestyle in zip(shown, ("-", "--")):
                 pts = [(run.h, e[l]) for run, e in zip(mine, errors)
                        if l in e and e[l] > 0.0]
                 if len(pts) < 2:
                     continue
                 rate = fitted_rate(*zip(*pts))
-                ax.loglog(*zip(*pts), marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
-                          linestyle=linestyle,
-                          markeredgecolor=SURFACE, markeredgewidth=1.0,
-                          label=f"order {order}, degree {l} "
-                                f"($p$ = {rate:.1f})")
+                s = dict(base, linestyle=linestyle)
+                ax.loglog(*zip(*pts), label=f"order {order}"
+                          f"{(' ' + variant) if variant else ''}, "
+                          f"degree {l}", **s)
+                # the fitted rate beside the finest point
+                ax.annotate(f"{rate:.1f}", pts[-1], xytext=(-6, 0),
+                            textcoords="offset points", ha="right",
+                            va="center", fontsize=7, color=s["color"])
+                if l == shown[0]:
+                    h0, e0 = pts[0]
+                    hs = np.array([min(sizes), h0])
+                    ax.loglog(hs, e0 * (hs / h0) ** (order + 1),
+                              color=base["color"], linewidth=0.8,
+                              linestyle=":", alpha=0.7)
         ax.set_title(label, loc="left")
-        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-        ax.legend(loc="best", fontsize=7)
+        size_axis(ax, sizes)
     for ax in axes[-1]:
-        ax.set_xlabel("element size $h$")
+        ax.set_xlabel("element size $h$ on the interfaces")
     for row in axes:
         row[0].set_ylabel("relative error")
     fig.suptitle(f"{title}: error against element size, each size its own "
-                 "mesh; $p$ the observed rate", x=0.01, ha="left")
+                 "mesh; numbers: the fitted rate $p$ of error ~ $h^p$; "
+                 "dotted: slope order + 1", x=0.01, ha="left")
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    outside_legend(fig, axes)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
+    return True
 
 
 def plot_field_convergence(runs_by: dict[str, Run],
                            fields: list[tuple[str, dict]], title: str,
                            out: Path) -> bool:
     """The relative L2 errors of the cap-load fields against the element
-    size at fixed order; True when there was a ladder to draw."""
-    by_order: dict[int, list[tuple[float, dict]]] = {}
+    size at fixed order and method; True when there was a ladder to
+    draw."""
+    by_series: dict[tuple[int, str], list[tuple[float, dict]]] = {}
     for key, field in fields:
         run = runs_by.get(key)
         h = run.h if run is not None else float(key.split("_o")[0][1:])
-        by_order.setdefault(field["order"], []).append((h, field))
-    if not any(len(v) > 1 for v in by_order.values()):
+        by_series.setdefault((field["order"], field_method(field)),
+                             []).append((h, field))
+    if not any(len(v) > 1 for v in by_series.values()):
         return False
-    fig, axes = plt.subplots(1, 2, figsize=(9, 4), sharex=True)
+    sizes = sorted({h for v in by_series.values() for h, _ in v})
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4), sharex=True)
     for ax, (key, label) in zip(axes, (("u_error", "$u$ over the solid"),
                                        ("phi_error",
                                         "$\\phi$ over body and buffer"))):
-        for i, order in enumerate(sorted(by_order)):
-            pts = sorted((h, f[key]) for h, f in by_order[order])
+        for (order, method), entries in sorted(by_series.items()):
+            pts = sorted((h, f[key]) for h, f in entries)
             if len(pts) < 2:
                 continue
             rate = fitted_rate(*zip(*pts))
-            ax.loglog(*zip(*pts), marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
+            ax.loglog(*zip(*pts), color=VARIANT_COLOURS.get(method, MUTED),
+                      marker=ORDER_MARKERS.get(order, "o"),
                       markeredgecolor=SURFACE, markeredgewidth=1.0,
-                      label=f"order {order} ($p$ = {rate:.1f})")
+                      label=f"{method}, order {order} ($p$ = {rate:.1f})")
         ax.set_title(f"relative L2 error of {label}", loc="left")
-        ax.set_xlabel("element size $h$")
-        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-        ax.legend(loc="best", fontsize=8)
+        ax.set_xlabel("element size $h$ on the interfaces")
+        size_axis(ax, sizes)
     axes[0].set_ylabel("relative error")
     fig.suptitle(f"{title}: cap-load fields against element size",
                  x=0.01, ha="left")
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    outside_legend(fig, axes, fontsize=9)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return True
 
 
 def print_rates(runs: list[Run], ref: dict) -> None:
-    """The observed rates over the h ladder of each order, by quantity and
-    degree: the slope of log error against log h."""
-    for order in sorted({run.order for run in runs}):
-        mine = ladder(runs, order)
+    """The observed rates over the h ladder of each order and variant,
+    by quantity and degree: the slope of log error against log h."""
+    for order, variant, mine in ladders(runs):
         sizes = sorted({run.h for run in mine}, reverse=True)
-        if len(sizes) < 2:
-            continue
         degrees = sorted({l for run in mine for key, *_ in QUANTITIES
                           for l in run.values[key]})
-        print(f"\norder {order}, observed rate p of error ~ h^p over h = "
-              + ", ".join(f"{h:g}" for h in sizes) + ":")
+        print(f"\norder {order} {variant}, observed rate p of error ~ h^p "
+              "over h = " + ", ".join(f"{h:g}" for h in sizes) + ":")
         print("            " + "".join(f"  l={l:<4d}" for l in degrees))
         for key, label, *_ in QUANTITIES:
             errors = [relative_error(run, ref, key) for run in mine]
@@ -443,32 +584,33 @@ def plot_profiles(runs: list[Run], reference: dict, results: dict[str, dict],
                 r = np.linspace(a, outer, 20)
                 ax.plot(values[-1] * (a / r) ** (l + 1), r, color=MUTED,
                         linewidth=3.0, alpha=0.45, zorder=1)
-            for i, run in enumerate(shown):
+            for run in shown:
                 r = results[run.label]
                 d = next((d for d in r["degrees"] if d["degree"] == l), None)
                 if d is None or fe_key not in d["load"]:
                     continue
+                s = series_style(run, shown)
                 # the radial functions within the layers, dashed over the
                 # reference, and the values on the interfaces
                 for p in d["load"].get("profiles", []):
                     if p[fe_key]:
-                        ax.plot(p[fe_key], p["radius"], color=COLOURS[i % len(COLOURS)],
-                                linewidth=1.5, linestyle=(0, (4, 3)),
+                        ax.plot(p[fe_key], p["radius"], color=s["color"],
+                                linewidth=1.3, linestyle=(0, (4, 3)),
                                 zorder=2)
+                s["linestyle"] = "none"
                 ax.plot(d["load"][fe_key],
                         [f["radius"] for f in r["interfaces"]],
-                        linestyle="none", marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
-                        markeredgecolor=SURFACE, markeredgewidth=1.0,
-                        label=run.label, zorder=3)
+                        label=run.label, zorder=3, **s)
             ax.set_title(f"{label}, degree {l}", loc="left")
             ax.ticklabel_format(axis="x", style="sci", scilimits=(-2, 2))
     for ax in axes[:, 0]:
         ax.set_ylabel("radius")
-    axes[0, 0].legend(loc="best", fontsize=8)
     fig.suptitle(f"{title}: radial solutions of the load problem, per unit "
-                 "load", x=0.01, ha="left")
+                 "load (markers: interface coefficients; dashed: fitted "
+                 "radial functions)", x=0.01, ha="left")
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    outside_legend(fig, axes)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -541,7 +683,8 @@ def plot_field_maps(field: dict, title: str, out: Path) -> None:
             bar.outline.set_visible(False)
     cap = field["cap"]
     fig.suptitle(
-        f"{title}: response on the surface to a cap of radius "
+        f"{title} ({field_method(field)}): response on the surface to a "
+        f"cap of radius "
         f"{cap['radius']:g} degrees at latitude {cap['latitude']:g}, "
         f"longitude {cap['longitude']:g}, degrees {field['lmin']} to "
         f"{field['lmax']}; order {field['order']}", x=0.01, ha="left")
@@ -550,37 +693,52 @@ def plot_field_maps(field: dict, title: str, out: Path) -> None:
     plt.close(fig)
 
 
+def field_method(field: dict) -> str:
+    """The formulation of a field run (older files name none: Dahlen)."""
+    return field.get("method", "gauged" if field.get("fluid_treatment")
+                     == "gauged" else "dahlen")
+
+
 def plot_field_spectrum(fields: list[tuple[str, dict]], title: str,
                         out: Path) -> None:
     """By degree, the root mean square over the orders of the error of the
-    coefficients on the surface, relative to that of the reference."""
+    coefficients on the surface, relative to that of the reference. The
+    potential's degree one is left out: in the centre-of-mass frame it is
+    zero in both solutions (the frame is chosen so), and its relative
+    error is noise over nothing."""
     names = (("u", "$U$"), ("v", "$V$"), ("phi", "$\\phi$"))
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.2), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4.2), sharey=True)
+    sizes = sorted({f["order"] for _, f in fields})
     for ax, (key, label) in zip(axes, names):
-        for i, (run, field) in enumerate(fields):
+        for run, field in fields:
             degree = np.array(field["degree"]).astype(int)
             fe = np.array(field[key])
             ref = np.array(field[f"{key}_reference"])
             ls, errors = [], []
             for l in range(field["lmin"], field["lmax"] + 1):
+                if key == "phi" and l == 1:
+                    continue
                 m = degree == l
                 size = np.sqrt(np.mean(ref[m] ** 2))
                 if size > 0.0:
                     ls.append(l)
                     errors.append(np.sqrt(np.mean((fe[m] - ref[m]) ** 2))
                                   / size)
-            ax.semilogy(ls, errors, marker=MARKERS[(i + i // len(COLOURS)) % len(MARKERS)], color=COLOURS[i % len(COLOURS)],
+            ax.semilogy(ls, errors,
+                        color=VARIANT_COLOURS.get(field_method(field), MUTED),
+                        marker=ORDER_MARKERS.get(field["order"], "o"),
                         markeredgecolor=SURFACE, markeredgewidth=1.0,
-                        label=run)
+                        alpha=1.0 if len(sizes) < 2 else 0.9,
+                        label=f"{run} ({field_method(field)})")
         ax.set_title(f"{label} on the surface", loc="left")
-        ax.set_xlabel("degree")
+        ax.set_xlabel("degree $l$")
         ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
-    axes[0].set_ylabel("relative error")
-    axes[0].legend(loc="best", fontsize=8)
+    axes[0].set_ylabel("relative error (rms over the orders $m$)")
     fig.suptitle(f"{title}: error of the response to the cap load, by degree",
                  x=0.01, ha="left")
     fig.tight_layout()
-    fig.savefig(out, dpi=150)
+    outside_legend(fig, axes)
+    fig.savefig(out, dpi=150, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -607,7 +765,12 @@ def plot_model(directory: Path) -> list[str]:
             results[runs[-1].label] = json.loads(path.read_text())
         for path in sorted(case.glob("field_o*.json")):
             field = json.loads(path.read_text())
-            fields.append((f"{case.name}_o{field['order']}", field))
+            method = field_method(field)
+            # the key of the Love-number run of the same formulation, so
+            # that the summary pairs each field run with its own method
+            fields.append((f"{case.name}_o{field['order']}"
+                           + ("" if method == "dahlen" else f"_{method}"),
+                           field))
     if not runs and not fields:
         return []
     runs.sort(key=lambda r: (r.order, -r.h))
@@ -619,7 +782,11 @@ def plot_model(directory: Path) -> list[str]:
         print_rates(runs, ref)
         plot_love_numbers(runs, ref, title, directory / "love_numbers.png")
         plot_errors(runs, ref, title, directory / "errors.png")
-        plot_convergence(runs, ref, title, directory / "convergence.png")
+        if not plot_convergence(runs, ref, title,
+                                directory / "convergence.png"):
+            # no ladder (one size per formulation): a figure left from an
+            # earlier plot of this tree would no longer describe it
+            (directory / "convergence.png").unlink(missing_ok=True)
         plot_timing(runs, title, directory / "timing.png")
         plot_profiles(runs, reference, results, title,
                       directory / "profiles.png")
@@ -634,8 +801,9 @@ def plot_model(directory: Path) -> list[str]:
                   f" unknowns, {field['seconds']:.1f} s)")
             plot_field_maps(field, title, directory / f"field_{run}.png")
         plot_field_spectrum(fields, title, directory / "field_spectrum.png")
-        plot_field_convergence(by_run, fields, title,
-                               directory / "field_convergence.png")
+        if not plot_field_convergence(by_run, fields, title,
+                                      directory / "field_convergence.png"):
+            (directory / "field_convergence.png").unlink(missing_ok=True)
     by_field = dict(fields)
     for key in sorted(set(by_run) | set(by_field)):
         run, field = by_run.get(key), by_field.get(key)

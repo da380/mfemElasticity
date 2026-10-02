@@ -102,6 +102,7 @@ def draw(points: dict[float, dict], target: float, xlabel: str,
     xs = sorted(points)
     schemes = [s for s in COLOURS if any(s in points[x] for x in xs)]
     top = 1.0
+    arrows = False
     for s in schemes:
         xy = [(x, points[x][s]) for x in xs
               if points[x].get(s) is not None]
@@ -112,6 +113,7 @@ def draw(points: dict[float, dict], target: float, xlabel: str,
         missing = [x for x in xs if s in points[x]
                    and points[x][s] is None]
         for x in missing:
+            arrows = True
             ax.annotate("", (x, top * 2.4), (x, top * 1.2),
                         arrowprops=dict(arrowstyle="->",
                                         color=COLOURS[s], lw=2.2))
@@ -119,7 +121,10 @@ def draw(points: dict[float, dict], target: float, xlabel: str,
     ax.set_ylabel(f"elastic solves to {target:g} accuracy")
     ax.set_title(title, loc="left")
     ax.legend(framealpha=0.95, ncols=2)
-    fig.text(0.12, -0.02, note, fontsize=12, color=MUTED, va="top")
+    if arrows or not note.startswith("arrows"):
+        # the arrows' key only where there are arrows to explain
+        fig.text(0.12, -0.02, note, fontsize=12, color=MUTED, va="top",
+                 wrap=True)
     fig.tight_layout()
     fig.savefig(out, bbox_inches="tight")
     plt.close(fig)
@@ -183,7 +188,7 @@ def main() -> None:
              "laterally varying viscosity: the explicit penalty",
              args.out / "ve_stiffness.png",
              "arrows: target not reached within the step budget — the "
-             "explicit stability limit $dt \\lesssim \\tau_{min}$")
+             "explicit stability limit $dt \\lesssim 2.8\\,\\tau_{min}$")
     regimes = {tp: solves(args.out / f"regime_tp{tp:g}.json", target)
                for tp in args.periods
                if (args.out / f"regime_tp{tp:g}.json").exists()}
@@ -193,7 +198,7 @@ def main() -> None:
              "who controls the step: the load or the viscosity",
              args.out / "ve_regimes.png",
              "left: load-controlled (every scheme resolves the "
-             "forcing).  right: relaxation-controlled (A-stability "
+             "forcing).\nright: relaxation-controlled (A-stability "
              "pays)")
 
 

@@ -86,8 +86,9 @@ def main() -> None:
         runs = gather(args.case, root, method, args.order)
         if len(runs) < 2:
             continue
-        fig, axes = plt.subplots(1, 2, figsize=(9.6, 4.2),
-                                 facecolor=SURFACE)
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4.2),
+                                 facecolor=SURFACE,
+                                 gridspec_kw={"width_ratios": [1, 1, 1.1]})
 
         # Absolute agreement by degree, one line per eps.
         for i, eps in enumerate(sorted(runs)):
@@ -105,15 +106,22 @@ def main() -> None:
                 errs.append(worst)
             axes[0].semilogy(ls, errs, color=COLOURS[i % 8],
                              marker=MARKERS[i % 8], markersize=4.5,
-                             linewidth=1.2, label=f"eps = {eps:+g}")
+                             linewidth=1.2,
+                             label="eps = 0 (unmapped)" if eps == 0.0
+                             else f"eps = {eps:+g}")
+        axes[0].xaxis.set_major_locator(plt.MaxNLocator(integer=True))
 
-        # The derivative identity: 3-D central difference against 1-D.
+        # The derivative identity: 3-D central difference against 1-D,
+        # the Love number by marker and the degree by colour; and the
+        # relative discrepancy of each, which the identity plot cannot
+        # resolve for the small derivatives.
         pairs = sorted({abs(e) for e in runs if e != 0.0
                         and -abs(e) in runs and abs(e) in runs})
+        shape = {"h": "o", "l": "s", "k": "^"}
         lo = hi = None
-        for i, a in enumerate(pairs):
+        bars = []
+        for a in pairs[-1:]:  # the widest pair: the identity plot
             plus, minus = runs[a], runs[-a]
-            labelled = False
             for l in sorted(set(plus[0]) & set(minus[0])):
                 if l == 1:
                     continue
@@ -123,34 +131,53 @@ def main() -> None:
                     if abs(d1) < 1e-10:
                         continue
                     axes[1].plot(d1, d3, linestyle="none",
-                                 marker=MARKERS[i % 8], markersize=6,
-                                 color=COLOURS[i % 8],
-                                 label=None if labelled
-                                 else f"eps = {a:g}")
-                    labelled = True
-                    axes[1].annotate(f"$ {q}'_{l}$", (d1, d3),
-                                     textcoords="offset points",
-                                     xytext=(5, 3), fontsize=7,
-                                     color=MUTED)
+                                 marker=shape[q], markersize=7,
+                                 color=COLOURS[l % 8],
+                                 markeredgecolor=SURFACE)
+                    bars.append((f"${q}'_{l}$", abs(d3 - d1) / abs(d1),
+                                 COLOURS[l % 8]))
                     lo = d1 if lo is None else min(lo, d1, d3)
                     hi = d1 if hi is None else max(hi, d1, d3)
         if lo is not None:
             pad = 0.08 * (hi - lo or 1.0)
             axes[1].plot([lo - pad, hi + pad], [lo - pad, hi + pad],
-                         color=GRID, linewidth=1.0, zorder=0)
+                         color=MUTED, linewidth=0.8, zorder=0)
+            handles = [plt.Line2D([], [], ls="none", marker=m,
+                                  color=MUTED, label=f"${q}'$")
+                       for q, m in shape.items()]
+            degrees = sorted({int(b[0].split("_")[1].strip("$"))
+                              for b in bars})
+            handles += [plt.Line2D([], [], ls="none", marker="o",
+                                   color=COLOURS[l % 8],
+                                   label=f"degree {l}") for l in degrees]
+            axes[1].legend(handles=handles, fontsize=7, framealpha=0.9)
+        if bars:
+            y = range(len(bars))[::-1]
+            axes[2].barh(y, [b[1] for b in bars],
+                         color=[b[2] for b in bars], height=0.6)
+            axes[2].set_yticks(list(y), [b[0] for b in bars])
+            axes[2].set_xscale("log")
+            # bars on a log axis need an explicit floor to start from
+            axes[2].set_xlim(left=min(b[1] for b in bars) / 4)
+            axes[2].grid(axis="y", visible=False)
 
-        axes[0].set_title("agreement with pyslfp by degree", loc="left",
-                          fontsize=10, color=INK)
+        axes[0].set_title("agreement with pyslfp by degree (worst of "
+                          "h', l', k')", loc="left", fontsize=10, color=INK)
         axes[0].set_xlabel("degree $l$", color=INK)
-        axes[1].set_title("d(Love)/d($r_{interface}$): 3-D against 1-D",
+        axes[1].set_title(f"d(Love)/d$r_k$, eps = {pairs[-1]:g}: "
+                          "3-D against 1-D" if pairs else "",
                           loc="left", fontsize=10, color=INK)
-        axes[1].set_xlabel("1-D central difference", color=INK)
-        axes[1].set_ylabel("3-D central difference", color=INK)
+        axes[1].set_xlabel("1-D (pyslfp) central difference", color=INK)
+        axes[1].set_ylabel("3-D central difference, fixed mesh", color=INK)
+        axes[2].set_title("relative discrepancy of the derivatives",
+                          loc="left", fontsize=10, color=INK)
+        axes[2].set_xlabel("|3-D - 1-D| / |1-D|", color=INK)
         for axis in axes:
             axis.grid(True, color=GRID, linewidth=0.7)
             axis.set_facecolor(SURFACE)
             axis.tick_params(colors=MUTED)
-            axis.legend(fontsize=8, framealpha=0.9)
+        axes[0].legend(fontsize=8, framealpha=0.9)
+        axes[2].grid(axis="y", visible=False)
         fig.suptitle(f"interface shift, {method} (order {args.order}, "
                      f"{args.case.parent.name})", x=0.01, ha="left",
                      fontsize=11, color=INK)

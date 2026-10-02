@@ -190,6 +190,62 @@ def plot_error(e: dict, out: Path, title: str) -> None:
     print(f"wrote {out}")
 
 
+def plot_series(fe: dict, ref: dict, out: Path, title: str) -> None:
+    """The histories as plain time series, time on a LINEAR axis from the
+    load onwards: h', k' and l' side by side, the degrees as colours,
+    the reference as lines and the finite elements as markers, the
+    elastic (t = 0+) values at t = 0, and the reference's static-fluid
+    relaxed value, where it has one, as a dotted level. For exposition:
+    the shape of the relaxation, which the logarithmic history plot
+    hides. Wants output times spread over the span (run with -times)."""
+    numbers = [q for q in ("h_load", "k_load", "l_load")
+               if q in fe["elastic"]]
+    degrees = [l for l in fe["degree"] if l in ref["degree"]]
+    fig, axes = plt.subplots(1, len(numbers), squeeze=False,
+                             figsize=(4.3 * len(numbers), 3.9))
+    horizon = ref.get("horizon")
+    for a, q in enumerate(numbers):
+        ax = axes[0][a]
+        for k, l in enumerate(degrees):
+            r = ref["degree"].index(l)
+            d = fe["degree"].index(l)
+            colour = SERIES[k % len(SERIES)]
+            rt = [0.0] + [h["time"] for h in ref["histories"]]
+            rv = [ref["elastic"][q][r]] + [h[q][r]
+                                           for h in ref["histories"]]
+            ax.plot(rt, rv, color=colour, lw=1.6, label=f"l = {l}")
+            ft = [0.0] + [h["time"] for h in fe["histories"]]
+            fv = [fe["elastic"][q][d]] + [h[q][d] for h in fe["histories"]]
+            every = max(1, len(ft) // 25)  # markers that stay legible
+            ax.plot(ft[::every], fv[::every], ls="none",
+                    marker=MARKERS[k % len(MARKERS)],
+                    color=colour, mfc="white", mew=1.2, ms=4.5)
+            relaxed = (ref.get("relaxed") or {}).get(q)
+            if relaxed and relaxed[r] is not None:
+                ax.axhline(relaxed[r], color=colour, lw=0.9, ls=":")
+        if horizon and horizon < max(ft):
+            ax.axvline(horizon, color=MUTED, lw=1.0, ls="--")
+        ax.set_title(f"{LABELS[q]}(t)", loc="left")
+        ax.set_xlabel("time after the load / Maxwell time")
+        ax.set_xlim(left=0.0)
+    handles = [plt.Line2D([], [], color=INK, lw=1.6),
+               plt.Line2D([], [], ls="none", marker="o", color=INK,
+                          mfc="white", mew=1.2, ms=4.5)]
+    names = ["reference (Laplace)", "finite elements"]
+    if any((ref.get("relaxed") or {}).get(q) and
+           any(v is not None for v in ref["relaxed"][q]) for q in numbers):
+        handles.append(plt.Line2D([], [], color=INK, lw=0.9, ls=":"))
+        names.append("static-fluid relaxed value")
+    deg_handles, deg_names = axes[0][0].get_legend_handles_labels()
+    fig.legend(handles + deg_handles, names + deg_names, loc="center left",
+               bbox_to_anchor=(1.0, 0.5), frameon=False)
+    fig.suptitle(title, x=0.01, ha="left")
+    fig.tight_layout()
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -223,12 +279,18 @@ def main() -> None:
             indent=1))
         if not args.no_plots:
             taus = ", ".join(
-                f"{la['name']} {'fluid' if la['tau'] is None else la['tau']}"
+                # an elastic layer's tau is written as "inf"
+                f"{la['name']} " + ("fluid" if la.get("fluid") else
+                                    "elastic" if la["tau"] in (None, "inf")
+                                    else f"$\\tau$ = {la['tau']:g}")
                 for la in fe.get("layers", []))
             title = (f"{ref['model']} ({taus}); order {fe.get('order')}, "
                      f"{fe.get('scheme')}")
             plot_history(fe, ref, out / f"{stem}_history.png", title)
             plot_error(e, out / f"{stem}_error.png", title)
+            if len(fe["histories"]) >= 20:
+                # enough times to draw the relaxation as a curve
+                plot_series(fe, ref, out / f"{stem}_series.png", title)
 
 
 if __name__ == "__main__":
