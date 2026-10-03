@@ -72,7 +72,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "common"))
+sys.path.insert(0, str(HERE.parent.parent / "common"))
 
 import models  # noqa: E402
 from planetmodel import LayeredIsotropicElastic  # noqa: E402

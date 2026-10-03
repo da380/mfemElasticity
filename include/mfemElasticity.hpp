@@ -6,6 +6,7 @@
 #include "mfemElasticity/coefficient.hpp"
 #include "mfemElasticity/elastic_tensor.hpp"
 #include "mfemElasticity/index.hpp"
+#include "mfemElasticity/json.hpp"
 #include "mfemElasticity/lininteg.hpp"
 #include "mfemElasticity/mappings.hpp"
 #include "mfemElasticity/mesh.hpp"

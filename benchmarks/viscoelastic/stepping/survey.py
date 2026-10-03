@@ -43,7 +43,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-REPOSITORY = HERE.parent.parent
+REPOSITORY = HERE.parent.parent.parent
 
 COLOURS = {"RK4": "#e34948", "ETD1": "#e87ba4", "BE": "#eda100",
            "SDIRK23": "#2a78d6", "ExpTrap": "#1baf7a",

@@ -53,8 +53,9 @@ core--mantle-boundary treatments, and the response as fields), the
 relabelling family (the mapped/aspherical machinery checked with
 the spherical physics unchanged), the perturbation family (derivatives of
 the response with respect to an interface radius), and the viscoelastic
-family (the time-stepping survey and Maxwell Love-number histories against
-a correspondence-principle reference). For each it states what is tested,
+family (the time integrators: exact box and sphere benchmarks without
+gravity, the time-stepping survey, and Maxwell Love-number histories
+against a correspondence-principle reference). For each it states what is tested,
 the aim, the assumptions, and the mathematics of the comparison, including
 how the reference is obtained. The figures are those of the stored runs,
 some redrawn with corrected plotting scripts and a few from small reruns
@@ -95,6 +96,11 @@ file & role \\
 \bottomrule
 \end{tabular}
 \end{center}
+
+The viscoelastic family has four sub-families of its own,
+\code{viscoelastic/box}, \code{viscoelastic/sphere},
+\code{viscoelastic/love} and \code{viscoelastic/stepping}
+(\S\ref{sec:visco}).
 
 \code{campaign.py} runs every family with one command (profiles
 \code{local}, eight ranks, about an hour; \code{server}, 100 ranks, an
@@ -1005,7 +1011,1113 @@ made before the outward-shift fix.}
 \label{sec:visco}
 %=============================================================================
 
+The family tests \code{ViscoelasticOperator}, its integrators and the
+rheologies, in four sub-families of \code{benchmarks/viscoelastic/}:
+\begin{center}
+\small
+\begin{tabular}{@{}lP{8.2cm}P{4.2cm}@{}}
+\toprule
+sub-family & what is tested & reference \\
+\midrule
+\code{box/} (\S\ref{sec:box}) & non-gravitating, solid-only problems on
+rectangular meshes, 2-D and 3-D: homogeneous bodies (the integrators
+alone), laterally uniform columns, Fourier-mode loading of layered slabs;
+general load histories, multi-branch rheologies, viscosity contrasts to
+$10^8$ & exact (closed-form modes and convolutions; AAA and Talbot) \\
+\code{sphere/} (\S\ref{sec:sphere}) & non-gravitating layered balls and
+discs under surface loads of degree $l$; smooth lateral viscosity
+contrasts for the integrators & exact for radial models (Euler-type radial
+system, AAA, Talbot); a much smaller step for lateral ones \\
+\code{stepping/} (\S\ref{sec:survey}) & the stepper survey on the beam of
+\code{examples/viscoelastic\_schemes} & RK4 at a small step \\
+\code{love/} (\S\ref{sec:laplace}) & Maxwell load Love-number histories of
+gravitating spherical models & pyslfp, correspondence principle,
+Gaver--Stehfest \\
+\bottomrule
+\end{tabular}
+\end{center}
+The box and sphere sub-families separate the time integration and the
+viscoelastic discretisation from gravity and fluids (the box from
+spherical geometry as well), which the quasi-static elastic families
+test on their own. Its references are exact
+to about $10^{-10}$, so any mismatch is the code's. That is what lets it
+cover many situations cheaply: every forcing against every scheme, step
+ladders, mesh ladders, and contrasts of eight decades. The Love-number
+histories remain the integrated test of the self-gravitating machinery.
+
+\subsection{The time integrators}
+\label{sec:steppers}
+
+This subsection summarises how each integrator tested below works: what it
+computes per step, what it costs, and where its order and stability come
+from. The implementation is \code{ViscoelasticOperator}
+(\code{src/viscoelastic.cpp}); \code{doc/viscoelasticity.md} has the
+design notes.
+
+\paragraph{The semi-discrete system.}
+The state is the set of internal variables $m_k$, one per Prony branch,
+held at the nodes of an L2 space. The displacement is not a state
+variable. It is slaved to $m$ through one quasi-static solve with the
+\emph{unrelaxed} stiffness $K_U$:
+\begin{equation}
+  K_U u = f(t) + \sum_k B_k^{T} C_k m_k,\qquad d = D u,\qquad
+  \dot m_k = \frac{d - m_k}{\tau_k},
+  \label{eq:ve-semidiscrete}
+\end{equation}
+where $B$ is the strain coupling, $D$ the strain map (Galerkin projection),
+$C_k$ the branch modulus applied pointwise, and $d$ the (deviatoric)
+strain at the nodes. Every evaluation of $d$ costs one elastic solve, which
+is why cost is counted in solves. Write $h_k=\Delta t/\tau_k$, a nodal field
+because $\tau_k$ varies in space. For a linear body,
+\eqref{eq:ve-semidiscrete} is a linear ODE $\dot m=-Lm+g(t)$. In a
+homogeneous body its decay rates lie between $\mu_\infty/(\mu_U\tau)$
+(stress control: the creep or retardation rate, zero for a Maxwell body)
+and $1/\tau$ (strain control: relaxation). In general the stiffest rate is
+of order $1/\tau_{\min}$, and this is what bounds explicit steps.
+
+\paragraph{Eliminating the end state (effective modulus).}
+The implicit and trapezoid schemes need $d^{n+1}$, which depends on
+$m^{n+1}$. Every such update has the form
+$m_k^{n+1}=a_k + b_k\,d^{n+1}$ with nodal $a_k$ and $b_k$. Substituting it
+into \eqref{eq:ve-semidiscrete} at $t_{n+1}$ and using
+$B^{T}C_kD=K(C_k)$ (exact when the internal order resolves $\eps(u)$)
+removes $m^{n+1}$ and leaves one elastic solve with an \emph{effective
+modulus}:
+\begin{equation}
+  K\Bigl(C_\infty+\sum_k\beta_kC_k\Bigr)\,u^{n+1}
+  = f(t_{n+1}) + \sum_k B_k^{T}C_k\,a_k,
+  \qquad \beta_k = 1-b_k .
+  \label{eq:ve-effective}
+\end{equation}
+$\beta_k\in(0,1]$ is a nodal weight. It is 1 for $h\to0$ (the unrelaxed
+operator) and tends to 0 for $h\to\infty$, where the branch has relaxed
+and the operator is the long-term one, $K(C_\infty)$. A change of
+$\Delta t$ changes $\beta$, so the operator must be reassembled and,
+eventually, the preconditioner rebuilt. With a fixed step the operator is
+assembled once.
+
+\paragraph{Explicit Runge--Kutta (RK4).}
+\code{Mult} evaluates the rate: one solve with $K_U$ at the stage time,
+then $(d-m_k)/\tau_k$ pointwise. Any explicit MFEM solver can drive it. The
+tested one is classical RK4: four solves per step and fourth order. The
+operator never changes. Its stability interval on the negative real axis
+is about $[-2.785,0]$, so $\Delta t\lesssim2.8\,\tau_{\min}$ whatever the
+accuracy needed. That is cheap when nothing is stiff and hopeless when
+$\tau_{\max}/\tau_{\min}$ is large.
+
+\paragraph{Exponential Euler (ETD1).}
+Solve with $K_U$ at $t_n$ for $d^n$, then relax exactly with the strain
+frozen over the step:
+\begin{equation}
+  m_k^{n+1} = e^{-h_k}m_k^{n} + \bigl(1-e^{-h_k}\bigr)\,d^{n}.
+\end{equation}
+This is the exact solution of $\dot m=(d-m)/\tau$ for constant $d$. The
+local error is $O(\Delta t^2\dot d)$, so the scheme is first order. It
+takes one solve per step, always with $K_U$ (no reassembly), and has no
+step restriction. Under creep ($d$ growing) it lags systematically. It is
+also the embedded companion of the adaptive scheme.
+
+\paragraph{Exponential trapezoid (ExpTrap).}
+By variation of constants,
+\begin{equation}
+  m_k(t_{n+1}) = e^{-h_k}m_k^{n}
+   + \frac{1}{\tau_k}\int_0^{\Delta t}e^{-(\Delta t-s)/\tau_k}\,d(t_n+s)\,\mathrm{d}s .
+\end{equation}
+ExpTrap replaces $d$ by its linear interpolant between $d^n$ and $d^{n+1}$
+and integrates exactly:
+\begin{equation}
+  m_k^{n+1} = e^{-h}m_k^{n} + \alpha\,d^{n} + \beta\,d^{n+1},\qquad
+  \alpha = \frac{1-e^{-h}}{h}-e^{-h},\quad
+  \beta = 1-\frac{1-e^{-h}}{h}
+\end{equation}
+(series for small $h$). In the form of \eqref{eq:ve-effective},
+$a_k=e^{-h}m_k^n+\alpha d^n$ and the weight is
+$\beta_k=1-\beta=(1-e^{-h})/h$. It takes one solve per step: $d^n$ is
+reused from the previous step's end, which is cached, so only the first
+step pays for an extra unrelaxed solve. The load is evaluated at
+$t_{n+1}$. Properties:
+\begin{itemize}[leftmargin=*]
+\item second order, and \emph{exact} whenever the strain is linear in
+  time over the step (Maxwell creep under constant stress at any
+  $\Delta t$);
+\item for $h\to0$, $\alpha,\beta\to h/2$: the ordinary trapezoid rule;
+\item for $h\to\infty$, $\alpha\to0$ and $\beta\to1$: $m^{n+1}=d^{n+1}$
+  with the long-term operator, which is exactly the relaxed equilibrium.
+  The decay factor $e^{-h}$ is exact, so there is no step restriction and
+  no oscillation (Crank--Nicolson, by contrast, has amplification
+  $\to-1$ there and is deliberately absent);
+\item the error is controlled by how far $d$ is from linear over a step,
+  i.e.\ by $\Delta t^2\ddot d$. A fast or kinked load costs accuracy, not
+  stability.
+\end{itemize}
+
+\paragraph{Backward Euler (BE).}
+Through MFEM's \code{BackwardEulerSolver}: \code{ImplicitSolve} returns
+the rate $k=(m^{n+1}-m^n)/\Delta t$ with
+\begin{equation}
+  m_k^{n+1} = \frac{m_k^{n} + h_k\,d^{n+1}}{1+h_k},\qquad
+  \beta_k = \frac{1}{1+h_k},\quad a_k=\frac{m_k^n}{1+h_k},
+\end{equation}
+and the load is evaluated at $t_{n+1}$. It takes one solve per step and is
+first order and L-stable (amplification $1/(1+h)\to0$). For $h\gg1$ it
+returns the relaxed equilibrium like ExpTrap, but its error at moderate
+$h$ is $O(\Delta t)$.
+
+\paragraph{SDIRK23 (MFEM \code{SDIRK23Solver(2)}).}
+This is a two-stage singly diagonally implicit RK method with
+$\gamma=1-1/\sqrt2\approx0.293$:
+\begin{equation}
+\begin{aligned}
+  k_1 &= F\bigl(t_n+\gamma\Delta t,\; m^n+\gamma\Delta t\,k_1\bigr),\\
+  k_2 &= F\bigl(t_n+(1-\gamma)\Delta t,\; m^n+(1-2\gamma)\Delta t\,k_1+\gamma\Delta t\,k_2\bigr),\\
+  m^{n+1} &= m^n + \tfrac{\Delta t}{2}(k_1+k_2),
+\end{aligned}
+\qquad
+\begin{array}{c|cc}
+  \gamma & \gamma & \\
+  1-\gamma & 1-2\gamma & \gamma\\ \hline
+  & \tfrac12 & \tfrac12
+\end{array}
+\end{equation}
+Each stage is a backward-Euler solve of step $\gamma\Delta t$ (weights
+$1/(1+\gamma h)$). Both stages share one effective operator, so it costs
+two solves and one assembly per step size. It is second order
+($b^{T}c=\tfrac12$; this $\gamma$ is not the third-order one) and
+L-stable: $R(\infty)=1-b^{T}A^{-1}\mathbf 1=1-(4\gamma-1)/(2\gamma^2)=0$
+exactly for this $\gamma$. It has stage order 1, and the stage loads are
+taken at $t_n+\gamma\Delta t$ and $t_n+(1-\gamma)\Delta t$. MFEM's default
+\code{SDIRK23Solver()} is the third-order, A- but not L-stable variant;
+the drivers use the L-stable one. Note that the displacement left by the
+second stage belongs to the stage state, not to $m^{n+1}$, so an
+observation between steps costs an extra unrelaxed solve (and a switch
+of operator). BE and ExpTrap leave a consistent displacement.
+
+\paragraph{Adaptive exponential trapezoid.}
+Each trial step is an ExpTrap step. Its ETD1 companion $\hat m$ (nodal
+work only, no solve) gives a free first-order error estimate
+\begin{equation}
+  \text{err} = \Bigl[\tfrac1N\sum_j\Bigl(\frac{m_j^{n+1}-\hat m_j}
+   {\text{atol}+\text{rtol}\max(|m_j^n|,|m_j^{n+1}|)}\Bigr)^2\Bigr]^{1/2},
+  \qquad
+  \Delta t\leftarrow\Delta t\cdot\min\bigl(4,\max(0.2,\,0.9\,\text{err}^{-1/2})\bigr).
+\end{equation}
+A step with err $>1$ is rejected and retried. The exponent $1/2$ matches
+the $O(\Delta t^2)$ local error of the first-order companion. Because the
+estimate belongs to ETD1, it is conservative for the propagated
+second-order solution, by a factor of order $\tau/\Delta t$. There is no
+stability limit, so adaptivity is purely about accuracy: small steps
+where the load or $\tau$ changes quickly, long strides across quiet
+periods. The price is that every accepted step has a new $\Delta t$,
+hence new weights and a reassembly (the preconditioner is reused while
+the iteration count stays within a factor 2 of its count at setup), and
+every rejected step costs a solve.
+
+\paragraph{State-dependent relaxation times.}
+With a power law, $\tau_k$ depends on the stress. ExpTrap and the implicit
+stages then run a predictor--corrector. The first pass uses the times of
+the start state. The times are then re-evaluated at the midpoint state
+(ExpTrap) or the end state (BE, SDIRK stages) and the step is repeated,
+by default once. Each pass is an extra solve with a different effective
+operator. ETD1 and the explicit schemes simply use the current times.
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{@{}lccccl@{}}
+\toprule
+scheme & order & solves/step & operator & stability & exact when \\
+\midrule
+RK4 & 4 & 4 & $K_U$ & $\Delta t\lesssim2.8\,\tau_{\min}$ & --- \\
+ETD1 & 1 & 1 & $K_U$ & unconditional & $d$ constant over the step \\
+ExpTrap & 2 & 1 & effective & unconditional & $d$ linear over the step \\
+BE & 1 & 1 & effective & L-stable & --- \\
+SDIRK23 & 2 & 2 & effective (one per $\Delta t$) & L-stable & --- \\
+Adaptive & 2 (est.\ 1) & 1 per trial & effective, new per step & unconditional & as ExpTrap \\
+\bottomrule
+\end{tabular}
+\caption{The tested integrators. ``Operator'' is the stiffness that the
+step's solves use; ``effective'' is \eqref{eq:ve-effective}, assembled
+once per step size.}
+\label{tab:steppers}
+\end{table}
+
+\subsection{Box benchmarks: problems and exact references}
+\label{sec:box}
+
+\paragraph{What is tested, and the aim.}
+The question is whether \code{ViscoelasticOperator} and its integrators
+are right, and how accurate and costly they are, over a wide range of
+situations: forcings with jumps, kinks and periodic transients, rheologies
+with one to four relaxation times, viscosity contrasts up to $10^8$, and
+spatially structured responses in 2-D and 3-D. Gravity, fluids and
+spherical geometry are left out on purpose, since the elastic families
+test them. What remains has exact references, so every error is measured
+against the truth, not against another numerical method.
+
+\paragraph{Geometry and loads.}
+The body is the box $[0,L_x]\times[0,H]$ (2-D) or
+$[0,L_x]\times[0,L_y]\times[0,H]$ (3-D), with $z$ the last coordinate and
+horizontal layers stacked from $z=0$. Meshes are Cartesian quadrilaterals
+or hexahedra from \code{Mesh::MakeCartesian*}, and a \emph{slab} is made
+periodic sideways (\code{Mesh::MakePeriodic}). Every load is an amplitude
+times a history $S(t)$:
+\begin{itemize}[leftmargin=*]
+\item \code{uniaxial\_stress} (box, \code{LinearQuasiStaticTractionProblem}):
+  tractions $\pm S(t)\,e_x$ on $x=L_x$ and $x=0$. Uniaxial stress
+  $\sigma=S\,e_x\otimes e_x$ is a homogeneous state.
+\item \code{uniaxial\_strain} (box, \code{LinearQuasiStaticClampedProblem}):
+  the whole boundary prescribed, $u=S(t)\,x\,e_x$: time-dependent
+  Dirichlet data, again homogeneous.
+\item \code{surface} (slab, clamped base): the normal pressure
+  $p(x,t)=S(t)\cos k_xx\cos k_yy$ on $z=H$, with $k_i=2\pi n_i/L_i$. Mode
+  $n=0$ is a uniform pressure (the laterally uniform \emph{column}).
+\end{itemize}
+In the homogeneous problems the finite elements are exact in space at any
+order, so every error is the integrator's. The column is exact in space
+when layer interfaces lie on element faces and the moduli are constant
+in each layer. The Fourier slab has genuine spatial error.
+
+The 2-D problems are the library's two-dimensional continuum
+($\lambda=\kappa-\mu$, the 2-D deviator), not plane strain of a 3-D body.
+The references use $\lambda=\kappa-2\mu/d$ with $d$ the space dimension,
+so each convention is checked on its own terms.
+
+\paragraph{Models.}
+All are nondimensional, with $\kappa=5/3$ and shear moduli of order one.
+Time is in units of the reference Maxwell time ($\tau=1$).
+\begin{center}
+\small
+\begin{tabular}{@{}lP{11.6cm}@{}}
+\toprule
+model & definition (layers bottom-up; $H=1$) \\
+\midrule
+\code{maxwell} & $\mu_\infty=0$, one branch $(\mu,\tau)=(1,1)$ \\
+\code{sls} & standard linear solid: $\mu_\infty=0.5$, one branch $(0.5,1)$ \\
+\code{burgers} & $\mu_\infty=0$, branches $(0.6,1)$, $(0.4,0.05)$: two relaxation times \\
+\code{prony\_wide} & $\mu_\infty=0.1$, four branches $0.225$ at $\tau=10^{-3},10^{-1},10,10^3$: six decades \\
+\midrule
+\code{maxwell\_slab} & one Maxwell layer: no elastic support, so a non-uniform load makes it \emph{flow} (a pole at $s=0$) \\
+\code{lid} & Maxwell $[0,0.8]$, elastic lid $[0.8,1]$ \\
+\code{channel} & Maxwell $[0,0.6]$, low-viscosity channel $[0.6,0.8]$ with $\tau=1/C$, elastic lid \\
+\code{sls\_stack} & standard linear solids: $(\mu_\infty,\mu_1,\tau)=(0.5,0.5,1)$ below $0.6$, $(0.3,0.7,10)$ above \\
+\code{burgers\_lid} & the Burgers mantle $[0,0.8]$ under an elastic lid \\
+\code{prony\_lid} & $\mu_\infty=0.1$ and branches $0.3$ at $\tau=10^{-2},1,10^2$, $[0,0.8]$, under an elastic lid \\
+\code{contrast} & Maxwell $\tau=1$ $[0,0.4]$, $\tau=1/C$ $[0.4,0.6]$, $\tau=C$ $[0.6,0.8]$, elastic lid: the contrast ladder \\
+\code{gradient} & one Maxwell layer $[0,0.8]$ with $\tau$ geometric from $1/C$ at the base to $1$ at its top, elastic lid \\
+\bottomrule
+\end{tabular}
+\end{center}
+\emph{The mesh comes first.} Every layer interface is a multiple of
+$0.2$, the cell size of the coarsest mesh of the ladders ($n_z=5$), so
+every uniform mesh with $n_z$ a multiple of 5 has the material
+discontinuities on element faces. The driver refuses a mesh that cuts a
+layer, except for the deliberate misfit of the interface study
+(\code{-no-conform}, \S\ref{sec:box-slab}).
+
+Without gravity there is no isostatic restoring force. A Maxwell body
+with nothing elastic in it therefore has no bounded response to a
+non-uniform load (\code{maxwell\_slab} flows), while under a uniform load
+it relaxes to its $\kappa$-response. Elastic lids or standard linear
+solids give bounded responses.
+
+\paragraph{Load histories.}
+A history is a sum of \emph{pieces}, each
+\begin{equation}
+  w(s) = c_0 + c_1 s + a\cos\omega s + b\sin\omega s,\qquad s=t-t_a,
+  \quad t\in[t_a,t_b),
+  \label{eq:piece}
+\end{equation}
+right-continuous and zero before the first piece. The case file carries
+the pieces and the breakpoints (piece ends, flagged where $S$ jumps), and
+the driver evaluates the same pieces as the reference. The presets are:
+\begin{center}
+\small
+\begin{tabular}{@{}lP{8.2cm}l@{}}
+\toprule
+history & $S(t)$ & breakpoints \\
+\midrule
+\code{heaviside} & $1$ & --- \\
+\code{ramp} & $t/T$ on $[0,T]$, then $1$; $T=\sqrt2$ & kink \\
+\code{smooth\_step} & $\tfrac12(1-\cos\pi t/T)$, then $1$; $T=\sqrt3$ & $C^1$ \\
+\code{load\_unload} & $1$ on $[0,T)$, then $0$; $T=2\sqrt2$ (removal, as in deglaciation) & jump \\
+\code{sawtooth} & linear growth over $e$, melt over $1/\pi$, two cycles & kinks \\
+\code{periodic} & $\sin(2t+0.3)$ from $t=0$: a transient into the periodic state & --- \\
+\code{multi\_sine} & $\sum_j A_j\sin(\omega_jt+\varphi_j)$, $\omega=1,2\sqrt2,3\pi$ & --- \\
+\code{ramped\_periodic} & $\tfrac12(1-\cos\pi t/T)\sin2t$ on $[0,T)$, then $\sin 2t$; $T=\sqrt5$ & $C^1$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Breakpoints are at irrational times and output times on a uniform grid,
+so a rational step never lands on a breakpoint by accident. With
+\code{-align} (the default) the step grid includes the breakpoints. With
+\code{-no-align} they fall inside steps, which is how the order lost to an
+unresolved jump or kink is measured.
+
+\paragraph{The modal form of every reference.}
+Each case is linear, and its transfer function is rational in the
+Laplace variable $s$ with simple real poles $p_i\le0$ (no gravity, so
+nothing unstable). Every observable is therefore
+\begin{equation}
+  y(t) = R_\infty\,S(t) + \sum_i r_i\int_0^t e^{p_i(t-u)}S(u)\,\mathrm{d}u ,
+  \label{eq:modal}
+\end{equation}
+where $R_\infty$ is the elastic (unrelaxed) response. The convolution of a
+piece \eqref{eq:piece} is closed-form. With $\varphi_1(z)=(e^z-1)/z$,
+$\varphi_2(z)=(e^z-1-z)/z^2$ (series near $0$),
+\begin{equation}
+  \int_0^{T}e^{p(T-v)}(c_0+c_1v)\,\mathrm{d}v = c_0T\varphi_1(pT)+c_1T^2\varphi_2(pT),
+  \qquad
+  \int_0^{T}e^{p(T-v)}e^{\pm i\omega v}\,\mathrm{d}v = \frac{e^{\pm i\omega T}-e^{pT}}{\pm i\omega-p},
+\end{equation}
+and a piece that has ended is carried on by $e^{p(t-t_b)}$. No
+quadrature is involved, and the self-test of \code{histories.py} checks
+every preset against adaptive quadrature. What differs between the cases
+is how the modes are found.
+
+\paragraph{Homogeneous box.}
+Under uniaxial stress $\sigma=s\,e_x\otimes e_x$ the strain is
+$\eps=\frac{s}{d^2\kappa}I+\delta P$ with $P=e_x\otimes e_x-I/d$, and the
+branch variables are $m_k=q_kP$, where
+\begin{equation}
+  \delta=\frac{s+\sum_ka_kq_k}{M},\qquad \dot q_k=\frac{\delta-q_k}{\tau_k},
+  \qquad a_k=2\mu_k,\quad M=2\mu_U .
+  \label{eq:zero-d}
+\end{equation}
+The system matrix $A=T^{-1}(\mathbf 1a^{T}/M-I)$ ($T=\mathrm{diag}\,\tau_k$)
+is $D^{-1}BD$ with $D=\mathrm{diag}\sqrt{a_k\tau_k}$ and $B$ symmetric,
+$B_{kj}=\sqrt{a_k/\tau_k}\sqrt{a_j/\tau_j}/M-\delta_{kj}/\tau_k$. A
+symmetric eigen-decomposition in 40-digit arithmetic (mpmath) gives the
+modes, which stays accurate across six decades of $\tau$. Under strain
+control each $q_k$ relaxes on its own:
+$q_k=\tau_k^{-1}\int_0^te^{-(t-u)/\tau_k}e_{xx}(u)\,\mathrm{d}u$. The
+observables are the mean strain components and branch variables.
+
+\paragraph{Column.}
+Under a uniform pressure every depth is in uniaxial strain with
+$\sigma_{zz}=-p\,S(t)$, i.e.\ \eqref{eq:zero-d} for $\eps_{zz}$ with
+$M=\kappa+2c\mu_U$, $a_k=2c\mu_k$, $c=1-1/d$. The surface displacement is
+$W=\int_0^H\eps_{zz}\,\mathrm{d}z$: by layer for constant moduli, and by
+48-point Gauss--Legendre quadrature per layer where they vary with depth
+(\code{gradient}).
+
+\paragraph{Fourier slab.}
+By the correspondence principle the transform of the response is the
+elastic response with $\mu\to\mu(s)=\mu_\infty+\sum_k\mu_ks\tau_k/(1+s\tau_k)$
+and $\lambda=\kappa-2\mu(s)/d$. With $u_x=U(z)\sin kx$, $u_z=W(z)\cos kx$
+and the tractions $\sigma_{xz}=T\sin kx$, $\sigma_{zz}=N\cos kx$,
+equilibrium and Hooke's law give
+\begin{equation}
+  U'=\frac{T}{\mu}+kW,\quad
+  W'=\frac{N-\lambda kU}{\lambda+2\mu},\quad
+  T'=\frac{4\mu(\lambda+\mu)}{\lambda+2\mu}k^2U+\frac{\lambda k}{\lambda+2\mu}N,\quad
+  N'=-kT,
+  \label{eq:slab-ode}
+\end{equation}
+which is propagated through the layers by matrix exponentials, with
+$U=W=0$ at the base and $T=0$, $N=-1$ at the top. In 3-D the pattern
+$c=\cos k_xx\cos k_yy$ obeys the same system with $k=|k|$ by horizontal
+isotropy ($u_z=Wc$, $u_h=-(U/k)\nabla_hc$), so the 3-D runs check the
+plane-wave reduction as well. The matrix of \eqref{eq:slab-ode} has
+eigenvalues $\pm k$ (double) whatever the moduli. The propagators are
+therefore polynomials in the moduli with coefficients depending on $kH$
+alone, and the transfer functions $W(H;s)$, $U(H;s)$ are \emph{rational}
+in $s$. The AAA algorithm (Nakatsukasa, S\`ete \& Trefethen 2018) recovers the poles and residues from
+630 samples in the right half-plane and on rays off the negative real
+axis. Two independent checks are stored with every reference:
+\begin{itemize}[leftmargin=*]
+\item the fit error at fresh complex points: $2$--$4\times10^{-14}$;
+\item the Heaviside response by fixed-Talbot inversion (complex $s$,
+  $M=32$) against the modal sum: $10^{-12}$--$10^{-10}$.
+\end{itemize}
+The poles come out real to $10^{-9}$ and non-positive. The flowing slab's
+pole is at $|p|<10^{-16}$.
+
+\paragraph{Observables and metrics.}
+For the box, the mean strain ($e_{xx}$, $e_{yy}$) and the branch variables
+$m_{k,xx}$. For the slab, the surface amplitudes
+$W=(u_z,c)/(c,c)$ and $U=(u_h,g)/(g,g)$ on $z=H$, with $g=-\nabla_hc/|k|$
+(boundary linear forms). The metrics are those of the Love-number
+histories, taken over $t=0^+$ and every output time: the \emph{history}
+error $\max_t|f_{\text{FE}}-f_{\text{ref}}|/\max_t|f_{\text{ref}}|$,
+reported as the worst over the observables; the \emph{elastic} error at
+$t=0^+$; and the \emph{relax} error of $f(t)-f(0^+)$.
+
+\paragraph{The driver and its step grid.}
+\code{viscoelastic\_box} reads the case, builds the mesh (element
+attribute: the layer of the element's centre) and a
+\code{CompositeRheology} with one region per layer. With
+\code{-rheology pointwise} it builds instead one
+\code{IsotropicMaxwellRheology} whose coefficients look the layer up at
+every point. The step grid is the output times plus, aligned, the
+breakpoints. Every interval is divided into
+$\max(\text{\code{-min-steps}},\lceil\ell/\Delta t\rceil)$ equal steps, and
+a step equal to the previous one up to rounding \emph{is} the previous
+one, so that a fixed $\Delta t$ keeps a single effective operator. Two
+details turned out to matter:
+\begin{itemize}[leftmargin=*]
+\item \emph{Jumps.} The step that ends at a jump must see the load's left
+  limit, and the next must start from the right limit. The history
+  evaluates the left limit at the flagged time, and
+  \code{ViscoelasticOperator::InvalidateDisplacement()} (new) drops the
+  displacement cached for the pre-jump load. The evaluation must also
+  snap the stepped time to the jump time. Rounding can put it an ulp past
+  the jump, outside the piece that ends there, and the first stepper
+  sweep found exactly that: an $O(\Delta t)$ error at isolated step sizes.
+\item \emph{The observation cache.} The stepped time equals the output
+  time only up to rounding, and the driver must not reset it, or the
+  operator's displacement cache (keyed on $(m,t)$) misses. Each output
+  would then cost an extra solve and two reassemblies.
+\end{itemize}
+The cost is recorded per output time: stepping solves (observation solves
+apart), assemblies, preconditioner setups, CG iterations, seconds.
+
+\subsection{Box: the integrators on a homogeneous body}
+\label{sec:box-steppers}
+
+\paragraph{The sweep.}
+\code{study.py steppers} runs one element (2-D, order 1: the state is
+homogeneous, so the mesh is irrelevant). It covers the four bodies
+\code{maxwell}, \code{sls}, \code{burgers} and \code{prony\_wide}, both
+loads (stress and strain control), all eight histories and the six
+schemes. Fixed steps run from $\Delta t=1/2$ (the output spacing; 16
+outputs to $t=8$) down to $1/1024$, and the adaptive trapezoid runs at
+$\text{rtol}=10^{-1},\dots,10^{-7}$. Every history with breakpoints is
+run both aligned and unaligned. That makes 5933 runs, about 15 minutes on
+ten cores. The cost is every elastic solve a run makes, stepping and
+observation together, because the two do not separate: ETD1 reuses an
+observation solve as the start of its next step, and SDIRK23 pays an
+extra one per output (\S\ref{sec:steppers}).
+
+\paragraph{Orders.}
+Observed orders are the least-squares slope of the history error against
+$\Delta t$ over errors in $(10^{-11},10^{-2})$.
+\begin{center}
+\small
+\begin{tabular}{@{}llccccc@{}}
+\toprule
+body & load & ETD1 & BE & ExpTrap & SDIRK23 & RK4 \\
+\midrule
+\code{maxwell} & stress, periodic & 1.00 & 1.00 & 2.00 & 2.00 & 4.01 \\
+\code{sls} & stress, periodic & 1.00 & 1.00 & 2.00 & 2.00 & 4.02 \\
+\code{burgers} & stress, periodic & 1.00 & 1.00 & 2.00 & 2.01 & 4.16 \\
+\code{prony\_wide} & stress, periodic & 1.16 & 1.00 & \textbf{1.52} & 2.08 & unstable \\
+\code{prony\_wide} & stress, Heaviside & 1.10 & 1.01 & \textbf{1.48} & 2.01 & unstable \\
+\code{prony\_wide} & strain, periodic & 1.20 & 1.00 & 2.00 & 2.10 & unstable \\
+\code{prony\_wide} & strain, Heaviside & exact & 1.04 & exact & 1.98 & unstable \\
+\bottomrule
+\end{tabular}
+\end{center}
+Every scheme has its design order on every body it is stable on, and
+exactness appears where the theory of \S\ref{sec:steppers} predicts it:
+\begin{itemize}[leftmargin=*]
+\item Under strain control the strain is prescribed. ExpTrap is then
+  exact ($10^{-13}$--$10^{-16}$) for every piecewise-linear history
+  (Heaviside, ramp, load\_unload, sawtooth), and ETD1 for every
+  piecewise-constant one (Figure~\ref{fig:box-dt}, right).
+\item Maxwell creep under a constant stress is linear in time, so
+  every scheme of order at least one except ETD1 is exact. Under a ramp
+  it is quadratic, and SDIRK23 and RK4 remain exact.
+\item \code{prony\_wide} has $\tau_{\min}=10^{-3}$, and RK4 is unstable on
+  the whole ladder ($\Delta t\ge 2^{-10}>2.8\tau_{\min}$, 170 runs).
+\end{itemize}
+One result is not in the theory of \S\ref{sec:steppers}: \textbf{ExpTrap
+loses half an order on the stiff multi-branch body under stress control}
+(1.5 against SDIRK23's 2.0, Figure~\ref{fig:box-dt}, middle). At
+$\Delta t=2^{-10}$ its error is $4\times10^{-6}$ against SDIRK23's
+$2\times10^{-7}$, while under strain control the same body gives it
+order 2 or exactness. The likely cause is the coupling. Under stress
+control the strain $\delta$ depends on all branch variables
+\eqref{eq:zero-d}, so the stiff branches ($\tau\ll\Delta t$) put
+components into $\delta(t)$ that vary on their own time scale inside a
+step. ExpTrap's linear interpolation of $\delta$ misses them, whereas
+SDIRK23's L-stable stages damp them. This is a stiff order reduction of
+the familiar kind, but it has not been analysed here.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.94\textwidth]{box_steppers_dt_burgers_uniaxial_stress.png}\\[1ex]
+\includegraphics[width=0.94\textwidth]{box_steppers_dt_prony_wide_uniaxial_stress.png}\\[1ex]
+\includegraphics[width=0.94\textwidth]{box_steppers_dt_maxwell_uniaxial_strain.png}
+\caption{History error against the step, breakpoints aligned. Top:
+Burgers body under stress control (two relaxation times), every scheme
+at its design order. Middle: \code{prony\_wide} (six decades of
+$\tau$): RK4 unstable throughout, and ExpTrap at order 1.5. Bottom:
+Maxwell body under strain control: ExpTrap exact for piecewise-linear
+strain, ETD1 for piecewise-constant.}
+\label{fig:box-dt}
+\end{figure}
+
+\paragraph{Jumps and kinks off the step grid.}
+With the breakpoints unaligned (Figure~\ref{fig:box-align}):
+\begin{itemize}[leftmargin=*]
+\item a \emph{jump} (load\_unload) costs every scheme its order. The
+  second-order schemes fall to $0.2$--$0.7$, erratically, because the
+  jump sits at a different fraction of a step for each $\Delta t$, and
+  RK4 falls to $1.3$. The errors stall at $10^{-4}$, against $10^{-7}$
+  aligned;
+\item a \emph{kink} (ramp, sawtooth) costs a second-order scheme nothing,
+  since one local error of $O(\Delta t^2)$ leaves the global error
+  second order. It caps RK4 at order 2 (ramp 2.03, sawtooth 2.06,
+  against 3.7--4.3 aligned);
+\item a $C^1$ breakpoint (smooth\_step, ramped\_periodic) costs nothing.
+\end{itemize}
+A production driver should therefore put every load jump on the step
+grid, and it is what the box driver does by default. This is also how
+the driver bug of \S\ref{sec:box} was found: an $O(\Delta t)$ error at
+isolated step sizes with the jumps aligned.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{box_steppers_alignment.png}
+\caption{Burgers body, stress control: breakpoints on the step grid
+(solid) or inside steps (dotted). Only the jump (load\_unload) matters
+for the second-order schemes.}
+\label{fig:box-align}
+\end{figure}
+
+\paragraph{Cost.}
+Elastic solves to reach a history error of $10^{-3}$ and $10^{-5}$
+(stress control, aligned; --- means not reached on the ladder):
+\begin{center}
+\small
+\begin{tabular}{@{}llrrrrrr@{}}
+\toprule
+target & body, history & ETD1 & BE & ExpTrap & SDIRK23 & RK4 & Adaptive \\
+\midrule
+$10^{-3}$ & \code{sls}, Heaviside & 1025 & 1025 & 33 & 49 & 81 & 38 \\
+ & \code{burgers}, load\_unload & 8194 & 4098 & 259 & 531 & 533 & 228 \\
+ & \code{burgers}, periodic & --- & 8194 & 257 & 273 & 529 & 1437 \\
+ & \code{prony\_wide}, Heaviside & 4097 & 4097 & 257 & 273 & 16401 & 78 \\
+ & \code{prony\_wide}, load\_unload & 8194 & --- & 2051 & 531 & 16405 & 155 \\
+ & \code{prony\_wide}, periodic & --- & 8193 & 513 & 529 & 16401 & 6456 \\
+\midrule
+$10^{-5}$ & \code{sls}, periodic & --- & --- & 2049 & 2065 & 273 & 4422 \\
+ & \code{burgers}, Heaviside & --- & 8193 & 1025 & 529 & 529 & 349 \\
+ & \code{burgers}, periodic & --- & --- & 4097 & 4113 & 1041 & 13008 \\
+ & \code{prony\_wide}, Heaviside & --- & --- & 8193 & 4113 & 16401 & 1456 \\
+ & \code{prony\_wide}, load\_unload & --- & --- & --- & 8211 & 16405 & 3087 \\
+\bottomrule
+\end{tabular}
+\end{center}
+The regime decides the winner (Figure~\ref{fig:box-cost}):
+\begin{itemize}[leftmargin=*]
+\item \emph{Relaxation after a step load} (Heaviside, load\_unload):
+  the adaptive trapezoid is cheapest, by a factor of 3--5 on the stiff
+  bodies. It takes small steps through each transient and strides once
+  the response is quiet. Its error is far below rtol there, because the
+  ETD1 estimate is conservative.
+\item \emph{Sustained periodic forcing}: adaptivity is the worst choice
+  (1400--23000 solves), since the conservative estimate keeps every
+  step small for the whole run. On non-stiff bodies RK4 wins at tight
+  targets (273 solves for $10^{-5}$ on \code{sls}), but on a stiff one it
+  is bound by stability (16401 on \code{prony\_wide} whatever the
+  target).
+\item \emph{ExpTrap and SDIRK23} are the robust fixed-step choices. They
+  cost about the same per unit accuracy (ExpTrap has one solve per step,
+  SDIRK23 two but a smaller error constant). ExpTrap wins when the strain
+  is close to linear over a step, and SDIRK23 on the stiff multi-branch
+  body, where ExpTrap's order drops.
+\item The first-order schemes are never competitive beyond $10^{-3}$.
+\end{itemize}
+Solves are not the whole cost. The adaptive trapezoid reassembles the
+effective operator at every accepted step (assemblies equal solves in
+these runs), a fixed-step implicit scheme assembles once per step size,
+and RK4 never reassembles. On a problem where assembly and preconditioner
+setup dominate, adaptivity pays that price at every step.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{box_steppers_cost_load_unload.png}\\[1ex]
+\includegraphics[width=\textwidth]{box_steppers_cost_periodic.png}
+\caption{History error against elastic solves (stress control, aligned):
+a load applied and removed (top), and a periodic load (bottom).}
+\label{fig:box-cost}
+\end{figure}
+
+\paragraph{The periodic transient.}
+A standard linear solid under $\sigma=0.5+\sin(2t+0.3)$ from $t=0$ (240
+outputs to $t=12$, $\Delta t=1/8$) relaxes from its elastic start into the
+periodic state on the retardation time $\tau\mu_U/\mu_\infty=2$
+(Figure~\ref{fig:box-transient}). The errors appear within the first step
+and then settle into the periodic state with no secular growth. Every
+scheme carries its error through the transient unchanged, ordered as
+expected: RK4 $\sim10^{-9}$, SDIRK23 and ExpTrap $\sim10^{-5}$, BE and
+ETD1 $\sim10^{-3}$.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.75\textwidth]{box_steppers_transient.png}
+\caption{A periodic load switched on: the exact history (line) and the
+schemes at $\Delta t=1/8$ (every sixth output marked), and the pointwise
+error.}
+\label{fig:box-transient}
+\end{figure}
+
+\subsection{Box: Gaver--Stehfest against exact histories}
+\label{sec:box-stehfest}
+
+\paragraph{What is tested.}
+The Love-number histories (\S\ref{sec:laplace}) rest on Gaver--Stehfest
+inversion of pyslfp's transform values. The slabs supply exact transfer
+functions and exact histories, so the inversion can be tested on its own.
+For six slab models at $n=1,2,4$, the Heaviside histories of $W$ and $U$
+(40 times to $t=8$) were inverted by Stehfest at orders $8$--$18$ and by
+fixed Talbot, and compared with the modal sums. The noise amplification
+was then measured by multiplying the exact transform by
+$1+\epsilon\xi$, with $\xi$ standard normal and independent at each
+sample.
+
+\paragraph{Results.}
+\begin{itemize}[leftmargin=*]
+\item Talbot agrees with the modal histories to $6\times10^{-12}$--$2\times10^{-9}$,
+  so the references are consistent with each other.
+\item Stehfest at $n=12$ with exact values is accurate to
+  $1.4\times10^{-7}$--$1.6\times10^{-4}$ in both $W$ and $U$, and $n=16$
+  is no better ($2\times10^{-7}$--$1.2\times10^{-4}$), because double
+  precision round-off, amplified by $\sum|V_k|/k$, takes over
+  (Figure~\ref{fig:box-stehfest}).
+\item With noise, the amplification dominates: on the channel model's
+  $U$ at $n=4$, relative noise of $10^{-10}$ costs $3\times10^{-4}$ at
+  $n=12$ and $0.1$ at $n=16$; noise of $10^{-8}$ costs $3\%$ at $n=12$.
+\end{itemize}
+
+\paragraph{What it says about the gravitating mismatches.}
+The Love-number histories differ from the FE by $10^{-2}$ in $h'$ and $k'$
+and by up to $0.46$ in $l'_4$. Stehfest's own error is $10^{-4}$ or below
+on smooth relaxation spectra, so the inversion \emph{as such} cannot
+explain those differences. Noise in pyslfp's transform values could, if
+it were $10^{-8}$ or more relative. The existing check bounds it: raising
+the order from 12 to 16 moved the pyslfp reference by less than
+$5\times10^{-4}$ (\code{love/README.md}), and order 16 amplifies random
+noise about 400 times more than order 12, which puts the noise in the
+$10^{-12}$ range. On that evidence the reference side is unlikely to be
+the main cause, at least as random noise. Smooth systematic errors in
+$R(s)$, e.g.\ from a radial discretisation tolerance, are amplified less,
+and are not excluded by this argument. Two caveats about the comparison
+itself. Here no $U$ history changes sign, unlike the spherical $l'$, and
+the slabs have no buoyancy modes. A direct test would re-evaluate a few
+pyslfp transform values at tighter solver tolerances.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{box_stehfest_orders.png}\\[1ex]
+\includegraphics[width=0.48\textwidth]{box_stehfest_example.png}\hfill
+\includegraphics[width=0.48\textwidth]{box_stehfest_noise.png}
+\caption{Gaver--Stehfest on exact transforms. Top: history error against
+the order for every slab case. Bottom left: the worst case of order 12.
+Bottom right: the error of order $n$ against random relative noise in the
+transform values.}
+\label{fig:box-stehfest}
+\end{figure}
+
+\subsection{Box: Fourier slabs and spatial convergence}
+\label{sec:box-slab}
+
+\paragraph{The sweep.}
+\code{study.py slab} runs six 2-D slab models (\code{lid}, \code{channel}
+with $C=100$, \code{sls\_stack}, \code{burgers\_lid}, \code{prony\_lid},
+\code{maxwell\_slab}) at modes $n=1,2,4$ ($k=\pi n$; width 2, height 1)
+under the Heaviside load. Each runs on the mesh ladder $n_z=5,10,20,40$
+at order 1 and $n_z=5,10,20$ at order 2, with $n_x=2n_z$ (square
+elements, $h=1/n_z$). The time error is kept small with ExpTrap at
+$\Delta t=1/40$. Two further sets complete it: the \code{lid} slab under
+the periodic load, and 3-D boxes under the plane wave $(1,0)$ and the
+checkerboard $(1,1)$ at the local profile's sizes (order 1, $n_z=5,10$;
+order 2, $n_z=5$). Every layer interface lies on element faces
+(\S\ref{sec:box}).
+
+\paragraph{Results (Figure~\ref{fig:box-slab}).}
+\begin{itemize}[leftmargin=*]
+\item \emph{Rates.} Order-1 elements converge at second order and
+  order-2 elements at third to fourth order in the surface amplitudes,
+  for every model: elastic lids, standard linear solids, Burgers and
+  Prony mantles, and the flowing Maxwell slab alike. Example: \code{lid}
+  at $n=1$, $p=2$, $4.3\times10^{-3}\to2.9\times10^{-4}\to1.9\times10^{-5}$.
+  The relaxation is resolved no worse than the elastic response. The
+  rheology does not change the rate, only the constant.
+\item \emph{Wavenumber.} The error at fixed mesh grows roughly as
+  $k^2$--$k^3$: $n=4$ costs about a factor 100 against $n=1$. This is the
+  Cartesian counterpart of the degree dependence of the spherical
+  benchmarks.
+\item \emph{The low-viscosity channel} is the hardest model. Its channel
+  ($\tau=0.01$, $0.2$ thick) carries the large strain gradients, so at
+  $n_z=5$ (one element across it) the error is $0.25$--$0.6$, and it
+  converges from $n_z=10$ on ($8.5\times10^{-2}\to8.9\times10^{-3}$ at
+  $n=1$, $p=2$). Weak layers need elements across them, as one would
+  expect.
+\item \emph{3-D.} The plane wave and the checkerboard behave as their
+  2-D counterparts, which checks the horizontal-isotropy reduction of the
+  reference. At $p=1$, $0.19\to0.054$ from $n_z=5$ to $10$; at $p=2$,
+  $n_z=5$, $4.5\times10^{-3}$ (plane wave) and $1.2\times10^{-2}$
+  (checkerboard, $k=\sqrt2\pi$). The $p=2$, $n_z=10$ runs (106k
+  unknowns, over 1.5 h each on 4 ranks) belong to the server profile.
+\end{itemize}
+\paragraph{Two floors that are time error.}
+Two order-2 ladders level off near $10^{-4}$ at $n_z=20$: \code{prony\_lid}
+($1.8\times10^{-4}$, Figure~\ref{fig:box-slab}) and the \code{lid} slab
+under the periodic load ($9.1\times10^{-5}$). Both are the time step,
+not the mesh. At $\Delta t/4$ they drop to $1.7\times10^{-5}$ and
+$1.2\times10^{-5}$. SDIRK23 at the original step gives $1.1\times10^{-5}$
+and $1.7\times10^{-5}$. On \code{prony\_lid} SDIRK23 is therefore 16 times
+more accurate than ExpTrap at the same step. This is the stiff
+multi-branch order reduction of \S\ref{sec:box-steppers} (the $\tau=0.01$
+branch), now in a spatially structured problem.
+
+\paragraph{Interfaces inside elements.}
+On uniform meshes that do \emph{not} follow the layers
+(\code{-no-conform}; $n_z=8,16,32$ against the interfaces at $0.6$ and
+$0.8$, Figure~\ref{fig:box-slab}, right), the composite rheology
+(element attribute from the element's centre) staircases the interface,
+and its error stalls: \code{lid} $0.12\to0.027\to0.027$. The pointwise
+rheology resolves the interface at the quadrature points and the
+internal-variable nodes, but converges only at first order
+($0.047\to0.014\to6.8\times10^{-3}$), against $p=2$ conforming errors of
+$10^{-4}$--$10^{-5}$ on fewer elements. The error is invisible at $t=0^+$,
+because an elastic lid and an unrelaxed Maxwell mantle are elastically
+alike, and appears only as the mantle relaxes. A layer interface inside
+elements costs a large factor in accuracy, at any order. This is why
+every mesh of these benchmarks is built first, with the material
+parameters fitted to it, and why material discontinuities belong on
+element faces in general.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{box_slab_convergence.png}\\[1ex]
+\includegraphics[width=0.55\textwidth]{box_slab_interfaces.png}
+\caption{Fourier slabs (2-D, Heaviside). Top: history error of $W$ and
+$U$ against $h=1/n_z$, modes $n=1,2,4$, orders 1 (dotted) and 2 (solid).
+Bottom: interfaces inside elements, composite (staircase) and pointwise
+rheology, against the same models on conforming meshes (dotted, squares).}
+\label{fig:box-slab}
+\end{figure}
+
+\subsection{Box: viscosity contrasts}
+\label{sec:box-contrast}
+
+\paragraph{The sweep.}
+The \code{contrast} model (Maxwell $\tau=1$ below $0.4$, a weak layer
+$\tau=1/C$ on $[0.4,0.6]$, a stiff layer $\tau=C$ on $[0.6,0.8]$, elastic
+lid) runs as a column ($n=0$) and as a slab ($n=1$) for
+$C=1,10^2,10^4,10^6,10^8$. Every scheme runs on $\Delta t=1,\dots,1/128$
+and the adaptive one at $\text{rtol}=10^{-1}$--$10^{-4}$; order 2,
+$n_z=10$, Heaviside load. Alongside, the \code{gradient} column has
+$\tau$ varying geometrically over $C$ with depth. This is 488 runs in
+about two hours on ten cores.
+
+\paragraph{The reference at large contrasts.}
+At $C\ge10^4$ the relaxation rates span up to 16 decades, and AAA can no
+longer resolve the slab's transfer function from its samples: fit errors
+of $10^{-8}$--$10^{-2}$, spurious complex poles, positive poles and an
+overflowing modal sum at $C=10^8$. The slab reference therefore checks
+itself. When the modal form fails its checks (fit error above $10^{-9}$,
+a positive pole, or disagreement with Talbot above $10^{-7}$) and the load
+is a Heaviside, it takes the history from fixed-Talbot inversion, which
+evaluates the transfer function exactly at moderate complex $s$ and never
+needs the extreme rates resolved. Other histories are flagged
+unreliable. The two agree where both work: at $C=10^4$, the modal and the
+Talbot $W(8)$ differ by $10^{-6}$. The first sweep had scored the FE
+against the broken modal sums. With the corrected references every
+$C\ge10^4$ slab settles at the $n_z=10$ spatial error ($4.5\times10^{-4}$),
+like $C=1$ ($2.9\times10^{-4}$).
+
+\paragraph{Results (Figures~\ref{fig:box-contrast-col}, \ref{fig:box-contrast-slab}).}
+\begin{itemize}[leftmargin=*]
+\item \emph{The time accuracy of the L-stable and exponential schemes does
+  not depend on the contrast.} On the column, ExpTrap reaches $10^{-3}$
+  in 17 solves and $10^{-5}$ in 129 at every $C$ from 1 to $10^8$, and
+  SDIRK23 in 49 and 273. On the slab, BE, ExpTrap, SDIRK23 and the
+  adaptive trapezoid reach the spatial floor in 17--145 solves at every
+  $C\ge10^4$. The weak layer relaxes within the first step, the stiff one
+  does not move, and both schemes get that right without resolving
+  either time scale.
+\item \emph{The cost moves into the linear solver.} The effective
+  modulus $C_\infty+\sum_k\beta_kC_k$ has $\beta_k\to\tau_k/\Delta t$ in
+  the weak layer, so its shear stiffness there collapses and the elastic
+  operator becomes badly conditioned. CG iterations per solve rise from
+  about 55 at $C=1$ to 150--225 (column) and 230--340 (slab) at
+  $C\ge10^4$. They fall as $\Delta t$ shrinks, because the effective
+  modulus approaches the unrelaxed one. On the graded column, with $\tau$
+  varying smoothly over $C$, they reach 500--2500 at $C\ge10^6$. ETD1
+  and RK4 solve with the unrelaxed operator and stay at about 50--65 at
+  every contrast. The preconditioner (BoomerAMG on the effective
+  operator) is the place to act, e.g.\ by elasticity-aware AMG options
+  or by deflating the near-null space of the relaxed region.
+\item \emph{RK4} is bound by $\Delta t\lesssim2.8/C$ and is not run beyond
+  $C=100$.
+\item \emph{ETD1 does not converge at large contrast on the slab.} Its
+  error stays at $0.5$--$0.8$ over the whole ladder for $C\ge10^4$. On the
+  column it converges at first order at every $C$. ETD1 relaxes the
+  internal variable to the strain at the \emph{start} of the step. When
+  $\Delta t\gg\tau$ in the weak layer, each step carries the weak layer to
+  the previous step's strain, and in the slab that strain is still being
+  redistributed by the slow layers. The error is then set by $\Delta t$
+  against the slow time scale and by the stress the weak layer should
+  not carry, and only goes away once $\Delta t\lesssim\tau_{\min}$.
+\item \emph{The adaptive trapezoid at $C=10^8$} (column) takes 35000
+  solves to reach rtol $10^{-1}$. Its error estimate follows the
+  $\tau=10^{-8}$ branch through its initial transient, which the fixed-step
+  L-stable schemes simply step over with no loss of accuracy. With
+  extreme $\tau_{\min}$, adaptivity needs a lower bound on the step, or
+  an estimate that weights branches by their effect on the observables.
+\item \emph{$C=100$ is the spatially hardest slab.} Every scheme stalls
+  at $2.8\times10^{-2}$ at $n_z=10$. Refinement gives $2.3\times10^{-3}$
+  at $n_z=20$ and $1.8\times10^{-4}$ at $n_z=40$ (order $\approx3.6$), so
+  this is resolution: at this contrast the weak and stiff
+  layers relax on comparable time scales within the window. At
+  $C\ge10^4$ one is instantly relaxed and the other frozen, which is
+  easier to resolve.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{box_contrast_n0.png}
+\caption{The contrast ladder, column ($n=0$): history error (top) and CG
+iterations per solve (bottom) against elastic solves.}
+\label{fig:box-contrast-col}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{box_contrast_n1.png}
+\caption{The contrast ladder, slab ($n=1$), against the corrected
+references: every scheme but ETD1 reaches the spatial floor of
+$n_z=10$; at $C=100$ that floor is high (resolution, see text).}
+\label{fig:box-contrast-slab}
+\end{figure}
+
+\subsection{Sphere benchmarks: problems and exact references}
+\label{sec:sphere}
+
+\paragraph{What is tested, and the aim.}
+The sphere sub-family (\code{benchmarks/viscoelastic/sphere}) moves the
+box's question onto the geometry of the Love-number problems, still
+without gravity and fluids. It covers curved, spherically layered meshes,
+surface loads of degree $l$, the same rheologies and histories as the
+box, and viscosity that varies \emph{laterally}. Radial models have exact
+references. Laterally varying ones do not, and there the question is the
+integrators' alone: each run is compared with a much smaller step on the
+same mesh, so the spatial error cancels.
+
+\paragraph{The problem.}
+The body is a ball (3-D) or a disc (2-D) of radius 1, layered radially,
+with no buffer shell (no gravity, so nothing outside). The load is the
+normal pressure $p=S(t)\,Y_l(\hat x)$ on the surface, with $Y_l$ the real
+orthonormal harmonic of degree $l$ and order 0 (3-D, polar axis $z$) or
+$\cos l\theta/\sqrt\pi$ (2-D, the library's \code{SurfaceHarmonics}). The
+body is free: \code{LinearQuasiStaticTractionProblem} projects out the
+rigid modes, and $l\ge2$ puts no net force or torque on it. The
+observables are the surface coefficients
+$u=\sum_d U_dY_d\hat x+V_d\nabla_1Y_d$ for every degree $d\le l_{\max}$,
+from \code{BoundaryHarmonicCoefficients}. A radial model answers at
+$d=l$ only; a laterally varying one couples the degrees.
+
+\paragraph{Meshes: the mesh comes first.}
+\code{meshes.py} builds the meshes with planetmodel, uniform in size $h$,
+curved of order 2, every layer radius a surface of the mesh (interface
+error $\sim10^{-16}$), and caches them in the build tree. The model radii
+are multiples of $0.2$.
+
+\paragraph{Models.}
+They mirror the slabs: \code{maxwell\_ball} (flows), \code{lid} (Maxwell
+$[0,0.8]$, elastic lid), \code{core\_lid} (elastic core $[0,0.4]$,
+Maxwell mantle, elastic lid: bounded relaxation), \code{channel} (core,
+mantle $\tau=1$ $[0.4,0.6]$, channel $\tau=1/C$ $[0.6,0.8]$, lid),
+\code{burgers\_lid} and \code{prony\_lid} (multi-branch mantles under a
+lid). \code{lateral} is \code{core\_lid} with the mantle's relaxation
+time varying sideways,
+\begin{equation}
+  \tau(x) = C^{\,(1+\tanh(x_a/w))/2},\qquad w=0.15,
+\end{equation}
+from $1$ on one side to $C$ on the other across the polar axis $x_a$
+($z$ in 3-D, $x$ in 2-D, so that the order-0 or cosine loads stay
+symmetric). The variation is smooth, so there is no interface for the
+mesh to follow. Contrasts $C=1,10^2,10^4$ are used.
+
+\paragraph{The exact reference.}
+For $u=U(r)Y\hat x+V(r)\nabla_1Y$ in a layer of constant moduli, with
+the tractions $\sigma_{rr}=RY$ and $\sigma_{r\theta}=S\,\partial_\theta Y$,
+the static, non-gravitating equations take Euler form in the scaled
+variables $\mathbf Y=(U,V,rR,rS)$:
+\begin{equation}
+  r\frac{\mathrm d\mathbf Y}{\mathrm dr}=M(\lambda,\mu,l)\,\mathbf Y,
+  \qquad
+  M_{3\text{-D}}=\begin{pmatrix}
+  -\frac{2\lambda}{\lambda+2\mu} & \frac{L\lambda}{\lambda+2\mu} & \frac1{\lambda+2\mu} & 0\\
+  -1 & 1 & 0 & \frac1\mu\\
+  \frac{4\mu(3\lambda+2\mu)}{\lambda+2\mu} & -\frac{2L\mu(3\lambda+2\mu)}{\lambda+2\mu} & \frac{\lambda-2\mu}{\lambda+2\mu} & L\\
+  -\frac{2\mu(3\lambda+2\mu)}{\lambda+2\mu} & \frac{2\mu(2L(\lambda+\mu)-\lambda-2\mu)}{\lambda+2\mu} & -\frac{\lambda}{\lambda+2\mu} & -2
+  \end{pmatrix},
+\end{equation}
+with $L=l(l+1)$. The 2-D matrix is analogous with $L=l^2$
+(\code{reference.py}). \code{derive\_euler.py} derives both with sympy
+from Navier's equations in spherical and polar coordinates (Legendre's
+equation eliminating $P''$), and checks the hand-coded matrices against
+the derivation to round-off. The eigenvalues of $M$ are
+$l-1,\,l+1,\,-l,\,-l-2$ (3-D) and $l\pm1,\,-l\pm1$ (2-D) \emph{whatever
+the moduli}. Hence:
+\begin{itemize}[leftmargin=*]
+\item the solutions regular at the centre are the eigenvectors of
+  $l\pm1$ times $r^{l\pm1}$;
+\item across a layer the propagator is exactly
+  $(r_2/r_1)^M=\exp(M\ln(r_2/r_1))$;
+\item $U(a)$ and $V(a)$ per unit pressure ($R(a)=-1$, $S(a)=0$) are
+  rational in the moduli, hence, by the correspondence principle,
+  rational in $s$.
+\end{itemize}
+The modes then come from AAA, and the histories from the exact
+convolutions of \S\ref{sec:box}, exactly as for the slabs. The stored
+checks give fit errors of $10^{-14}$ and Talbot against the modal sum
+of $10^{-11}$.
+
+\subsection{Sphere: spatial convergence of radial models}
+\label{sec:sphere-radial}
+
+\paragraph{The sweep.}
+\code{study.py radial} (local profile) runs the six radial models on
+discs at degrees $l=2,4$. The meshes are $h=0.1,0.05$ at order 1 and
+$h=0.2,0.1,0.05$ at order 2 (geometry of order 2 throughout). Two models,
+\code{core\_lid} and \code{burgers\_lid}, also run on balls at $l=2$
+with $h=0.25,0.18$, order 2. All runs use ExpTrap at $\Delta t=1/40$ and
+the Heaviside load, 16 outputs to $t=8$. That is 64 runs in about 15
+minutes; the 3-D runs take 2--6 minutes each on 4 ranks, and finer balls
+belong to the server profile. Every reference passed its checks (AAA
+fit $\sim10^{-14}$, Talbot against modal $\sim10^{-11}$).
+
+\paragraph{Results (Figure~\ref{fig:sphere-radial}).}
+\begin{itemize}[leftmargin=*]
+\item \emph{Rates on curved meshes.} Order 2 converges at about fourth
+  order in the surface coefficients and order 1 at second, as on the
+  slabs. For example, \code{maxwell\_ball} at $l=2$ gives
+  $2.0\times10^{-4}\to1.1\times10^{-5}\to6.5\times10^{-7}$, and \code{lid}
+  gives $6.5\times10^{-4}\to2.5\times10^{-5}\to3.3\times10^{-6}$.
+  Degree 4 costs a factor 10--100 over degree 2, as the wavenumber does
+  on the slab.
+\item \emph{The low-viscosity channel} again needs resolution: $0.66$ at
+  $h=0.2$, then $4.5\times10^{-2}$, $5.1\times10^{-3}$.
+\item \emph{Time floors.} \code{prony\_lid} ($3\times10^{-4}$ at $l=2$)
+  and \code{burgers\_lid} ($5\times10^{-5}$) level off at order 2. These
+  are the ExpTrap order reduction of the stiff branches ($\tau=0.01$,
+  $0.05$) at $\Delta t=1/40$, as on the slab (\S\ref{sec:box-slab}), not
+  the mesh.
+\item \emph{Balls.} \code{core\_lid} gives $3.9\times10^{-2}\to1.0\times10^{-2}$
+  from $h=0.25$ to $0.18$, roughly fourth order, on meshes with one or two
+  elements across the mantle. \code{burgers\_lid} gives
+  $2.3\times10^{-3}\to1.6\times10^{-3}$, approaching its time floor. The
+  elastic ($t=0^+$) errors are $4\times10^{-4}$ and below. Most of the
+  error on a coarse ball is in the relaxation, so the relaxation needs
+  resolving, not just the elastic response.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{sphere_radial_2d.png}
+\caption{Discs: history error of the surface coefficients $U_l$, $V_l$
+against the exact histories, degrees 2 and 4, orders 1 (dotted) and 2
+(solid).}
+\label{fig:sphere-radial}
+\end{figure}
+
+\subsection{Sphere: the integrators with lateral viscosity variations}
+\label{sec:sphere-lateral}
+
+\paragraph{The sweep.}
+\code{study.py lateral} (local profile: discs, $h=0.1$, order 2, $l=2$,
+analysis to degree 6) runs every scheme on $\Delta t=1/2,\dots,1/64$ and
+the adaptive trapezoid at rtol $10^{-2}$--$10^{-4}$. Two models are used:
+\begin{itemize}[leftmargin=*]
+\item \code{lateral}: the mantle's $\tau$ goes from $1$ to $C$ across the
+  polar axis (a slow region), with $C=1,10^2,10^4$ under the Heaviside,
+  load\_unload and periodic loads;
+\item \code{lateral\_weak}: $\tau$ goes from $1/C$ to $1$ (a weak region,
+  so the problem is stiff), with $C=10^2,10^4$ under the Heaviside and
+  periodic loads.
+\end{itemize}
+The reference for each case is SDIRK23 at $\Delta t=1/256$ on the same
+mesh. ExpTrap at the same step measures that reference's error:
+$5\times10^{-8}$--$2.5\times10^{-7}$ (Heaviside, load\_unload) and
+$5$--$7\times10^{-6}$ (periodic). Errors are taken over all degrees
+together, relative to the largest coefficient of the family ($U$ or
+$V$). A per-degree scale would divide the numerical leakage into the
+uncoupled degrees by itself.
+
+\paragraph{The coupling.}
+A laterally varying viscosity couples the degrees. The largest
+coefficient of a degree other than the load's, relative to the load's
+degree, is $3\times10^{-3}$ at $C=1$ (the mesh's own asymmetry), and
+$0.09$--$0.34$ at $C=10^2$ and $10^4$. The relaxation genuinely
+redistributes the response over degrees, which no radial benchmark can
+test.
+
+\paragraph{Results: a slow region (Figure~\ref{fig:sphere-lateral}).}
+Every scheme keeps its order and its cost whatever $C$, because
+$\tau_{\min}=1$ for every $C$, so the slow region does not make the
+problem stiff. ExpTrap reaches $10^{-3}$ in 33--35 solves under the step
+loads (257 periodic), SDIRK23 in 49--51 (145--273), RK4 in 81--85 at every
+contrast. RK4 reaches the reference's own error floor
+($10^{-7}$--$10^{-6}$), and is the cheapest at tight targets, as on the
+non-stiff homogeneous bodies (\S\ref{sec:box-steppers}). Under periodic
+loading ETD1 and BE need about $10^4$ solves for $10^{-2}$. The
+adaptive trapezoid costs 165--175 solves for $10^{-3}$ after a step load
+and 1200--1550 under the periodic one, the same pattern as on the box.
+CG needs 90--125 iterations per solve on these curved discs whatever the
+scheme.
+
+\paragraph{Results: a weak region (Figure~\ref{fig:sphere-lateral-weak}).}
+\code{lateral\_weak} has $\tau$ from $1/C$ to $1$, so $\tau_{\min}=1/C$
+and the problem is stiff. Its mantle is a standard linear solid
+($\mu_\infty=0.1$, one branch $0.9$). The first version had a Maxwell
+mantle, and its response diverged at $C=10^4$: every degree grew by a
+factor of about 30 between $t=4$ and $8$, degree 1 reached about 300
+against an elastic response of $0.4$, and the step reference disagreed
+with itself by 99\%. With a mantle that relaxes completely, the elastic
+core of this free, non-gravitating body is held by nothing. Its motion
+relative to the lid is a zero-stiffness mode that the whole-body rigid
+projection does not remove, and the odd lateral variation forces it
+(through degree 1). With $\mu_\infty=0.1$ the response is bounded and
+SDIRK23 and ExpTrap agree to $6\times10^{-5}$ at $\Delta t=1/64$. This
+is a hazard of non-gravitating free-body tests with relaxing shells
+around elastic cores, not of the integrators. The step reference is now
+good to $6\times10^{-5}$--$10^{-4}$, which sets the floor. The coupling
+into other degrees is $0.21$--$0.32$. The adaptive trapezoid is not run
+here: its estimate follows the $\tau=1/C$ transient, as on the box
+column, and its runs took over an hour each on a disc.
+\begin{itemize}[leftmargin=*]
+\item ExpTrap and SDIRK23 reach $10^{-3}$ in 129--529 solves at both
+  contrasts, Heaviside and periodic alike. Their errors stay near the
+  reference's floor for $\Delta t\le1/16$, i.e.\ $\Delta t/\tau_{\min}$
+  up to $600$.
+\item BE converges at first order (best $7\times10^{-4}$--$4\times10^{-3}$
+  at $\Delta t=1/64$). ETD1 does not reach $10^{-2}$ before
+  $\Delta t=1/64$: as on the high-contrast slab
+  (\S\ref{sec:box-contrast}), its frozen-strain update needs
+  $\Delta t\lesssim\tau_{\min}$.
+\item RK4 is bound by $\Delta t<2.8/C$. At $C=100$ only $\Delta t=1/64$ is
+  stable (2065 solves), and at $C=10^4$ nothing on the ladder is.
+\item CG needs 105--180 iterations per solve, against 90--125 for the
+  slow region. The effective operator of the weak side carries the
+  conditioning penalty of \S\ref{sec:box-contrast}.
+\end{itemize}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{sphere_lateral_weak_dt_2d.png}
+\caption{\code{lateral\_weak} (a weak region, $\tau_{\min}=1/C$): error
+against the step; the floor near $10^{-4}$ is the reference's own
+accuracy.}
+\label{fig:sphere-lateral-weak}
+\end{figure}
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.9\textwidth]{sphere_lateral_dt_2d.png}
+\caption{\code{lateral} (a slow region): error against the step for
+every scheme, by history and contrast; the reference is SDIRK23 at
+$\Delta t=1/256$ on the same mesh.}
+\label{fig:sphere-lateral}
+\end{figure}
+
 \subsection{The stepping survey}
+\label{sec:survey}
 
 \paragraph{What is tested, and the aim.}
 The question is which time integrator of \code{ViscoelasticOperator} is
@@ -1057,36 +2169,115 @@ relaxation-time contrast (left) and against the load period (right).}
 \subsection{The Laplace-domain reference}
 \label{sec:laplace}
 
+\paragraph{What is computed.}
+The reference gives the \emph{history} $f(t)$ of a Love number (any of
+$h'_l,l'_l,k'_l$, and the tidal $h_l,l_l,k_l$) of a layered body whose
+solid layers are Maxwell bodies (deviatoric relaxation, elastic in bulk,
+relaxation time $\tau_j=\eta_j/\mu_j$), when the load is switched on at
+$t=0$ and held: $f(0^+)$ is the elastic Love number, and $f(t)$ then
+relaxes. pyslfp solves only \emph{elastic} problems, and only with real
+moduli. The method below turns the viscoelastic history into a set of
+elastic solves of modified models, then reassembles the history from them.
+
 \paragraph{The correspondence principle.}
-For a layered Maxwell body (deviatoric relaxation, elastic in bulk,
-$\tau_j=\eta_j/\mu_j$) under a load switched on at $t=0$, the Laplace
-transform of any linear response is the elastic response of the body with
+Write $F(s)=\int_0^\infty e^{-st}f(t)\,\mathrm{d}t$ for the Laplace
+transform of the history. A Maxwell layer obeys
+$\dot\sigma_d/(2\mu_j)+\sigma_d/(2\eta_j)=\dot\eps_d$ for the deviatoric
+stress and strain. Its transform, for a body at rest at $t=0$, is
+$\hat\sigma_d=2\mu_j(s)\hat\eps_d$ with
 \begin{equation}
-  \mu_j \;\to\; \mu_j(s) = \mu_j\,\frac{s\tau_j}{1+s\tau_j}
+  \mu_j(s) = \mu_j\,\frac{s\tau_j}{1+s\tau_j},
   \label{eq:correspondence}
 \end{equation}
-in every Maxwell layer, divided by $s$ (the transform of the Heaviside
-load). Bulk moduli, densities and fluid layers are unchanged. For real
-$s>0$, $\mu_j(s)$ is real and positive, so each evaluation of the
-transform $R(s)$ is an ordinary pyslfp elastic solve of a modified model
-(the velocities are rebuilt from the modified moduli, which restricts the
-reference to models with uniform layers).
-
-\paragraph{Gaver--Stehfest inversion.}
-The history is
+which is Hooke's law with a modified shear modulus. Every other equation
+(equilibrium, gravity, the boundary and interface conditions) is linear
+with time-independent coefficients, so it transforms term by term,
+unchanged. Bulk moduli, densities and fluid layers keep their values.
+Hence, at each $s$, the transformed problem is an \emph{elastic} problem
+for the body with the moduli \eqref{eq:correspondence}. Write $R(s)$ for
+its Love number, the response to a unit load at that $s$. The load is the
+Heaviside function, whose transform is $1/s$, so
 \begin{equation}
-  f(t) \approx \frac{\ln 2}{t}\sum_{k=1}^{n}V_k\,
-     F\!\Bigl(\frac{k\ln2}{t}\Bigr),\quad F(s)=\frac{R(s)}{s}
-  \;\Longrightarrow\;
-  f(t)\approx\sum_{k=1}^{n}\frac{V_k}{k}\,R\!\Bigl(\frac{k\ln 2}{t}\Bigr),
+  F(s) = \frac{R(s)}{s} .
+  \label{eq:FR}
+\end{equation}
+For real $s>0$, $\mu_j(s)$ is real and lies in $(0,\mu_j)$. Each value
+$R(s)$ is therefore an ordinary pyslfp elastic solve of a modified model.
+The seismic velocities are rebuilt from the modified moduli, which
+restricts the reference to models with uniform layers. The limits are
+$R(\infty)=f(0^+)$, the elastic number, and, where it exists,
+$R(0)=f(\infty)$, the fully relaxed one.
+
+\paragraph{Why Gaver--Stehfest.}
+It remains to invert the transform, recovering $f(t)$ from values of
+$F$. The general inversion formula (the Bromwich integral) and its
+accurate numerical versions (Talbot's contour, used in the box
+sub-family, \S\ref{sec:box}) need $F$ at complex $s$, i.e.\ elastic
+solves with complex moduli, which pyslfp does not provide. The
+Gaver--Stehfest method needs $F$ on the positive real axis only, which is
+why it is used.
+
+\paragraph{How the inversion works.}
+Fix $t$ and put $a=\ln 2/t$. Gaver's idea is to average $f$ against a
+kernel that is concentrated at $u=t$ and whose average can be written in
+terms of $F$. For an integer $m\ge1$ take
+\begin{equation}
+  f_m(t) = \int_0^\infty K_m(t,u)\,f(u)\,\mathrm{d}u,\qquad
+  K_m(t,u) = a\,\frac{(2m)!}{m!\,(m-1)!}\,
+             \bigl(1-e^{-au}\bigr)^m e^{-mau}.
+\end{equation}
+$K_m$ integrates to one in $u$, and it peaks where $e^{-au}=\tfrac12$,
+i.e.\ at $u=\ln2/a=t$. This is the reason for the $\ln2$. Its width
+shrinks like $1/\sqrt m$, so $f_m(t)\to f(t)$ as $m\to\infty$ for
+continuous $f$. Expanding $(1-e^{-au})^m$ by the binomial theorem turns
+each term into a Laplace transform:
+\begin{equation}
+  f_m(t) = a\,\frac{(2m)!}{m!\,(m-1)!}\sum_{j=0}^{m}(-1)^j\binom mj
+           F\bigl((m+j)a\bigr).
+\end{equation}
+Each $f_m$ uses $F$ at the real points $s=(m+j)\ln2/t$ only. But
+$f_m-f=O(1/m)$, which converges far too slowly. Stehfest accelerates the
+sequence $f_1,\dots,f_{n/2}$ by a Richardson-type (Salzer) extrapolation
+that eliminates the error terms in $1/m,1/m^2,\dots$. The combined
+formula, with $n$ even the total number of transform values, is
+\begin{equation}
+  f(t) \approx a\sum_{k=1}^{n}V_k\,F(ka)
+  \;\overset{\eqref{eq:FR}}{=}\;
+  \sum_{k=1}^{n}\frac{V_k}{k}\,R\!\Bigl(\frac{k\ln 2}{t}\Bigr),
+  \qquad a=\frac{\ln2}{t},
+  \label{eq:stehfest}
 \end{equation}
 \begin{equation}
   V_k = (-1)^{k+n/2}\sum_{j=\lfloor (k+1)/2\rfloor}^{\min(k,n/2)}
-   \frac{j^{n/2}(2j)!}{(n/2-j)!\,j!\,(j-1)!\,(k-j)!\,(2j-k)!},
+   \frac{j^{n/2}(2j)!}{(n/2-j)!\,j!\,(j-1)!\,(k-j)!\,(2j-k)!}.
 \end{equation}
-with $n=12$, which gives 4--5 significant figures in double precision
-on smooth transforms. Every number $h',l',k',h,l,k$ at every degree comes
-out of the same twelve solves per time.
+The weights $V_k$ are fixed numbers once $n$ is chosen. The reference
+uses $n=12$: twelve elastic solves per output time, at
+$s=\ln2/t,\,2\ln2/t,\dots,12\ln2/t$, from which every Love number at
+every degree is read.
+
+\paragraph{Accuracy, and what limits it.}
+Two errors compete.
+\begin{itemize}[leftmargin=*]
+\item \emph{Truncation.} The extrapolation is exact only in the limit.
+  For smooth, non-oscillatory histories (sums of decaying exponentials,
+  as here) $n=12$ gives four to six significant figures.
+\item \emph{Amplification of errors in $R$.} The $V_k$ alternate in sign
+  and grow rapidly with $n$, and the sum \eqref{eq:stehfest} cancels them
+  almost entirely. A relative error $\delta$ in the values $R(s_k)$
+  reaches $f$ multiplied by up to $\sum_k|V_k|/k$: $9.8\times10^3$
+  ($n=8$), $3.4\times10^6$ ($n=12$), $1.3\times10^9$ ($n=16$). A larger
+  $n$ therefore helps only if $R$ is correspondingly more accurate, and in
+  double precision nothing is gained beyond $n\approx12$--$14$.
+\end{itemize}
+Both were measured on the box slabs against exact histories
+(\S\ref{sec:box-stehfest}): with exact transform values, $n=12$ is
+accurate to $10^{-6}$--$1.6\times10^{-4}$, and $n=16$ is no better. With
+random relative noise of $10^{-10}$ in the transform, $n=12$ degrades a
+small horizontal amplitude to $3\times10^{-4}$, and noise of $10^{-8}$
+degrades it to $3\%$. The method also fails outright when $f$ grows
+exponentially, since $F$ then has a pole at some real $s_p>0$; this is
+the next paragraph.
 
 \paragraph{The instability horizon.}
 A compressible layer of uniform density has $N^2<0$. While its shear holds
@@ -1267,11 +2458,11 @@ $\tau=1$).}
   derivative, which is the actual result and was invisible on the
   identity plot for the small derivatives. The unmapped base run is
   labelled ``eps = 0 (unmapped)'' instead of ``eps = +0''.
-\item[\code{viscoelastic/compare.py}] New \code{\_series.png}: linear-time
+\item[\code{viscoelastic/love/compare.py}] New \code{\_series.png}: linear-time
   histories with the elastic value at $t=0$ and the relaxed level. Layer
   labels read ``mantle $\tau=1$'' and ``lithosphere elastic'' instead of
   ``mantle 1''.
-\item[\code{viscoelastic/survey.py}] The ``arrows'' caption is drawn only
+\item[\code{viscoelastic/stepping/survey.py}] The ``arrows'' caption is drawn only
   when an arrow is drawn, the stability limit quoted matches the code
   ($2.8\tau_{\min}$), and the regime caption wraps.
 \item[\code{talk\_figures.py}] \code{aspherical.png} is rebuilt as error

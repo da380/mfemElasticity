@@ -207,6 +207,13 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
    * unrelaxed operator; skips the solve when it already is. */
   bool SolveElastic(const mfem::Vector& m, mfem::real_t t);
 
+  /** @brief Forget that the problem's displacement is consistent with the
+   * last (m, t). Needed when the external load jumps at a step boundary:
+   * a step ending at the jump is taken with the load's left limit, the
+   * next one must start from the right limit, and the cache keyed on
+   * (m, t) cannot tell the two apart. */
+  void InvalidateDisplacement() { cache_valid_ = false; }
+
   /** @brief Copy the state into the output GridFunctions. */
   void SyncFields(const mfem::Vector& m);
 

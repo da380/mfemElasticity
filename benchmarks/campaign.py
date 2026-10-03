@@ -29,6 +29,9 @@ stopped. The tree mirrors the families:
   <out>/viscoelastic/<model>/        (opt-in stage) case, Laplace
                                      reference, FE histories, error
                                      tables and figures
+  <out>/viscoelastic_box/<study>/    (opt-in stage) the box studies,
+                                     summaries and figures
+  <out>/viscoelastic_sphere/<study>/ (opt-in stage) the sphere studies
   <out>/campaign_log.md              every command and stage outcome
 
 plot.py renders the Love tree at the end and the scaling rungs collate
@@ -55,8 +58,11 @@ labelled combined.
 The viscoelastic stage is OPT-IN (never in the default stage list; name
 it with --stages): Maxwell Love-number histories by viscoelastic_love
 against the correspondence-principle reference of
-viscoelastic/laplace_reference.py, compared by viscoelastic/compare.py
-in the plot stage (viscoelastic/README.md).
+viscoelastic/love/laplace_reference.py, compared by viscoelastic/love/compare.py
+in the plot stage (viscoelastic/love/README.md). So is viscoelastic_box:
+every study of viscoelastic/box/study.py at the campaign's profile (the
+server profile adds the long 3-D runs; viscoelastic/box/README.md), and
+viscoelastic_sphere, those of viscoelastic/sphere/study.py.
 
 Method-model compatibility is encoded here: the slipping methods take a
 single fluid core, the mapped stages the referential family, and the
@@ -128,9 +134,10 @@ PROFILES = {
 }
 
 STAGES = ("methods", "cmb", "field", "mapped", "identity", "aspherical",
-          "perturbation", "scaling", "viscoelastic", "plot")
+          "perturbation", "scaling", "viscoelastic", "viscoelastic_box",
+          "viscoelastic_sphere", "plot")
 #: Stages run only when named in --stages.
-OPT_IN = ("viscoelastic",)
+OPT_IN = ("viscoelastic", "viscoelastic_box", "viscoelastic_sphere")
 
 
 def main() -> None:
@@ -379,7 +386,7 @@ def main() -> None:
                              "--out", case.parent, "--h", ve["h"],
                              "--lmax", ve["lmax"]])
             if ok and not ref.exists():
-                ok = sh([py, HERE / "viscoelastic" / "laplace_reference.py",
+                ok = sh([py, HERE / "viscoelastic" / "love" / "laplace_reference.py",
                          model, "--tau", *taus, "--lmax", ve["lmax"],
                          "--out", ref], log_file=d / "laplace_log.txt")
             if ok and not res.exists():
@@ -390,6 +397,27 @@ def main() -> None:
                          "-tau", ",".join(taus), "-scheme", ve["scheme"],
                          "-out", res], log_file=res.with_suffix(".txt"))
             stage(f"viscoelastic:{model}", ok)
+
+    # 9b. The box viscoelastic studies (opt-in): every study of
+    # viscoelastic/box/study.py at the campaign's profile, figures
+    # included (the profile's 3-D ladder; its own rank counts).
+    if "viscoelastic_box" in stages:
+        stage("viscoelastic_box", sh(
+            [py, HERE / "viscoelastic" / "box" / "study.py", "all",
+             "--profile", args.profile, "--out", out / "viscoelastic_box",
+             "--programs", programs, "--mpiexec", mpiexec, *dry],
+            log_file=None if args.dry_run
+            else out / "viscoelastic_box_log.txt"))
+
+    # 9c. The sphere viscoelastic studies (opt-in), likewise.
+    if "viscoelastic_sphere" in stages:
+        stage("viscoelastic_sphere", sh(
+            [py, HERE / "viscoelastic" / "sphere" / "study.py", "all",
+             "--profile", args.profile, "--out",
+             out / "viscoelastic_sphere", "--programs", programs,
+             "--mpiexec", mpiexec, *dry],
+            log_file=None if args.dry_run
+            else out / "viscoelastic_sphere_log.txt"))
 
     # 10. Plots and the summaries, each skipped quietly when its stage
     # left nothing to draw.
@@ -404,7 +432,7 @@ def main() -> None:
             ref, res, d = ve_paths(model)
             if ref.exists() and res.exists():
                 stage(f"plot:viscoelastic:{model}", sh(
-                    [py, HERE / "viscoelastic" / "compare.py", res,
+                    [py, HERE / "viscoelastic" / "love" / "compare.py", res,
                      "--reference", ref, "--out", d]))
         if any((out / "relabelling").glob("aspherical*.json")):
             stage("plot:relabelling", sh(

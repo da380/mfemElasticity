@@ -106,11 +106,32 @@ benchmark_launcher(perturbation perturbation plot)
 
 # --- Viscoelastic -----------------------------------------------------------
 
-benchmark_driver(viscoelastic viscoelastic_love)
-benchmark_launcher(viscoelastic viscoelastic survey)
-benchmark_launcher(viscoelastic viscoelastic laplace_reference)
-benchmark_launcher(viscoelastic viscoelastic compare)
-benchmark_launcher(common viscoelastic make_case)
+# Four sub-families, each with its launchers in
+# <build>/benchmarks/viscoelastic/<sub-family>/ (viscoelastic/README.md):
+# the stepper survey on the beam example, the gravitating Love-number
+# histories against pyslfp, and the non-gravitating box and sphere
+# benchmarks with exact references.
+
+benchmark_launcher(viscoelastic/stepping viscoelastic/stepping survey)
+
+benchmark_driver(viscoelastic/love viscoelastic_love)
+benchmark_launcher(viscoelastic/love viscoelastic/love laplace_reference)
+benchmark_launcher(viscoelastic/love viscoelastic/love compare)
+benchmark_launcher(common viscoelastic/love make_case)
+
+benchmark_driver(viscoelastic/box viscoelastic_box)
+benchmark_launcher(viscoelastic/box viscoelastic/box cases)
+benchmark_launcher(viscoelastic/box viscoelastic/box reference)
+benchmark_launcher(viscoelastic/box viscoelastic/box compare)
+benchmark_launcher(viscoelastic/box viscoelastic/box study
+    ${BENCHMARK_LAUNCHER_ARGUMENTS})
+
+benchmark_driver(viscoelastic/sphere viscoelastic_sphere)
+benchmark_launcher(viscoelastic/sphere viscoelastic/sphere meshes)
+benchmark_launcher(viscoelastic/sphere viscoelastic/sphere cases)
+benchmark_launcher(viscoelastic/sphere viscoelastic/sphere reference)
+benchmark_launcher(viscoelastic/sphere viscoelastic/sphere study
+    ${BENCHMARK_LAUNCHER_ARGUMENTS})
 
 # --- The master script ------------------------------------------------------
 
