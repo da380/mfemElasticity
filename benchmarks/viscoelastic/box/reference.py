@@ -52,7 +52,11 @@ cases is how the modes are found.
       at fresh points, and the Heaviside response by fixed-Talbot
       inversion (complex s, ~1e-10) against the modal sum. A third
       inversion, Gaver-Stehfest at real s (the method of the gravitating
-      Love-number references), is stored for the inversion study.
+      Love-number references), is stored for the inversion study. When
+      the modal form fails its checks (relaxation rates spanning many
+      decades, viscosity contrasts of 1e4 and more), a Heaviside history
+      is taken from the Talbot inversion instead, and other histories are
+      flagged unreliable.
 
     ./reference case.json --out reference.json
     ./reference case.json --stehfest 12 16 --out reference.json

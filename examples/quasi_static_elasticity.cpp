@@ -11,7 +11,12 @@
 // are only the mesh partitioning, the native-format save (one file per
 // rank in parallel) and the GLVis stream header.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Output: the solver summary of each step; the time slices in a ParaView
+// collection (ParaView/quasi_static, on by default, -no-pv to skip); the
+// final displacement in refined.mesh / sol.gf and, with -vis (on by
+// default), in GLVis.
+//
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2
 //    ./quasi_static_elasticity -m ../data/star.mesh -o 2 -r 2 -inc
 //    ./quasi_static_elasticity -m ../data/beam-quad.mesh -p 1 -o 2 -r 1
@@ -127,7 +132,8 @@ int main(int argc, char* argv[]) {
   auto rheology = IsotropicElasticRheology(dim, kappa, mu);
 
   // Loads. Problem 0: a time-scaled uniform traction t -> (0, 1 + t, ...)
-  // on all external boundaries. Problem 1: boundary attribute 1 clamped,
+  // on all external boundaries (its net force is removed by the traction
+  // problem's rigid-mode projection). Problem 1: boundary attribute 1 clamped,
   // a time-scaled pull t -> (0, ..., -0.05 (1 + t)) on attribute 2.
   VectorFunctionCoefficient traction(
       dim, [problem_type](const Vector& /*x*/, real_t t, Vector& f) {
@@ -180,7 +186,8 @@ int main(int argc, char* argv[]) {
   // Optional demonstration of the AddForce() protocol: any dual vector
   // assembled against DisplacementSpace() may be superposed on the external
   // load. ViscoelasticOperator uses this slot for the effective
-  // internal-variable force B^T(2 mu m).
+  // internal-variable force B^T(C_k m_k) (B^T(2 mu m) for an isotropic
+  // body).
   unique_ptr<VectorConstantCoefficient> extra_coef;
   unique_ptr<LinearForm> extra;
   if (demo_increment) {

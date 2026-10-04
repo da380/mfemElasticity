@@ -36,7 +36,7 @@
 // One source serves the serial and the parallel build; the genuine
 // differences are the mesh partitioning, the global reductions on the
 // printed norms and counts, the per-rank native-format save and the
-// GLVis stream header. (Run with mpirun -np N in a parallel build.)
+// GLVis stream header. (Run with mpiexec -np N in a parallel build.)
 // ============================================================================
 
 #include <cmath>
@@ -97,7 +97,9 @@ int main(int argc, char* argv[]) {
   // Set the default options.
   const char* mesh_file = "../data/star.mesh";
   int order = 2;
-  int m_order = -1;  // internal-variable order; < 0 means order - 1
+  // Internal-variable order; < 0 means order - 1 on simplices and order on
+  // tensor-product elements (the smallest order resolving eps(u) exactly).
+  int m_order = -1;
   real_t ti_factor = 0.0;
   real_t gamma0 = 0.0, nexp = 3.0, rtol = 0.0;
   int ref_levels = 1;
@@ -117,7 +119,9 @@ int main(int argc, char* argv[]) {
   args.AddOption(&order, "-o", "--order",
                  "Finite element order for the displacement.");
   args.AddOption(&m_order, "-mo", "--m-order",
-                 "Order of the internal-variable space (< 0: order - 1).");
+                 "Order of the internal-variable space (< 0: the order "
+                 "resolving eps(u) exactly: order - 1 on simplices, order "
+                 "on tensor-product elements).");
   args.AddOption(&ref_levels, "-r", "--refinement",
                  "Number of uniform mesh refinements.");
   args.AddOption(&problem_type, "-p", "--problem",
@@ -128,7 +132,7 @@ int main(int argc, char* argv[]) {
                  "Euler, 2 = backward Euler, 3 = SDIRK23, 4 = RK4, "
                  "5 = forward Euler.");
   args.AddOption(&map_type, "-map", "--strain-map",
-                 "Strain map: 0 = Galerkin (M^{-1} B), 1 = interpolation.");
+                 "Strain map: 0 = Galerkin projection, 1 = interpolation.");
   args.AddOption(&t_final, "-tf", "--t-final", "Final time.");
   args.AddOption(&n_steps, "-n", "--n-steps", "Number of time steps.");
   args.AddOption(&tau0, "-tau", "--relaxation-time",
@@ -283,7 +287,7 @@ int main(int argc, char* argv[]) {
       ode = make_unique<BackwardEulerSolver>();
       break;
     case 3:
-      ode = make_unique<SDIRK23Solver>();
+      ode = make_unique<SDIRK23Solver>(2);  // the L-stable variant
       break;
     case 4:
       ode = make_unique<RK4Solver>();
@@ -344,8 +348,8 @@ int main(int argc, char* argv[]) {
   }
 
   // March through time. SolveElastic() makes (u, m) consistent for output;
-  // it is free after a trapezoid or implicit step and costs one solve after
-  // an explicit or exponential-Euler one.
+  // it is free after an exponential-trapezoid or backward-Euler step and
+  // costs one solve after an SDIRK, explicit or exponential-Euler one.
   for (int step = 1; step <= n_steps; step++) {
     if (rtol > 0.0) {
       const real_t t_target = step * t_final / n_steps;

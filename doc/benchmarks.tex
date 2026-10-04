@@ -10,8 +10,10 @@
 \usepackage{enumitem}
 \newcolumntype{P}[1]{>{\raggedright\arraybackslash}p{#1}}
 \usepackage[colorlinks=true,linkcolor=blue,citecolor=blue,urlcolor=blue]{hyperref}
+\urlstyle{tt}
+\makeatletter\g@addto@macro\UrlBreaks{\do\_\do\-}\makeatother
 
-\input{marcos.inc}
+\input{macros.inc}
 
 \numberwithin{equation}{section}
 \sloppy
@@ -28,18 +30,17 @@
 \newcommand{\vy}{\mathbf{y}}
 \newcommand{\vb}{\mathbf{b}}
 \newcommand{\vm}{\mathbf{m}}
+\newcommand{\vs}{\mathbf{s}}
 \newcommand{\vn}{\hat{\mathbf{n}}}
 \newcommand{\rhat}{\hat{\mathbf{r}}}
 \newcommand{\code}[1]{\texttt{#1}}
 \newcommand{\Ylm}{Y_{lm}}
 \newcommand{\gradone}{\nabla_{1}}
-\newcommand{\review}[1]{\textsuperscript{[\ref{#1}]}}
 
 \title{The benchmarks of \texttt{mfemElasticity}:\\
        what each one tests, against what, and what it shows}
-\author{Compiled from \code{benchmarks/}, its drivers and scripts, and the
-        stored campaign results}
-\date{2 October 2026}
+\author{}
+\date{}
 
 \begin{document}
 \maketitle
@@ -55,18 +56,14 @@ the spherical physics unchanged), the perturbation family (derivatives of
 the response with respect to an interface radius), and the viscoelastic
 family (the time integrators: exact box and sphere benchmarks without
 gravity, the time-stepping survey, and Maxwell Love-number histories
-against a correspondence-principle reference). For each it states what is tested,
-the aim, the assumptions, and the mathematics of the comparison, including
-how the reference is obtained. The figures are those of the stored runs,
-some redrawn with corrected plotting scripts and a few from small reruns
-made for this note (\S\ref{sec:provenance}). \S\ref{sec:figures}
-reviews the figures and the talk figures, and
-\S\ref{sec:review} lists the points that look like mistakes or
-inconsistencies, for later review. Superscripts such as
-\textsuperscript{[R3]} in the text point to that list. This note
-documents the benchmarks and does not re-derive the methods;
-\code{doc/quasi\_static\_models.tex} and the method notes it cites hold
-the formulations.
+against a correspondence-principle reference). For each it states what is
+tested, the aim, the assumptions, the mathematics of the comparison
+including how the reference is obtained, how to reproduce the runs, and the
+measured results. A last section records measurements made with the
+examples and the unit tests that no benchmark family covers. The note
+documents the benchmarks and does not re-derive the methods:
+\code{doc/quasi\_static\_models.tex} and the method notes it cites hold the
+formulations. How to run each family is in its \code{README.md}.
 \end{abstract}
 
 \tableofcontents
@@ -77,55 +74,86 @@ the formulations.
 %=============================================================================
 
 \subsection{Organisation}
+\label{sec:organisation}
 
-Each family is a directory of \code{benchmarks/} with its own drivers
-(C++, MPI), scripts (Python, run in the directory's poetry environment)
-and README. The shared parts are in \code{benchmarks/common/}:
-
+Each family is a directory of \code{benchmarks/} with its scripts (Python,
+run in the poetry environment of \code{benchmarks/}), its drivers (C++,
+MPI) where it has its own, and a README:
 \begin{center}
+\small
+\begin{tabular}{@{}lP{5.2cm}P{5.8cm}@{}}
+\toprule
+family & drivers & scripts \\
+\midrule
+\code{love\_numbers/} & \code{love\_benchmark}, \code{field\_benchmark}, \code{partition\_case} & \code{run.py}, \code{plot.py}, \code{cmb\_report.py} \\
+\code{relabelling/} & \code{relabelled\_identity}, \code{aspherical\_reference} & \code{plot.py} \\
+\code{perturbation/} & none (\code{love\_benchmark -map-shift}) & \code{perturbation\_check.py}, \code{plot.py} \\
+\code{viscoelastic/box/} & \code{viscoelastic\_box} & \code{cases.py}, \code{histories.py}, \code{reference.py}, \code{compare.py}, \code{study.py} \\
+\code{viscoelastic/sphere/} & \code{viscoelastic\_sphere} & \code{meshes.py}, \code{cases.py}, \code{reference.py}, \code{derive\_euler.py}, \code{study.py} \\
+\code{viscoelastic/love/} & \code{viscoelastic\_love} & \code{laplace\_reference.py}, \code{compare.py} \\
+\code{viscoelastic/stepping/} & (\path{examples/viscoelastic_schemes}) & \code{survey.py} \\
+\bottomrule
+\end{tabular}
+\end{center}
+The shared parts are in \code{benchmarks/common/}:
+\begin{center}
+\small
 \begin{tabular}{@{}lP{10.5cm}@{}}
 \toprule
 file & role \\
 \midrule
 \code{models.py} & the models, as planetmodel \code{Model}s in SI, and their scaling \\
 \code{make\_case.py} & one \emph{case}: mesh, fields on it, manifest, and the pyslfp reference \\
-\code{benchmark\_case.hpp} & the drivers' common layer: a case set up as a problem, the harmonic analysis, the centre-of-mass correction, JSON output \\
+\code{benchmark\_case.hpp} & the drivers' common layer: a case set up as a problem, the harmonic analysis, the centre-of-mass correction, JSON output, the options every Love-number driver shares \\
 \code{relabelling.hpp} & the relabellings and interface shifts, exact radial profiles \\
 \code{reference\_field.hpp} & the reference solution as fields on the mesh \\
-\code{costs.py}, \code{drivers.py} & cost bookkeeping; locating the build's drivers \\
+\code{viscoelastic\_common.hpp} & what the box and sphere drivers share: the step grid, the schemes, the cost bookkeeping \\
+\code{costs.py} & the cost of a run (per-degree or combined solves) for the collating scripts \\
+\code{drivers.py} & locating the build's drivers; running and logging commands \\
+\code{outputs.py} & the guard that refuses output paths inside the source tree (used by the box and sphere scripts) \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The viscoelastic family has four sub-families of its own,
-\code{viscoelastic/box}, \code{viscoelastic/sphere},
-\code{viscoelastic/love} and \code{viscoelastic/stepping}
-(\S\ref{sec:visco}).
-
-\code{campaign.py} runs every family with one command (profiles
-\code{local}, eight ranks, about an hour; \code{server}, 100 ranks, an
-$h$-ladder at orders 2 and 3, degrees to 16). All output goes to the build
-tree. The \code{local} profile uses the models \code{homogeneous},
-\code{two\_solid} and \code{fluid\_core} at $h=0.3$, order 2, degrees
-$0$--$4$, DtN degree 16.
+\code{campaign.py} runs the families through stages, with two profiles
+whose every default is a flag. The default stages are \code{methods},
+\code{cmb}, \code{field}, \code{mapped}, \code{identity},
+\code{aspherical}, \code{perturbation}, \code{scaling} and \code{plot};
+the stages \code{viscoelastic}, \code{viscoelastic\_box} and
+\code{viscoelastic\_sphere} run only when named with \code{--stages}.
+\begin{itemize}[leftmargin=*]
+\item \code{local}: the models \code{homogeneous}, \code{two\_solid} and
+  \code{fluid\_core} at $h=0.3$, order 2, degrees $0$--$4$, DtN degree 16,
+  eight ranks, interface shifts $\eps=0.02$; about an hour for the default
+  stages.
+\item \code{server}: the eight models \code{homogeneous},
+  \code{two\_solid}, \code{linear\_solid}, \code{fluid\_core},
+  \code{inner\_core}, \code{stratified\_core}, \code{earth\_like},
+  \code{prem\_4}; $h=0.2,0.15,0.1$ at orders 2 and 3, degrees to 16, DtN
+  degree 24, 100 ranks, both Eulerian solvers, shifts $\eps=0.01,0.02$, a
+  weak-scaling ladder.
+\end{itemize}
+The campaign writes into \code{--out} (default \code{runs\_campaign}
+relative to where it is started, which is \code{<build>/benchmarks}).
 
 \subsection{The physical problem}
 
-All families solve the linearised, quasi-static, self-gravitating
-response of a body $M$ with background density $\rho$, bulk and shear
-moduli $\kappa,\mu$ and background potential $\Phi_0$, to a surface mass
-load $\sigma$ on $\partial M$ or an applied potential $\psi$. The sign
-convention throughout the code is $\nabla\Phi_0 = g\,\rhat$ (the potential
-increases outward, so the potential of a positive mass is negative). The
-unknowns are a displacement $\vu$ and a potential perturbation $\phi$
-(Eulerian methods) or $\zeta$ (referential methods), on a computational
-ball $B\supset M$ whose outer sphere carries a Dirichlet-to-Neumann (DtN)
-condition, truncated at the DtN degree. Between $\partial M$ and $\partial B$
-there is a \emph{buffer shell}, $1<r<1.2$, where the potential is solved
-too. The formulations (Dahlen's Eulerian form with the fluid eliminated,
-the gauged fluid, the welded referential form, the slipping interface)
-are set out in \code{doc/quasi\_static\_models.tex}; the benchmarks use
-them as they stand.
+All families but the non-gravitating viscoelastic ones solve the
+linearised, quasi-static, self-gravitating response of a body $M$ with
+background density $\rho$, bulk and shear moduli $\kappa,\mu$ and
+background potential $\Phi_0$, to a surface mass load $\sigma$ on
+$\partial M$ or an applied potential $\psi$. The sign convention throughout
+the code is $\nabla\Phi_0 = g\,\rhat$ (the potential increases outward, so
+the potential of a positive mass is negative). The unknowns are a
+displacement $\vu$ and a potential perturbation $\phi$ (Eulerian methods)
+or $\zeta$ (referential methods), on a computational ball $B\supset M$
+whose outer sphere carries a Dirichlet-to-Neumann (DtN) condition,
+truncated at the DtN degree. Between $\partial M$ and $\partial B$ there is
+a \emph{buffer shell}, $1<r<1.2$, where the potential is solved too. The
+formulations (Dahlen's Eulerian form with the fluid eliminated, the gauged
+fluid, the welded referential form, the slipping interface) are set out in
+\code{doc/quasi\_static\_models.tex}; the benchmarks use them as they
+stand.
 
 \subsection{Units}
 \label{sec:units}
@@ -133,11 +161,13 @@ them as they stand.
 A case is solved in the units of \code{models.scales}: length in units of
 the outer radius $a=6371$\,km, density in units of
 $\rho_0=5000$\,kg\,m$^{-3}$, and time in units of
-$T=(G\rho_0)^{-1/2}=1731$\,s, which makes $G=1$. In these units the
-surface gravity of the uniform models is $g(a)\approx 4.6$--$4.7$. Love
-numbers are dimensionless and independent of the choice. The viscoelastic
-family measures time in units of the Maxwell time, which the quasi-static
-problem sees only through the ratio $t/\tau$.
+$T=(G\rho_0)^{-1/2}=1731$\,s, which makes $G=1$ (\code{make\_case
+--time-scale} sets another unit, and $G$ then takes the value the manifest
+records). In these units the surface gravity of the uniform models is
+$g(a)\approx 4.6$--$4.7$. Love numbers are dimensionless and independent
+of the choice. The viscoelastic family measures time in units of the
+Maxwell time, which the quasi-static problem sees only through the ratio
+$t/\tau$.
 
 \subsection{The models}
 \label{sec:models}
@@ -154,7 +184,7 @@ $\rho g a/\mu=O(1)$, as in the Earth.
 model & boundaries (km) & layers: $\rho$ (kg\,m$^{-3}$), $v_P$, $v_S$ (m\,s$^{-1}$) \\
 \midrule
 \code{homogeneous} & $0, 6371$ & 5500, 10000, 5500 \\
-\code{homogeneous\_lithosphere} & $0, 5700, 6371$ & the same body, cut so that the outer shell can stay elastic (viscoelastic family) \\
+\code{homogeneous\_lithosphere} & $0, 5700, 6371$ & the same body, cut so that the outer shell can stay elastic (viscoelastic family only) \\
 \code{two\_solid} & $0, 5000, 6371$ & lower 6500, 12000, 6500; upper 3500, 8500, 4500 \\
 \code{fluid\_core} & $0, 3500, 6371$ & core (fluid) 11000, 9000, 0; mantle 4500, 11000, 6000 \\
 \code{inner\_core} & $0, 1200,\allowbreak\ 3500, 6371$ & 13000, 11000, 3500; fluid 11000, 9000, 0; 4500, 11000, 6000 \\
@@ -166,8 +196,13 @@ model & boundaries (km) & layers: $\rho$ (kg\,m$^{-3}$), $v_P$, $v_S$ (m\,s$^{-1
 \end{tabular}
 \end{center}
 
-\noindent Two physical properties of these models matter for the
-comparisons below.
+\noindent The local campaign profile uses \code{homogeneous},
+\code{two\_solid} and \code{fluid\_core}; the server profile the eight
+models listed in \S\ref{sec:organisation}. \code{prem\_6}, whose crust is
+21\,km thick and whose mesh has millions of elements, is in neither and is
+run by name on a large machine. The merged PREM models' load Love numbers
+are within $0.2\,\%$ of PREM's. Two physical properties of the models
+matter for the comparisons below.
 \begin{enumerate}[leftmargin=*]
 \item \emph{Stratification of the fluid.} A uniform-density compressible
   layer has $N^2=-\rho g^2/\kappa<0$ (convectively unstable). The fluid
@@ -195,9 +230,10 @@ and then
   geometric order 2, the body and a buffer shell out to $1.2a$. The size
   on every interface is $h$, capped at \code{--angular}\,$\times\,r$
   (default $0.3r$) and at \code{--thin}\,$\times$ the thickness of the
-  layers the interface bounds, and grows to $2h$ over a distance $10h$.
-  Netgen's optimiser removes slivers (worst quality from 0.02 to above
-  0.25). Refinement is by re-meshing: each $h$ is a different mesh.
+  layers the interface bounds (default 4), and grows to $2h$ over a
+  distance $10h$. Netgen's optimiser removes slivers (worst quality from
+  0.02 to above 0.25). Refinement is by re-meshing: each $h$ is a different
+  mesh.
 \item \textbf{the fields} $\rho,\kappa,\mu,p_0$ are written as $L^2$
   grid functions, so a jump at an interface stays a jump.
 \item \textbf{the manifest} (\code{case.json}) names the layers and
@@ -206,11 +242,11 @@ and then
   Dahlen interface terms need the fluid-side density on the solid's
   boundary elements).
 \item \textbf{the reference} is written by pyslfp (\S\ref{sec:reference}):
-  \code{reference.json} (Love numbers to degree 10 and radial solutions),
-  \code{reference\_fields.txt} (the load problem's $U,V,\phi$ at 33
-  Chebyshev points per layer, for the field comparisons) and
-  \code{radial\_profiles.txt} (the model's own fields at Chebyshev
-  points, for composing them with a mapping).
+  \code{reference.json} (Love numbers to degree 10 or the highest degree
+  asked for, and radial solutions), \code{reference\_fields.txt} (the load
+  problem's $U,V,\phi$ at 33 Chebyshev points per layer, for the field
+  comparisons) and \code{radial\_profiles.txt} (the model's own fields at
+  Chebyshev points, for composing them with a mapping).
 \end{itemize}
 One model object feeds both solvers, so the finite-element (FE) solver
 and the radial solver are given the same body. Model properties come
@@ -298,10 +334,17 @@ consequence $k'_1=-1$ identically, and $k'_1$ is never compared.
 
 \paragraph{Degree zero with a fluid layer.}
 Dahlen's elimination of the fluid discards its bulk modulus, so at $l=0$
-the Dahlen path differs from pyslfp by design. Its $l=0$ numbers are left
-out of every comparison. The gauged, referential and slipping
-formulations keep the fluid's compressibility, are comparable at $l=0$,
-and are compared there.
+the Dahlen path differs from pyslfp by design. Its $l=0$ numbers are kept
+in the per-degree plots, to show the difference (a relative $h'_0$ error
+of about 10 on \code{fluid\_core}), and stay out of the summaries, which
+do not use degree 0. The gauged, referential and slipping formulations keep the
+fluid's compressibility and agree with pyslfp at $l=0$ (only $h'_0$ is
+compared: $l'_0$ and $k'_0$ vanish). The field benchmark sums the degrees
+into one load and so starts at $l=1$ with a fluid by default;
+\code{-lmin 0} includes degree zero for either method and shows the
+same: on \code{fluid\_core} ($h=0.3$, order 2) the Dahlen field errors
+grow from about $1\%$ to $160\%$ ($u$) and $550\%$ ($\phi$), the gauged
+ones stay at about $1\%$.
 
 \paragraph{Spurious coefficients.}
 A load of one harmonic excites others on an unstructured mesh. The
@@ -321,16 +364,40 @@ least-squares fits
 \end{equation}
 with $a$ expanded in eight Chebyshev polynomials over the layer. For a
 field of the form \eqref{eq:separation} this recovers the radial function
-exactly.
+exactly. Only the Eulerian methods (\code{dahlen}, \code{gauged}) write
+them (\code{love\_benchmark -radial}, the default).
 
 \paragraph{Combined solves.}
 With \code{-combined}, one load solve is made for
 $\sigma=\sum_{l=l_{\min}}^{l_{\max}}Y_{l0}$ and one tidal solve for the sum of
 the tidal potentials, and every degree is read off the one solution. The
 discrete operator is not exactly rotationally invariant, so each degree
-picks up what the others leak into it. The README measures this at
-$2\times10^{-5}$--$4.5\times10^{-3}$ relative on \code{fluid\_core}, below
-the error against the reference in all entries but one.
+picks up what the others leak into it, which the solves by degree discard.
+The degrees share one residual tolerance, relative to the combined load, so
+those with the smallest response are solved least accurately in relative
+terms (below $10^{-8}$ at \code{-rt 1e-10}). Dahlen's fluid leaves degree
+zero out of the combined load, its degree-zero response being incomparable
+anyway. Measured on \code{fluid\_core}, $h=0.3$, order 2, degrees $0$--$4$
+(\code{run.py --combined}):
+\begin{center}
+\small
+\begin{tabular}{@{}lP{5.3cm}rr@{}}
+\toprule
+method & combined against by degree (relative) & iterations, combined & iterations, by degree \\
+\midrule
+Dahlen & $2\times10^{-5}$--$2\times10^{-3}$ & $130+137$ (0.75\,+\,0.61\,s) & $484+375$ (2.1\,+\,1.65\,s) \\
+gauged & $3\times10^{-5}$--$4.5\times10^{-3}$ & $783+840$ (4.5\,+\,4.3\,s) & $3916+2413$ (21.3\,+\,12.9\,s) \\
+\bottomrule
+\end{tabular}
+\end{center}
+(load\,+\,tide, summed over the degrees). The largest differences are in
+$l'_2$, whose value is small. In every entry but one the difference is
+below the error against the reference, by a factor of 40--90 in the median
+and 3 at the least (gauged load $k'_2$); the exception is gauged tidal $h_3$
+($2.9\times10^{-4}$ against an error of $2.0\times10^{-4}$), where that
+error happens to be small. Combined runs carry the suffix \code{\_combined};
+their cost is that of the one load solve, labelled combined in every
+summary.
 
 \subsection{Error measures}
 \label{sec:metrics}
@@ -339,37 +406,76 @@ the error against the reference in all entries but one.
 \item \emph{Relative error of a Love number}: $|x_{\text{FE}}-x_{\text{ref}}|/|x_{\text{ref}}|$,
   by degree and number. \emph{Small references inflate it}: $l'_2$ on
   \code{fluid\_core} is $-0.0175$, so an absolute error of $3\times10^{-3}$
-  appears as 17\,\%. The summaries' ``worst error at degree 2'' takes the
-  maximum over the six numbers and is usually set by $l'_2$\review{r:worst}.
-\item \emph{Relative $L^2$ field errors} (field benchmark): $\|\vu-\vu_{\text{ref}}\|/\|\vu_{\text{ref}}\|$
-  over the displacement region and $\|\phi-\phi_{\text{ref}}\|/\|\phi_{\text{ref}}\|$
-  over body and buffer.
+  appears as 17\,\%.
+\item \emph{Scaled error} (the ``worst scaled error'' columns of
+  \code{summary.md}): each quantity's error against its own largest
+  reference value over the degrees, so that a small number in one degree
+  does not dominate the column; the worst over the six numbers at a degree
+  is reported.
+\item \emph{Relative $L^2$ field errors} (field benchmark):
+  $\|\vu-\vu_{\text{ref}}\|/\|\vu_{\text{ref}}\|$ over the \emph{solid}
+  elements and $\|\phi-\phi_{\text{ref}}\|/\|\phi_{\text{ref}}\|$ over body
+  and buffer. Where the fluid carries a displacement (gauged), its norm is
+  written separately as \code{u\_fluid\_norm}, a gauge diagnostic: the
+  reference has no displacement in a fluid.
 \item \emph{Cost}: wall seconds and outer Krylov iterations of the load
   solve, and setup seconds. These are taken on eight ranks of one
   workstation, so only the ratios mean anything.
 \end{itemize}
 
-\subsection{Provenance of the figures}
-\label{sec:provenance}
+\subsection{Reproducing the figures}
+\label{sec:reproduce}
 
+The figures of this note are copies, in \code{doc/figures/benchmarks/}, of
+the figures the family scripts and \code{benchmarks/talk\_figures.py} write
+into the build tree; the copies carry a prefix (\code{fc\_} for
+\code{fluid\_core}, \code{pert\_}, \code{box\_}, \code{sphere\_},
+\code{ve\_}, and \code{talk\_} for \code{talk\_figures.py}, which writes
+\code{methods.png} and so on without one). Paths below are relative to
+\code{<build>/benchmarks}; the Love-number commands are started in
+\code{love\_numbers/}, the viscoelastic ones in their sub-family directory.
+\code{talk\_figures.py} reads every input from a flag whose default is the
+location given here (\code{python talk\_figures.py --out talk}).
 \begin{center}
-\small
-\begin{tabular}{@{}P{5.0cm}P{9.6cm}@{}}
+\footnotesize
+\begin{tabular}{@{}P{3.6cm}P{7.2cm}P{4.6cm}@{}}
 \toprule
-source (under \code{build\_parallel/benchmarks/}) & content, date \\
+figures & command & output \\
 \midrule
-\code{love\_numbers/runs/} & all-model sweep at $h=0.2$, orders 2 and 3, $l\le 5$ (28 Sep 2026); \code{fluid\_core} $h$-ladder $0.3$--$0.12$ at orders 2, 3; geometry-order-3 ladder; \code{prem\_4\_cmb} (29 Sep) \\
-\code{love\_numbers/runs\_methods/} & cross-method sweep on \code{fluid\_core} $h=0.3$, Schur variants, shift runs before the 1 Oct fix (30 Sep) \\
-\code{runs\_campaign/} & \code{campaign --profile local}, all stages (1 Oct 2026) \\
-\code{viscoelastic\_survey/} & the stepper survey \\
-\code{talk\_data/} & the aspherical runs; \textbf{new for this note}: the amplitude sweep $\eps=0,0.02,0.08$ (2 Oct) \\
-\code{viscoelastic\_series/} & \textbf{new for this note}: dense-in-time Maxwell histories, \code{fluid\_core} and \code{homogeneous\_lithosphere}, 48 output times $0.25$--$12\tau$ (2 Oct) \\
+\path{fc_errors}, \path{fc_love_numbers}, \path{fc_profiles}, \path{fc_timing}, \path{fc_field_spectrum} &
+\code{./campaign --profile local} (stages \code{methods cmb field mapped plot}) &
+\path{runs_campaign/love_numbers/fluid_core/*.png} \\
+\path{talk_methods}, \path{talk_fieldmap} & the same, then \path{talk_figures.py} & \path{talk/} \\
+\path{talk_models} &
+\code{./run homogeneous two\_solid linear\_solid fluid\_core inner\_core stratified\_core earth\_like prem\_4 --h 0.2 --order 2 3 --lmax 5 --field --out ../runs\_campaign/love\_numbers}, then \path{talk_figures.py} &
+\path{talk/models.png} \\
+\path{fc_convergence_uncapped}, \path{fc_field_convergence_uncapped}, \path{talk_ladder} &
+\code{./run fluid\_core --h 0.3 0.24 0.19 0.15 0.12 --order 2 3 --lmax 4 --angular 1.0 --field --out ../runs\_campaign/ladder}; \code{./plot ../runs\_campaign/ladder}; \path{talk_figures.py} &
+\path{runs_campaign/ladder/fluid_core/} \\
+\path{talk_cmb} &
+\code{./run prem\_4 --h 0.2 --order 2 --lmax 5 --cmb full nomass uniform winkler --out ../runs\_campaign/love\_numbers}, and the same with \code{--method gauged}; \path{./cmb_report}; \path{talk_figures.py} &
+\path{runs_campaign/love_numbers/prem_4/h0.2/} \\
+\path{talk_identity} & local campaign, stage \path{identity}; \path{talk_figures.py} reads the logs & \path{runs_campaign/relabelling/identity_*.txt} \\
+\path{talk_aspherical} & the amplitude sweep of \S\ref{sec:legC}; \code{talk\_figures.py --aspherical talk\_data} & \path{talk_data/} \\
+\path{pert_fc_referential}, \path{pert_fc_slip_broken}, \path{pert_ts_referential}, \path{talk_derivative} &
+local campaign, stages \code{perturbation plot}; \path{talk_figures.py} &
+\path{runs_campaign/perturbation/<model>/perturbation_<method>_o2.png} \\
+\path{box_steppers_*}, \path{box_slab_*}, \path{box_stehfest_*}, \path{box_contrast_*} &
+\code{./study steppers|slab|stehfest|contrast --out runs} (\path{viscoelastic/box}) &
+\path{viscoelastic/box/runs/<study>/} \\
+\path{sphere_radial_2d}, \path{sphere_radial_3d}, \path{sphere_lateral_dt_2d}, \path{sphere_lateral_weak_dt_2d} &
+\code{./study radial|lateral --out runs} (\path{viscoelastic/sphere}) &
+\path{viscoelastic/sphere/runs/<study>/} \\
+\path{ve_stiffness}, \path{ve_regimes} & \code{./survey --out ../../viscoelastic\_survey} (\path{viscoelastic/stepping}) & \path{viscoelastic_survey/} \\
+\path{ve_fc_history}, \path{ve_fc_error} & \code{./campaign --profile local --stages viscoelastic plot} & \path{runs_campaign/viscoelastic/fluid_core/} \\
+\path{ve_fc_series}, \path{ve_hl_series}, \path{talk_viscoelastic} & the dense histories of \S\ref{sec:fe-histories}; \path{compare.py}; \path{talk_figures.py} & \path{viscoelastic_series/} \\
 \bottomrule
 \end{tabular}
 \end{center}
-\noindent The figures are copied into \code{doc/figures/benchmarks/} so that
-this note compiles on its own. Those named \code{talk\_*} come from
-\code{talk\_figures.py}, the others from the family scripts.
+A three-dimensional render of a cap-load solve is made from the ParaView
+output of \code{field\_benchmark} (\code{run.py --field --paraview}) by
+\code{pvbatch talk\_render.py <case>/paraview\_o2/solid/solid.pvd
+talk/field3d.png}.
 
 %=============================================================================
 \section{The Love-number family}
@@ -385,8 +491,7 @@ discontinuous parameters, inner cores, and Earth-like (PREM) structure.
 It has three aims:
 \begin{enumerate}[leftmargin=*]
 \item \emph{correctness} of each formulation: agreement with pyslfp at the
-  discretisation level, and convergence under $h$-refinement at the
-  expected rate;
+  discretisation level, and convergence under $h$-refinement;
 \item \emph{a cross-method comparison} of the five formulations on one
   mesh, in accuracy and cost, and of the solver variants;
 \item \emph{the CMB approximations} used by the GIA codes: what they
@@ -399,72 +504,127 @@ makes the cases and runs the sweeps; \code{plot.py} and
 \code{cmb\_report.py} collate them.
 
 \subsection{The formulations compared}
+\label{sec:formulations}
 
 \begin{center}
 \small
 \begin{tabular}{@{}lP{11.5cm}@{}}
 \toprule
-\code{--method} & formulation \\
+\code{--method} & formulation, and its benchmark settings \\
 \midrule
 \code{dahlen} & Eulerian, fluid eliminated. The fluid enters through the interface terms (F2), (F3) and the fluid mass term (F1) of the potential equation; \code{-cmb} selects the interface treatment (\S\ref{sec:cmb}). \\
-\code{gauged} & Eulerian, the fluid in the displacement space with its bulk modulus and a gauge shear penalty $\eps\,2\mu_g\,\mathrm{dev}\,e(\vu):\mathrm{dev}\,e(\vu')$, $\eps=10^{-2}$, three iterated-Tikhonov refinements per solve. \\
+\code{gauged} & Eulerian, the fluid in the displacement space with its bulk modulus and a gauge shear penalty $\eps\,2\mu_g\,\mathrm{dev}\,e(\vu):\mathrm{dev}\,e(\vu')$, $\eps=10^{-2}$ (\code{-geps}), three iterated-Tikhonov refinements per solve (\code{-gref}); \code{-gauge-kkt} replaces the penalty by the exact-gauge saddle (\S\ref{sec:solver-meas}). \\
 \code{referential} & welded gauged referential formulation: bare moduli from $p_0$, equilibrium stress $\mathbf{S}_e=-p_0\mathbf{I}$, the same gauge penalty, prescribed vacuum extension in the buffer. \\
-\code{slip} & slipping fluid--solid interface: broken displacement pair, normal-jump constraint by penalty ($\theta=100$) and augmented Lagrangian (8 sweeps), single-valued potential. \\
-\code{slip\_broken} & the same with the potential broken per region too. \\
+\code{slip} & slipping fluid--solid interface: broken displacement pair, single-valued potential; the normal-jump constraint by penalty ($\theta=100$, \code{-theta}) and augmented Lagrangian (8 sweeps, \code{-al}), the early sweeps at the loose relative tolerance $10^{-3}$ (\code{-sweep-tol}, tightened geometrically to the final tolerance); or by a KKT multiplier block (\code{-kkt}, multiplier order \code{-kkt-order}). \\
+\code{slip\_broken} & the same with the potential broken per region too (augmented Lagrangian only). \\
 \bottomrule
 \end{tabular}
 \end{center}
-\noindent Restrictions recorded in the code: the referential family solves
-load problems only, so no tidal numbers and no radial profiles. The
-slipping methods support one fluid core inside a solid shell, so no
-inner core. The Eulerian pair have two linear solvers, block MINRES
-(\code{-s 1}) and Schur-complement CG (\code{-s 0}); the referential
-family uses its own projected MINRES.
+\noindent Restrictions recorded in the code: the referential and slipping
+methods solve load problems only, so no tidal numbers and no radial
+profiles. The slipping methods support one fluid core inside one solid
+shell, so no inner core. The Eulerian pair have two linear solvers, block
+MINRES (\code{-s 1}) and Schur-complement CG (\code{-s 0}); the referential
+family uses its own projected MINRES. In shift runs
+(\S\ref{sec:pert}) every augmented-Lagrangian sweep runs at full
+tolerance.
 
 \paragraph{Assumption: what ``agreement'' means for a non-neutral fluid.}
 The gauged and referential formulations treat the fluid as a compressible
 solid without shear. They reproduce Dahlen's (and pyslfp's) static-fluid
 response only when the fluid is neutrally stratified ($N^2=0$,
 Adams--Williamson). Otherwise the static $\kappa$-response differs from
-the secular one by $O(N^2)$ at every degree (\code{doc/gauged\_fluid.md}).
-\code{fluid\_core}'s uniform core has $N^2<0$, so its converged ladders
-for these methods must split from pyslfp at $l\ge 1$. At $h=0.3$ the split
-lies below the mesh error, and the cross-method agreement there is still
-a real check. The PREM cores are near neutral but carry inner cores,
-which the slipping methods do not support yet.
+the secular one by $O(N^2)$ at every degree (\code{doc/gauged\_fluid.md},
+``Equivalence and the Adams--Williamson condition''). \code{fluid\_core}'s
+uniform core has $N^2<0$, so its converged ladders for these methods must
+split from pyslfp at $l\ge 1$. At $h=0.3$ the split lies below the mesh
+error, and the cross-method agreement there is still a real check. The
+PREM cores are near neutral but carry inner cores, which the slipping
+methods do not support.
 
 \subsection{The CMB treatments}
 \label{sec:cmb}
 
+\paragraph{What is compared.}
 The Dahlen bilinear form adds, for fluid regions $M_F$ with interfaces
 $\Sigma_F$ (solid's outward normal $\vm$, fluid-side density $\rho_F$),
 \begin{align}
  &(F1)\quad \int_{M_F}\rho'_F\,\phi\,\phi'\dV, \qquad \rho'_F = \frac{\mathrm{d}\rho}{\mathrm{d}\Phi_0}
    = g^{-1}\partial_r\rho, \\
  &(F2)\quad -\int_{\Sigma_F}\rho_F\,(\vm\cdot\nabla\Phi_0)(\vm\cdot\vu)(\vm\cdot\vu')\dS, \\
- &(F3)\quad -\int_{\Sigma_F}\rho_F\,\bigl[\phi\,(\vm\cdot\vu') + \phi'\,(\vm\cdot\vu)\bigr]\dS .
+ &(F3)\quad -\int_{\Sigma_F}\rho_F\,\bigl[\phi\,(\vm\cdot\vu') + \phi'\,(\vm\cdot\vu)\bigr]\dS ,
 \end{align}
-The approximations of the GIA literature (\code{doc/BenchmarkPapers/cmb\_conditions.md})
-form a ladder:
+which are the weak form of the static fluid--solid conditions of a
+stratified barotropic fluid \cite{Dahlen1974,AW10}: zero shear traction, a
+normal traction made of a potential stress $-\rho_F\phi$ and a buoyancy
+$-\rho_F(\vm\cdot\nabla\Phi_0)(\vm\cdot\vu)$, the surface mass
+$\rho_F(\vm\cdot\vu)$ of the displaced interface in Poisson's equation, and
+the fluid's Eulerian density perturbation $\rho'_F\phi$.
+Glacial-isostatic-adjustment (GIA) codes do not mesh the core. They reduce
+it to a boundary condition on the mantle side of the CMB for a
+\emph{uniform, incompressible, inviscid} core: buoyancy plus potential
+stress, and an apparent surface mass density that is the core's only
+contribution to the potential perturbation. In the form of Latychev et al.\
+\cite{Latychev2005} (their eqs.~11--12), with $\hat{\bm\nu}$ the normal out
+of the mantle into the core, $\vs^+$ the mantle-side displacement,
+$\Phi^0,\Phi^1$ the background and perturbed potential and $\rho_c$ the core
+density just below the CMB,
+\begin{equation}
+  \hat{\bm{\nu}}\cdot T^+ = \rho_c\,(\vs^+\cdot\nabla\Phi^0 + \Phi^1)\,
+    \hat{\bm{\nu}}, \qquad
+  \sigma_{\mathrm{CMB}} = -\rho_c\,\vs^+\cdot\hat{\bm{\nu}} .
+  \label{eq:latychev}
+\end{equation}
+With $\vm=-\hat{\bm\nu}$ this is \emph{exactly} the pair (F2)+(F3), with
+two approximations against the full treatment: (i) $\rho_F$ is one
+constant, the core-top density, instead of the fluid-side density on each
+interface; (ii) (F1) is absent, $\rho'_F\equiv0$. The core's
+\emph{background} density still generates $\Phi_0$ in every case; only its
+perturbation physics is truncated. The published statements of this
+condition and its lineage
+\cite{WuPeltier1982,TrompMitrovica1999,Martinec1999,Martinec2000,Zhong2003,AWahrZhong2013,Huang2023,CitcomSVE2025,Spada2011,WuNi1996},
+the translation into (F1)--(F3) and the definition of the ladder below are
+in \code{doc/quasi\_static\_models.tex}, section ``Fluid regions and the
+ladder of CMB approximations''; the conditions as they enter the mixed
+problem's weak form are in \code{doc/self\_gravitation.md}, section
+``Fluid--solid interface conditions''.
+
+\paragraph{The ladder.}
+The option \code{-cmb} of the Dahlen path (\code{run.py --cmb}) takes the
+steps from the full treatment to the published conditions one at a time:
 \begin{center}
 \small
-\begin{tabular}{@{}lP{11cm}@{}}
+\begin{tabular}{@{}lP{6.4cm}P{5.6cm}@{}}
 \toprule
-\code{-cmb} & treatment \\
+\code{-cmb} & treatment & published counterpart \\
 \midrule
-\code{full} & (F1)+(F2)+(F3), the model's fluid-side density on each interface \\
-\code{nomass} & drop (F1): no interior density perturbation in the core \\
-\code{uniform} & \code{nomass} with $\rho_F$ a constant, the fluid's value at its outermost interface (core-top density): the standard unmeshed-core condition of the GIA codes \\
-\code{winkler} & \code{uniform} without (F3): buoyancy alone \\
+\code{full} & (F1)+(F2)+(F3), the model's fluid-side density on each interface & the static stratified fluid \cite{Dahlen1974,AW10}; pyslfp's fluid \\
+\code{nomass} & drop (F1): no interior density perturbation in the core & approximation (ii) alone (no published code) \\
+\code{uniform} & \code{nomass} with $\rho_F$ a constant, the fluid's value at its outermost interface (core-top density) & the standard unmeshed-core condition \eqref{eq:latychev} \cite{TrompMitrovica1999,Latychev2005,AWahrZhong2013,Huang2023,CitcomSVE2025} \\
+\code{winkler} & \code{uniform} without (F3) (both halves, so the operator stays symmetric): buoyancy alone & the buoyancy-only variant Huang et al.\ call FEMIBF, for which they find the potential force ``significant for low degree loads'' \cite{Huang2023} \\
 \bottomrule
 \end{tabular}
 \end{center}
-\noindent The core stays meshed in every treatment, so the potential
-unknowns do not change and any gain is on the solver side. On a uniform
-core (\code{fluid\_core}) $\rho'_F=0$, and \code{nomass} and \code{uniform}
-coincide with \code{full}: the measured difference is $4\times10^{-11}$,
-which checks the implementation. The treatments separate only on
-stratified cores, which is why \code{prem\_4\_cmb} exists.
+The gauged treatment, which keeps the fluid's displacement and bulk
+modulus, is a separate formulation (\code{--method gauged}), compared
+alongside. The core stays meshed in every treatment, so the potential
+unknowns do not change and any gain is on the solver side (a code that
+leaves the core unmeshed also saves its elements, a gain bounded by the
+core's share of the element count, which the results record). On a
+uniform core (\code{fluid\_core}) $\rho'_F=0$ and the fluid-side density is
+the core-top density, so \code{nomass} and \code{uniform} coincide with
+\code{full}; the treatments separate on stratified cores
+(\code{stratified\_core}, \code{earth\_like}, the PREM models), and the
+benchmark runs them on \code{prem\_4}.
+
+\paragraph{Degree zero.}
+For a spherical CMB the surface-density source $\rho_c(\vm\cdot\vu)$ has
+zero net mass only when $\oint\vm\cdot\vu\dS=0$, the incompressible core's
+volume constraint, which lives at degree 0. This is the free degree-0
+constant of the elimination \cite{AW10}: every rung, \code{full} included,
+misses the core's compressional physics at $l=0$, while the gauged
+treatment keeps it (\code{doc/quasi\_static\_models.tex}, subsection
+``Degree 0 and the core's mass'').
 
 \subsection{The field benchmark}
 
@@ -492,11 +652,12 @@ an interface keep their own values, and $\phi_l$ continued as
 $\phi_l(a)(a/r)^{l+1}$ in the buffer. The FE solution is moved to the
 centre-of-mass frame by the translation that removes the degree-one
 surface potential (\S\ref{sec:lovedef}), using the reference's $g(r)$
-inside the body. Outputs are the relative $L^2$ errors of $\vu$ and
-$\phi$, the surface coefficients against the reference, and optionally
-ParaView fields.
+inside the body. Outputs are the relative $L^2$ errors of $\vu$ (solid)
+and $\phi$, \code{u\_fluid\_norm} for the gauged method, the surface
+coefficients against the reference, and optionally ParaView fields.
 
-\subsection{Resolution and the $h$-ladder}
+\subsection{\texorpdfstring{Resolution and the $h$-ladder}{Resolution and the h-ladder}}
+\label{sec:ladder}
 
 The observed rate $p$ in $\text{error}\sim h^p$ is the least-squares
 slope of $\log\text{error}$ against $\log h$ over a ladder. Two features
@@ -505,102 +666,124 @@ of the ladder affect how it reads:
 \item every rung is a different unstructured mesh, so errors that are
   sums of signed contributions need not decrease monotonically, and a
   single fortunate cancellation can dominate a two-point fit;
-\item the \emph{angular cap} limits the CMB element size to $0.3r_{\text{CMB}}=0.165$
-  on \code{fluid\_core}. Every rung with $h\ge 0.165$ therefore has the
-  same CMB resolution, and only the surface and the far field refine
-  there\review{r:ladder}.
+\item the \emph{angular cap} limits the interface element size to
+  $\text{\code{--angular}}\times r$. At the default $0.3$ it holds the CMB
+  elements of \code{fluid\_core} at $0.3r_{\text{CMB}}=0.165$, so every rung
+  with $h\ge 0.165$ has the same CMB resolution, and only the surface and
+  the far field refine there. The convergence ladder is therefore run with
+  \code{--angular 1.0}, so that every rung refines the CMB.
 \end{itemize}
 
 \subsection{Results}
 
 \paragraph{Every model, orders 2 and 3 (Figure~\ref{fig:models}).}
 At $h=0.2$ the median relative error over the load and tidal numbers of
-degrees 1--5 is $5\times10^{-3}$--$1.3\times10^{-2}$ at order 2 and
+degrees 1--5 is $5\times10^{-3}$--$1.4\times10^{-2}$ at order 2 and
 $6\times10^{-5}$--$8\times10^{-4}$ at order 3, for every model from
 \code{homogeneous} to \code{prem\_4}. The worst entries, almost always an
-$l'$ at degree 4--5, are about ten times the median. Models with a fluid
-layer are the least accurate at order 3. A displacement of order three
-converges markedly faster than order two on the same geometry.
+$l'$ or $l$ at degree 5, are about ten times the median. Models with a
+fluid layer are the least accurate at order 3. A displacement of order
+three converges markedly faster than order two on the same geometry. A
+model with an inner core takes two to three times the iterations of one
+without.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.92\textwidth]{talk_models.png}
 \caption{All-model sweep, $h=0.2$: the median (bar) and the worst
 (tick) relative error of the Love numbers of degrees 1--5, load and tide,
-at orders 2 and 3. Dahlen path, full CMB treatment. Data of 28 Sep 2026.}
+at orders 2 and 3. Dahlen path, full CMB treatment.}
 \label{fig:models}
 \end{figure}
 
-\paragraph{The $h$-ladder on \code{fluid\_core} (Figures~\ref{fig:ladder}, \ref{fig:conv}).}
-Order 2 decreases, irregularly, from 1--2\,\% to 0.2--0.7\,\% between
-$h=0.3$ and $0.12$. The fitted rates are 0.6--2.6 depending on the
-number, well below the $h^{3}$ one might hope for in a surface functional.
-Order 3 is 10--100 times more accurate at every $h$, but between $h=0.3$
-and $0.15$ it is flat, sitting on a plateau of a few $10^{-4}$ in most
-numbers, and then drops by one to two orders of magnitude at $h=0.12$
-alone. The field errors (Figure~\ref{fig:fieldconv}) show the same
-plateau-and-noise pattern. The ladder is therefore not in its asymptotic
-regime, and its fitted rates should not be read as convergence
-orders\review{r:ladder}. The geometry-order-3 ladder
-(\code{fluid\_core\_geom3}), which is not plotted, is \emph{less} accurate
-at order 3 than geometry order 2 at the same $h$ and shows no drop at
-$0.12$, which deserves a look.
+\paragraph{The $h$-ladder on \code{fluid\_core} (Figures~\ref{fig:ladder}--\ref{fig:convuncapped}).}
+The ladder is $h=0.3,0.24,0.19,0.15,0.12$ at orders 2 and 3, Dahlen path,
+degrees $0$--$4$. With every rung refining the CMB (\code{--angular 1.0})
+the cap-load field errors fall by roughly an order of magnitude over the
+ladder:
+\begin{center}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+$h$ & 0.3 & 0.24 & 0.19 & 0.15 & 0.12 \\
+\midrule
+$\vu$, order 2 & $4.0\times10^{-2}$ & $1.4\times10^{-2}$ & $8.0\times10^{-3}$ & $6.6\times10^{-3}$ & $2.6\times10^{-3}$ \\
+$\phi$, order 2 & $3.5\times10^{-2}$ & $2.2\times10^{-2}$ & $1.0\times10^{-2}$ & $1.6\times10^{-2}$ & $6.6\times10^{-3}$ \\
+$\vu$, order 3 & $8.6\times10^{-3}$ & $6.2\times10^{-3}$ & $2.3\times10^{-3}$ & $3.3\times10^{-3}$ & $1.3\times10^{-3}$ \\
+$\phi$, order 3 & $6.5\times10^{-3}$ & $5.4\times10^{-3}$ & $1.1\times10^{-3}$ & $1.5\times10^{-3}$ & $5.9\times10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+with fitted rates 2.7 ($\vu$) and 1.6 ($\phi$) at order 2, 1.9 and 2.6 at
+order 3, and one non-monotone rung ($h=0.15$). The ladder is not in a
+clean asymptotic regime, and these rates are a characterisation of the
+range, not convergence orders. The Love-number columns carry cancellation:
+the degree-2 scaled error at order 3 falls from $7.7\times10^{-3}$ to
+$2.5\times10^{-5}$, an implied rate near 6, well above any expected order,
+so the field rates are the quotable ones. With the default cap the order-3
+Love numbers stay on a plateau of a few $10^{-4}$ from $h=0.3$ to $0.15$
+(the rungs whose CMB elements are all capped at $0.165$) and fall only at
+$h=0.12$: the reason the convergence ladder is run uncapped.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.6\textwidth]{talk_ladder.png}
-\caption{$h$-ladder, \code{fluid\_core}, Dahlen: the median (line) and the
-worst (band) relative error of the Love numbers of degrees 2--4.}
+\caption{Uncapped $h$-ladder, \code{fluid\_core}, Dahlen: the median (line)
+and the worst (band) relative error of the Love numbers of degrees 2--4.}
 \label{fig:ladder}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=\textwidth]{fc_convergence.png}
-\caption{The same ladder number by number: degree 2 solid, degree 4
-dashed, the fitted rate beside the finest point, and a guide of slope
-$\text{order}+1$ (dotted). Redrawn with the corrected \code{plot.py}.}
-\label{fig:conv}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.75\textwidth]{fc_field_convergence.png}
-\caption{The cap-load fields against $h$ on the same ladder.}
-\label{fig:fieldconv}
 \end{figure}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{fc_convergence_uncapped.png}
 \includegraphics[width=0.75\textwidth]{fc_field_convergence_uncapped.png}
-\caption{The UNCAPPED ladder (2 Oct, \ref{r:ladder}'s rerun:
-\code{--angular 1.0}, so every rung refines the CMB; current code,
-\code{runs\_campaign/ladder}). The order-3 flat-then-cliff of
-Figure~\ref{fig:conv} is gone and the field errors fall throughout;
-the Love-number columns still carry cancellation (the implied degree-2
-rate is superconvergent), so the field rates are the quotable ones.}
+\caption{The uncapped ladder (\code{--angular 1.0}) number by number
+(degree 2 solid, degree 4 dashed, the fitted rate beside the finest point,
+a guide of slope $\text{order}+1$ dotted), and the cap-load fields against
+$h$.}
 \label{fig:convuncapped}
 \end{figure}
 
 \paragraph{Cross-method comparison (Figures~\ref{fig:methods}--\ref{fig:timing}).}
-On \code{fluid\_core}, $h=0.3$, order 2, every formulation agrees with
-pyslfp to 0.2--4\,\% in $h'$ and $k'$ at degrees 0--4, which is the
-discretisation level at this resolution. The gauged and compressible
-formulations also agree at $l=0$, where Dahlen does not by design. The
-spread between methods is mesh error, not a difference in physics. The
-$l'$ column is larger in relative terms ($l'_2$ is small), and
-\code{winkler} is the outlier (\S\ref{sec:cmbresults}). Cost differs much
-more than accuracy: per load solve, Dahlen takes about 1\,s (117
-iterations), gauged about 5--9\,s (780), referential about 7--12\,s (810),
-slip 40--75\,s (2300--3000) and slip\_broken 45--110\,s (4700--6300),
-depending on the run (Figure~\ref{fig:timing}; the talk figure uses the
-30 Sep sweep).
+On \code{fluid\_core}, $h=0.3$, order 2 (local campaign profile), every
+formulation agrees with pyslfp to 0.2--4\,\% in $h'$ and $k'$ at degrees
+0--4, which is the discretisation level at this resolution. The gauged,
+referential and slipping formulations also agree at $l=0$, where Dahlen
+does not by design. The spread between methods is mesh error, not a
+difference in physics; in particular the welded (\code{gauged},
+\code{referential}) and slipping (\code{slip}, \code{slip\_broken})
+formulations agree to discretisation level on this spherically symmetric
+model, where the tangential slip the welded space suppresses is absent
+or removable by relabelling (on a general aspherical interface it need not
+be, and the slipping formulation is the general one). The $l'$
+column is larger in relative terms ($l'_2$ is small), and \code{winkler} is
+the outlier (\S\ref{sec:cmbresults}). Cost differs much more than accuracy.
+Mean cost per load solve, degrees 0--4:
+\begin{center}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+method & wall s & outer iterations \\
+\midrule
+\code{dahlen} & 0.55 & 117 \\
+\code{gauged} & 4.1 & 783 \\
+\code{referential} & 5.8 & 802 \\
+\code{slip} & 17 & 1306 \\
+\code{slip\_broken} & 23 & 2714 \\
+\bottomrule
+\end{tabular}
+\end{center}
+(slipping methods at the default inexact sweep schedule,
+\S\ref{sec:formulations}). For loading at $l\ge1$ the Dahlen path is the
+cheapest and as accurate as anything here; the dearer formulations buy
+physics it cannot represent: the compressible fluid at degree zero,
+non-neutral core stratification, the slipping interface, and the
+referential family's mapped (aspherical) machinery.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.95\textwidth]{talk_methods.png}
-\caption{Talk figure: the five formulations on one case
+\caption{The five formulations on one case
 (\code{fluid\_core}, $h=0.3$, order 2), worst of $h'$, $k'$ per degree, and
 the mean cost per load solve.}
 \label{fig:methods}
@@ -609,11 +792,12 @@ the mean cost per load solve.}
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{fc_errors.png}
-\caption{Every variant run on \code{fluid\_core}, $h=0.3$, order 2
-(1 Oct campaign). One colour per formulation or CMB treatment, the same
-in every figure. Mapped runs are hollow. \code{nomass} and \code{uniform}
-are drawn thin and dashed, since on this uniform core they lie on top
-of the full treatment.}
+\caption{Every variant run on \code{fluid\_core}, $h=0.3$, order 2. One
+colour per formulation or CMB treatment, the same in every figure (and in
+the \code{talk\_} figures); order by marker, mapped runs hollow, the Schur
+solver dotted, combined runs dashed. \code{nomass} and \code{uniform} are
+drawn thin and dashed, since on this uniform core they lie on top of the
+full treatment.}
 \label{fig:errors}
 \end{figure}
 
@@ -634,12 +818,16 @@ iterations (logarithmic).}
 
 \paragraph{Radial profiles (Figure~\ref{fig:profiles}).}
 The fitted radial functions \eqref{eq:radialfit} of the Eulerian runs lie
-on pyslfp's in every layer and continue harmonically into the buffer.
-Two departures are visible: \code{winkler}, by design, and the gauged
-$\phi_1$ inside the fluid core, which bends away from the reference
-below $r\approx 0.5$ while matching at the interfaces. The second may be
-a frame or gauge effect in the profile fit rather than an error of the
-solution, but it is not explained anywhere\review{r:gaugedprofile}.
+on pyslfp's in every layer and continue harmonically into the buffer, with
+two departures. \code{winkler} departs by design. The gauged method's
+degree-1 potential $\phi_1$ departs from the reference inside the fluid
+core (visibly below $r\approx 0.5$) while matching at the interfaces: its
+relative RMS deviation from the reference is $0.12$ in the core and $0.05$
+in the mantle, the same at $h=0.3$ and $0.2$, for
+$\eps\in[10^{-2},10^{-1}]$ and for any refinement count, whereas Dahlen's
+falls with refinement ($0.013\to0.010$ in the core). The gauged surface
+values stay at the 1\,\% level. The gauged method's degree-1 interior
+response is therefore not verified.
 
 \begin{figure}[H]
 \centering
@@ -651,16 +839,36 @@ solution, but it is not explained anywhere\review{r:gaugedprofile}.
 \end{figure}
 
 \paragraph{Fields (Figures~\ref{fig:fieldmap}, \ref{fig:spectrum}).}
-On \code{fluid\_core}, $h=0.3$, order 2, Dahlen, the relative $L^2$ errors
-are $1.3\times10^{-2}$ ($\vu$) and $1.4\times10^{-2}$ ($\phi$). The
+On \code{fluid\_core}, $h=0.3$, order 2, the relative $L^2$ errors are
+$1.3\times10^{-2}$ ($\vu$, solid) and $1.4\times10^{-2}$ ($\phi$) for Dahlen,
+and $1.9\times10^{-2}$ and $4.4\times10^{-2}$ for the gauged method, whose
+fluid displacement norm (\code{u\_fluid\_norm}) is $0.046$. For Dahlen the
 pointwise difference of the radial displacement on the surface is at most
 2.7\,\% of the signal and concentrates under the cap edge. By degree, the
 surface error grows steadily from about $10^{-2}$ at $l=2$ to $10^{-1}$
-($U$) and $5\times10^{-1}$ ($V$) at $l=8$. That is the resolution limit
-of $h=0.3$, about 1/8 of a degree-8 wavelength per element. The gauged
-run's $\vu$ error of 0.40 is not a property of the solution: the norm
-includes the fluid core, where the reference displacement is set to zero
-\review{r:gaugedfield}.
+($U$) and $5\times10^{-1}$ ($V$) at $l=8$. That is the resolution limit of
+$h=0.3$, about 1/8 of a degree-8 wavelength per element.
+
+The fields show what the surface numbers do not. On the models with a
+solid inner core and an Earth-like structure, the displacement error at
+order 2 is large on meshes whose Love numbers are good to a per cent, and
+order 3 removes it (model sweep, $h=0.2$):
+\begin{center}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+model & $\vu$, order 2 & $\vu$, order 3 & $\phi$, order 2 & $\phi$, order 3 \\
+\midrule
+\code{inner\_core} & $9.4\times10^{-3}$ & $2.4\times10^{-3}$ & $1.2\times10^{-2}$ & $1.1\times10^{-3}$ \\
+\code{earth\_like} & $0.12$ & $3.1\times10^{-3}$ & $1.4\times10^{-2}$ & $1.0\times10^{-3}$ \\
+\code{prem\_4} & $0.49$ & $5.1\times10^{-3}$ & $2.6\times10^{-2}$ & $1.0\times10^{-3}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The error is the translation of the inner core under the degree-one part
+of the load. Its restoring force is weak (the Slichter mode, the
+gravitationally restored translation of the inner core), so a small error
+in the forces is a large one in the displacement.
 
 \begin{figure}[H]
 \centering
@@ -683,8 +891,85 @@ zero in both solutions by the choice of frame.}
 \subsection{The CMB approximations: results}
 \label{sec:cmbresults}
 
-On \code{prem\_4\_cmb} ($h=0.2$, order 2), the deviation from the full
-treatment, which is the approximation error alone, is:
+\paragraph{The runs.} Model \code{prem\_4} (stratified PREM-like core),
+$h=0.2$, order 2, eight ranks, degrees 0--5: the Dahlen path with
+\code{-cmb full}, \code{nomass}, \code{uniform}, \code{winkler}, and the
+gauged method, on the same mesh (\S\ref{sec:reproduce}). The relative
+change against \code{full} on the same mesh and order is the approximation
+error alone, the mesh bias cancelled; pyslfp is the external reference.
+
+\paragraph{Loading.} Load $h'$; the four approximation columns give
+$|\Delta h'|/|h'_{\text{full}}|$ except at $l=0$, where absolute values are
+given because the comparison with \code{full} is not meaningful there:
+\begin{center}
+\small
+\begin{tabular}{@{}crrrrrr@{}}
+\toprule
+$l$ & \code{pyslfp} $h'$ & \code{full} & \code{nomass} & \code{uniform} & \code{winkler} & gauged \\
+\midrule
+0 & $-0.1318$ & $-1.0080$ & $+0.3640$ & $+0.3556$ & $-0.2071$ & $\mathbf{-0.1317}$ \\
+1 & $-1.2849$ & $-1.2933$ & 0.08\,\% & 1.4\,\% & 15\,\% & $-1.2839$ \\
+2 & $-0.9906$ & $-0.9954$ & 0.08\,\% & 0.08\,\% & 7.9\,\% & $-0.9976$ \\
+3 & $-1.0493$ & $-1.0480$ & 0.01\,\% & 0.01\,\% & 2.6\,\% & $-1.0478$ \\
+4 & $-1.0511$ & $-1.0470$ & 0.00\,\% & 0.00\,\% & 0.75\,\% & $-1.0468$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{itemize}[leftmargin=*]
+\item The standard condition (\code{uniform}) is essentially harmless at
+  $l\ge2$ for a PREM-like core: $0.08\,\%$ in $h'_2$, far below the
+  discretisation error of any of the surveyed codes. $l'_2$ and $k'_2$
+  move by about $0.3\,\%$, still below the discretisation error of the
+  full treatment on this mesh (about 1\,\% in $k'_2$). At $l=1$ it costs
+  $\sim1.4\,\%$: the constant core-top density mis-weights the response
+  adjacent to the Slichter mode.
+\item Dropping the potential stress (\code{winkler}) is not harmless: 8\,\%
+  in $h'_2$, decaying with degree, the elastic-response counterpart of
+  Huang et al.'s viscous finding \cite{Huang2023}, and the reason
+  ``potential stress + buoyancy'' and not buoyancy alone is the standard.
+\item At $l=0$ every member of the Dahlen family is wrong, each
+  differently: $h'_0$ is scattered over $\pm1$ with sign changes against
+  pyslfp's $-0.1318$. The gauged treatment agrees with pyslfp to
+  $6\times10^{-4}$ there. Degree-0 observables (mean sea level, radial
+  budgets) are the one place the universal approximation bites, and no
+  tuning of the CMB condition can repair a member of the Dahlen family
+  there.
+\end{itemize}
+
+\paragraph{Tides.} The same runs, tidal numbers; relative change against
+\code{full}:
+\begin{center}
+\small
+\begin{tabular}{@{}cc rrrrrr@{}}
+\toprule
+$l$ & & \code{pyslfp} & \code{full} & \code{nomass} & \code{uniform} & \code{winkler} & gauged \\
+\midrule
+2 & $h$ & 0.60412 & 0.60555 & 1.09\,\% & 1.09\,\% & 28.0\,\% & 0.60814 \\
+2 & $k$ & 0.29845 & 0.29902 & 2.51\,\% & 2.51\,\% & 42.2\,\% & 0.30043 \\
+3 & $h$ & 0.28829 & 0.28693 & 0.21\,\% & 0.21\,\% & 12.4\,\% & 0.28690 \\
+3 & $k$ & 0.09215 & 0.09162 & 0.78\,\% & 0.78\,\% & 21.0\,\% & 0.09162 \\
+4 & $h$ & 0.17508 & 0.17357 & 0.05\,\% & 0.05\,\% & 5.0\,\% & 0.17351 \\
+4 & $k$ & 0.04146 & 0.04102 & 0.26\,\% & 0.26\,\% & 8.7\,\% & 0.04100 \\
+\bottomrule
+\end{tabular}
+\end{center}
+A tidal potential samples the deep interior much more strongly than a
+surface load, whose response is concentrated near the surface, and every
+approximation costs roughly ten times more on tides than on loading:
+\code{nomass}/\code{uniform} reach $1.1\,\%$ in $h_2$ and $2.5\,\%$ in $k_2$,
+comparable to or above the discretisation error of a production run and
+above the accuracy targets of body-tide work; \code{winkler} reaches 28\,\%
+and 42\,\%. $k$ is consistently more sensitive than $h$ (about $\times2.3$
+at every degree), being sourced by the internal mass redistribution that
+the core treatment controls. \code{nomass} and \code{uniform} coincide to
+six digits on tides: for $l\ge2$ the term they differ by integrates to
+nearly nothing. A CMB condition taken from a loading context, where it is
+safe, imports a percent-level systematic into tidal computations (for
+example combined GIA and body-tide inversions) that the full or gauged
+treatments remove.
+
+\paragraph{Degree 2 at a glance} (deviation from \code{full}, all six
+numbers):
 \begin{center}
 \small
 \begin{tabular}{@{}lcccccc@{}}
@@ -696,23 +981,144 @@ treatment, which is the approximation error alone, is:
 \bottomrule
 \end{tabular}
 \end{center}
-These approximations are loading-safe at $l\ge 2$: the deviation is below
-the discretisation error of the full treatment, about 1\,\% in $k'_2$
-here. They are about ten times worse for tides, whose degree-2 response
-drives the rotational feedbacks. \code{winkler} (no potential coupling)
-is not acceptable for either\review{r:cmbclaim}. On \code{fluid\_core} the
-CMB report confirms \code{nomass} $\equiv$ \code{uniform} $\equiv$
-\code{full} to $4\times10^{-11}$, with \code{winkler} at 88\,\% in $l'_2$
-and 17\,\% in $k'_2$, and \code{winkler} running about 17\,\% fewer
-iterations.
+
+\paragraph{Rotational feedback.} In sea-level calculations the rotational
+feedback runs through the degree-2, order-1 components: the load perturbs
+the inertia tensor, the rotation vector shifts, and the centrifugal
+potential perturbation, itself a degree-2, order-1 tidal-type forcing, is
+fed back through the degree-2 \emph{tidal} response. The tidal table, not
+the loading one, is therefore the error budget of the feedback. Scaled by
+the feedback's share of the signal (of order 10\,\% of the barystatic
+signal, the global-mean sea-level change due to mass exchange between ice
+and ocean), \code{uniform}/\code{nomass} contribute of order 0.1--0.3\,\%
+of the total signal (harmless) and \code{winkler} of order 3--4\,\% (not
+harmless). The standard unmeshed-core condition is thus safe for the
+loading response and its rotational feedback, the Winkler variant for
+neither.
+
+\paragraph{Cost, and the uniform-core check.} \code{cmb\_report.py}
+collates cost against accuracy. On \code{fluid\_core} ($h=0.3$, order 2,
+degrees 1--4), where the three upper rungs must coincide:
+\begin{center}
+\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+treatment & $h'$ vs ref & $l'$ vs ref & $k'$ vs ref & vs \code{full} & s / solve & iterations \\
+\midrule
+\code{full} & $2.1\times10^{-2}$ & $7.5\times10^{-2}$ & $3.1\times10^{-2}$ & -- & 0.55 & 117 \\
+\code{nomass} & $2.1\times10^{-2}$ & $7.5\times10^{-2}$ & $3.1\times10^{-2}$ & $4\times10^{-11}$ & 0.54 & 117 \\
+\code{uniform} & $2.1\times10^{-2}$ & $7.5\times10^{-2}$ & $3.1\times10^{-2}$ & $4\times10^{-11}$ & 0.55 & 117 \\
+\code{winkler} & $7.2\times10^{-2}$ & $0.88$ & $0.17$ & $0.88$ & 0.46 & 97 \\
+\bottomrule
+\end{tabular}
+\end{center}
+(worst over the degrees). \code{nomass} $\equiv$ \code{uniform} $\equiv$
+\code{full} to $4\times10^{-11}$ checks the implementation. With the core
+meshed the approximations save only solver work: \code{winkler} runs about
+17\,\% fewer iterations here ($186$--$217$ against $310$--$332$ per load
+solve on \code{prem\_4}), and the potential unknowns are unchanged.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.7\textwidth]{talk_cmb.png}
-\caption{Talk figure: deviation of the CMB approximations from the full
-treatment, loading $k'_2$ against tidal $k_2$ (\code{prem\_4}, $h=0.2$,
-order 2).}
+\caption{Deviation of the CMB approximations from the full treatment,
+loading $k'_2$ against tidal $k_2$ (\code{prem\_4}, $h=0.2$, order 2).}
 \end{figure}
+
+\subsection{Solver settings: measured behaviour}
+\label{sec:solver-meas}
+
+The settings of \S\ref{sec:formulations} were chosen from the measurements
+below, all on \code{fluid\_core}, $h=0.3$, order 2, with pyslfp as the
+external reference. They are runs of \code{love\_benchmark} with the
+options named, not campaign stages. The methods and solvers themselves are
+described in \code{doc/gauge\_penalty\_iteration.tex} (``Semi-convergence
+and the operating point''), \code{doc/gauged\_fluid.md} and
+\code{doc/slip\_interface.tex} (``Constraint enforcement'').
+
+\paragraph{Gauge penalty window (\code{gauged}, \code{-geps}).}
+Three refinements per solve. $\eps=10^{-1}$ leaves a bias of
+$2.6\times10^{-2}$ in the degree-2 load $h'$ that survives the refinement
+budget. Below the operating point the cost grows by about $4.5\times$ per
+decade of $\eps$ (3.7k, 6.3k, 28.6k, 138k iterations for
+$\eps=10^{-1},\dots,10^{-4}$), and at $\eps=10^{-4}$ the iteration is
+semi-convergent: the gauge component escapes the refinements and pollutes
+the solution although every solve reports convergence ($h'_2=-3.17$
+against $-0.989$ at the operating point). The operating point
+$\eps=10^{-2}$ also serves PREM structure (\code{prem\_4}, $h=0.2$:
+$h'_0$ within $6\times10^{-4}$ of pyslfp, \S\ref{sec:cmbresults}).
+
+\paragraph{Augmented Lagrangian (\code{slip}, \code{slip\_broken}).}
+$\theta=100$ is a compromise measured on this case: below it a conditioning
+cliff, above it a flat plateau. The inexact sweep schedule (loose early
+sweeps, the last at full tolerance) shifts the endpoint by about
+$10^{-3}$ of the spread between exact endpoints, an order below the mesh
+error, at roughly half the cost.
+
+\paragraph{KKT enforcement (\code{slip -kkt}).}
+\begin{itemize}[leftmargin=*]
+\item \emph{$\theta$ in the KKT path.} The augmentation regularises the
+  near-null relative normal motion at the interface, so lowering $\theta$
+  makes MINRES worse although the multiplier owns the constraint:
+  16.9k iterations at $\theta=100$, 27.7k at 10, 49.5k at 1; $\theta=300$
+  gains only 5\,\%. The KKT endpoint is invariant to $\theta\in[1,300]$ at
+  the $5\times10^{-10}$ level, as the formulation demands (the AL endpoint
+  moves with $\theta$ through its constraint floor): a sharp regression
+  check on the constraint blocks.
+\item \emph{The augmentation's kernel.} Augmenting with the consistent
+  $\theta\,\mathcal{C}^T\hat M^{-1}\mathcal{C}$ instead of the AL penalty's
+  full $L^2$ trace form removes a kernel mismatch of the size of the gap
+  between equal-order traces and the multiplier space: $1.35\times$ cheaper
+  (22.9k $\to$ 16.9k iterations).
+\item \emph{Multiplier-block scaling.} Interface mass entries scale like
+  $h^{d-1}$, so preconditioning the multiplier block with $\theta\hat M$
+  instead of $\theta\hat M^{-1}$ mis-scales it by $\theta^2\hat m^2$, about
+  $10^4$ at $h=0.3$; the correct form cut 79.4k to 22.9k iterations while
+  moving the endpoint by $1.8\times10^{-7}$, the solver tolerance, as a
+  preconditioner change must.
+\item \emph{Multiplier order.} One order below the displacement
+  (\code{-kkt-order 1} at \code{-o 2}, the mortar-style choice) improves the
+  inf--sup margin of the trace pairing and shrinks the multiplier block:
+  about $1.6\times$ cheaper at an endpoint shift of $4\times10^{-4}$, well
+  below the mesh error. It is the recommended setting; the driver's default,
+  \code{-kkt-order 0}, takes the potential space's order (equal order). The
+  inexact schedule applied to the KKT path's gauge refinements shifts its
+  endpoint by about $2\times10^{-2}$ of the exact endpoints' spread, again
+  an order below the mesh error.
+\end{itemize}
+
+\paragraph{AL against KKT} ($\theta=100$; KKT with an order-1 multiplier):
+\begin{center}
+\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+solver & iterations & wall \\
+\midrule
+AL, 3 sweeps, exact & 4.4k & 76\,s \\
+AL, 8 sweeps, exact & 11.4k & 200\,s \\
+KKT, order-1 multiplier, 3 refinements, exact & 10.7k & 178\,s \\
+KKT, same, inexact refinement sweeps & 7.4k & 124\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+The two paths agree within discretisation error everywhere: at degree 0
+to $2\times10^{-7}$, with identical errors against pyslfp. Endpoint
+differences between sweep counts and paths (up to $2\times10^{-2}$ at
+degree 1) sit below the mesh error, and 3-sweep AL runs are not worse
+than 8-sweep ones against the external reference.
+
+\paragraph{Exact-gauge KKT (\code{gauged -gauge-kkt}).} The doubled saddle
+that fixes the fluid gauge exactly (\code{-gauge-kkt 1}, block-diagonal
+preconditioner; \code{2}, with the Murphy--Golub--Wathen composite
+\cite{MurphyGolubWathen2000} on the multiplier slot) reaches mesh-level
+physics early and satisfies its stationarity condition to $10^{-5}$, but
+MINRES does not converge algebraically: 30k iterations against the
+penalty path's $\sim800$ per solve, at every preconditioner grade tried
+(serial Gauss--Seidel, parallel AMG, and the Murphy--Golub--Wathen
+composite, which degrades the solve with smoother-grade components and
+still caps with AMG-grade ones). The same holds on the 2-D three-layer
+gauged test problem. The reason is structural
+(\code{doc/slip\_interface.tex}, ``Why the fluid gauge stays a penalty'').
 
 %=============================================================================
 \section{The relabelling family}
@@ -724,11 +1130,12 @@ order 2).}
 The referential classes accept a mapping $\xi$ (a diffeomorphism of the
 computational ball onto the physical domain). They assemble every term
 pulled back to the reference domain, which is how aspherical bodies and
-topography will enter. The relabelling family checks this machinery
+topography enter. The relabelling family checks this machinery
 \emph{without new physics}, by describing the same spherical problem in
-relabelled coordinates. pyslfp then stays an exact reference while every
-mapped code path is exercised. With $F=\partial\xi/\partial\vx$ and
-$J=\det F$, the pulled-back forms (\code{doc/mappings.md}) are
+relabelled coordinates \cite{AlAttarCrawford2016}. pyslfp then stays an
+exact reference while every mapped code path is exercised. With
+$F=\partial\xi/\partial\vx$ and $J=\det F$, the pulled-back forms
+(\code{doc/mappings.md}, ``The pulled-back forms'') are
 \begin{equation}
   \int\tilde\nabla\tilde\phi\cdot\tilde\nabla\tilde\phi' \,\mathrm{d}\xi
      = \int J\,C^{-1}\nabla\phi\cdot\nabla\phi'\dV,\quad C=F^TF,
@@ -772,18 +1179,22 @@ geometric error squared. Benchmark amplitude: $A=0.02$.
 the exact analytic $\xi$ and $F$, and with coefficients from the exact
 radial profiles composed with $\xi$ (the $L^2$ fields cannot be evaluated
 at $|\xi(\vx)|$). The Love numbers must reproduce pyslfp's to the
-discretisation level, plus the geometric floor. The single-valued slip
+discretisation level, plus the geometric floor, and the \code{spurious}
+column measures lateral leakage, which an exact cancellation of the
+lateral machinery keeps at the unmapped level. The single-valued slip
 refuses maps by design, and the Eulerian classes are unmapped.
-\textbf{Measured} (1 Oct campaign, $h=0.3$): the mapped and unmapped
-runs differ by at most $2.4\times10^{-3}$ (\code{homogeneous}),
-$3.5\times10^{-2}$ (\code{two\_solid}, in $l'_4$) and $1.5\times10^{-2}$
-(\code{fluid\_core}, referential) relative to the reference. These are of
-the order of the errors themselves, as expected when exact $F$ changes
-the discrete problem by the geometric interpolation error. The
-\code{spurious} column is the more sensitive measure. It is unchanged by
-the map for the welded referential runs ($2$--$10\times10^{-3}$ either
-way), but rises from $3$--$8\times10^{-3}$ to $6\times10^{-2}$ at
-$l\ge2$, and to 0.6 at $l=1$, for slip\_broken\review{r:slipleak}.
+
+\textbf{Measured} (local campaign profile, $h=0.3$, order 2). The mapped and
+unmapped referential runs differ by at most $2.4\times10^{-3}$
+(\code{homogeneous}), $3.5\times10^{-2}$ (\code{two\_solid}, in $l'_4$) and
+$1.5\times10^{-2}$ (\code{fluid\_core}) relative to the reference, of the
+order of the errors themselves, as expected when exact $F$ changes the
+discrete problem by the geometric interpolation error. The referential
+\code{spurious} column is unchanged by the map ($2$--$8\times10^{-3}$ either
+way). Mapped slip\_broken is \emph{not verified}: its \code{spurious}
+column rises from $6$--$10\times10^{-3}$ unmapped to $0.4$ at $l=1$ and
+$6$--$9\times10^{-2}$ at $l\ge2$, consistent with the informational
+identity of leg B through the slipping interface.
 
 \subsection{Leg B: the discrete change-of-variables identity (\code{relabelled\_identity})}
 
@@ -791,7 +1202,8 @@ $l\ge2$, and to 0.6 at $l=1$, for slip\_broken\review{r:slipleak}.
 the map, the mapped assembly on the reference mesh and the standard
 assembly on the \emph{image} mesh (nodes moved to $\xi_h$, the same $L^2$
 data transplanted) are the same linear system, element by element, when
-the same quadrature rules are used. The driver solves the full coupled
+the same quadrature rules are used (\code{doc/mappings.md}, ``The discrete
+change-of-variables identity''). The driver solves the full coupled
 problem both ways (side A: reference mesh with the interpolated map; side
 B: mapped mesh with the identity map), from the same serial partition so
 that the true degrees of freedom coincide, and compares the solutions
@@ -801,16 +1213,19 @@ entrywise:
   \delta_\zeta = \frac{\|Z_A-Z_B\|_2}{\|Z_B\|_2}.
 \end{equation}
 This certifies every assembled term at once: stiffness, equilibrium
-stress, gravity couplings, Poisson block, DtN, vacuum extension, loads
-and projectors. One term is not identical by construction: the DtN
-operator centres on the mesh centroid, which the mapped interior shifts
-by $O(A)$. That term contributes about $10^{-7}$ to the solutions and is
-superlinear in $A$, whereas an unmapped term would show up linearly.
-Operator-action probes and per-attribute differences locate any
-mismatch. The pass criterion is $\delta_u,\delta_\zeta<10^{-5}$ for
-welded cases; the slipping interface is informational.
+stress, gravity couplings, Poisson block, DtN, vacuum extension, loads,
+projectors, and the gauge penalty. One term is not identical by
+construction: the DtN operator centres on the mesh centroid, which the
+mapped interior shifts by $O(A)$. That term contributes about $10^{-7}$ to
+the solutions and is superlinear in $A$, whereas an unmapped term would
+show up linearly. Operator-action probes and per-attribute differences
+locate any mismatch; with \code{-method slip\_broken} the driver also
+compares the sixteen assembled blocks of the broken organisation and the
+stored constraint kernels. The pass criterion is
+$\delta_u,\delta_\zeta<10^{-5}$ for welded cases; the slipping interface
+is informational.
 
-\textbf{Measured} ($A=0.02$, $h=0.3$, order 2):
+\textbf{Measured} ($A=0.02$, $h=0.3$, order 2, local campaign profile):
 \begin{center}
 \begin{tabular}{@{}lcc@{}}
 \toprule
@@ -819,24 +1234,29 @@ case & $\delta_u$ & $\delta_\zeta$ \\
 \code{homogeneous} & $4.1\times10^{-7}$ & $1.1\times10^{-7}$ \\
 \code{two\_solid} & $9.7\times10^{-7}$ & $1.4\times10^{-7}$ \\
 \code{fluid\_core}, welded gauged & $1.6\times10^{-7}$ & $4.1\times10^{-8}$ \\
-\code{fluid\_core}, slip\_broken (30 Sep, informational) & $1.2\times10^{-2}$ & -- \\
+\code{fluid\_core}, slip\_broken (informational) & $1.2\times10^{-2}$ & $8.1\times10^{-3}$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 The gauged fluid passes because the gauge penalty is assembled as an
-exact pull-back (\code{ElasticTensorIntegrator} with the pulled-back
-deviatoric tensor). The gauged run also prints a semi-convergence warning
-from the gauge refinement (contraction 0.95)\review{r:identityheader}.
+exact pull-back: \code{ElasticTensorIntegrator} with the pulled-back
+deviatoric tensor and the map (not \code{MaterialStiffnessIntegrator},
+which expects a relabelled tensor). Through the slipping interface the
+identity does not hold: every $\zeta$--$\zeta$ block of the broken
+organisation agrees to machine precision and the constraint kernels to
+$10^{-7}$ or better, but every block involving $\vu$ differs at
+$1$--$2.5\times10^{-4}$, and the solution difference does not decrease
+with refinement ($4.5\times10^{-2}$ at $h=0.2$). The slipping-interface
+forms are therefore not certified covariant.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.75\textwidth]{talk_identity.png}
-\caption{Talk figure: the identity per case. The slip value now comes
-from the campaign's slip identity log (2 Oct; the script falls back to
-the measured constant where no log exists).}
+\caption{The identity per case, read from the campaign's identity logs.}
 \end{figure}
 
 \subsection{Leg C: an aspherical reference body (\code{aspherical\_reference})}
+\label{sec:legC}
 
 \textbf{Test.} The mesh is built by \code{meshes/aspherical\_body.py}:
 a gmsh mesh of the ball whose nodes are moved by the radial stretch
@@ -846,32 +1266,44 @@ a gmsh mesh of the ball whose nodes are moved by the radial stretch
                     \eps\, s\, q^2,\ q=\dfrac{1+B-r}{B}, & 1\le r\le 1+B,\end{cases}
   \label{eq:stretch}
 \end{equation}
-with $s = P_2(\cos\theta)+\beta\sin^2\theta\cos2\varphi$, $\beta=0.5$ and $B=0.2$, which is the identity on the DtN sphere. The
-mesh is the reference body, and $\xi = D^{-1}$ maps it onto the unit
-ball. The inverse is exact pointwise (linear inside, a cancellation-stable
-quadratic root in the buffer), and $F=[F_D(\xi(\vy))]^{-1}$, so the run is
-in exact-$F$ mode. Here the map is \emph{not} the identity on the surface:
-the load is the physical harmonic pulled back with its Nanson area factor
+with $s = P_2(\cos\theta)+\beta\sin^2\theta\cos2\varphi$, $\beta=0.5$ and
+$B=0.2$, which is the identity on the DtN sphere. The mesh is the reference
+body, and $\xi = D^{-1}$ maps it onto the unit ball. The inverse is exact
+pointwise (linear inside, a cancellation-stable quadratic root in the
+buffer), and $F=[F_D(\xi(\vy))]^{-1}$, so the run is in exact-$F$ mode.
+Here the map is \emph{not} the identity on the surface: the load is the
+physical harmonic pulled back with its Nanson area factor
 $|J F^{-T}\vn|$. The solution is compared as fields with the pyslfp radial
 solutions composed through $\xi$: the relative $L^2$ errors of $\vu$ over
 the body and of the Eulerian potential $\phi_1=\zeta_1-\vb\cdot\vu$ for
-$l=0,2,3,4$ ($l=1$ is skipped). The model is a single solid layer
-(\code{homogeneous}), the gauge-free regime.
+$l=0,2,3,4$ ($l=1$ is skipped). The models are single solid layers
+(\code{homogeneous}, and \code{linear\_solid} in the server profile), the
+gauge-free regime. The mesh manifest records $\eps$, $\beta$ and the buffer
+thickness, the driver adopts them (a contradicting \code{-eps},
+\code{-beta} or \code{-buffer} aborts), and it checks that the pulled-back
+surface lands on the unit sphere to $10^{-2}$.
 
 \textbf{Measured.} On the stock mesh ($\eps=0.05$), $\|\delta\vu\|$ is
 $2.1$--$3.7\times10^{-2}$ and $\|\delta\phi\|$ $1.4\times10^{-3}$--$2.1\times10^{-2}$,
-comparable to the spherical campaign at similar resolution. The README
-claims the errors are independent of the shape amplitude ($\eps=0.05$ and
-$0.02$ identical), but the stored ``$\eps=0.02$'' run was in fact the
-$\eps=0.05$ case\review{r:aspherical}. A genuine sweep, made for this note
-on meshes with the same gmsh connectivity at $\eps=0,0.02,0.05,0.08$
-($\eps=0.1$ folds elements), confirms the claim
-(Figure~\ref{fig:aspherical}): at fixed degree the errors vary by at most
-4\,\% of themselves across the sweep, e.g.\ $\delta u_2 = 2.40, 2.43, 2.48,
-2.49\times10^{-2}$. With elements halved ($\eps=0.05$) the errors drop
-by 1.3--3.4 times.
+comparable to the spherical campaign at similar resolution. A sweep on
+meshes with the same gmsh connectivity at $\eps=0,0.02,0.05,0.08$
+($\eps=0.1$ folds elements) shows the errors independent of the shape
+amplitude (Figure~\ref{fig:aspherical}): at fixed degree they vary by at
+most 4\,\% of themselves across the sweep, e.g.\
+$\delta u_2 = 2.40, 2.43, 2.48, 2.49\times10^{-2}$. With elements halved
+($\eps=0.05$, \code{--scale 0.5}) the errors drop by 1.3--3.4 times. The
+sweep is made, from \code{<build>/benchmarks}, by
+\begin{verbatim}
+python ../../meshes/aspherical_body.py --dim 3 --buffer --eps E \
+    --name _eE --out talk_data
+mpiexec -np 8 bin/aspherical_reference \
+    -m talk_data/aspherical_buffer_3d_eE.mesh \
+    -c runs_campaign/love_numbers/homogeneous/h0.3/case.json -o 2 \
+    -out talk_data/aspherical_eE_o2.json
+\end{verbatim}
+for each amplitude \code{E}.
 
-One caveat for the interpretation: the aspherical mesh is the image under
+The interpretation has one caveat: the aspherical mesh is the image under
 $D$ of a spherical mesh, and $\xi=D^{-1}$ maps it back. Up to the
 interpolation error of $D$ on the order-2 geometry, the pulled-back
 discrete problem is therefore the spherical problem on the original
@@ -885,8 +1317,7 @@ in the sense of a mesh generated on the aspherical body directly.
 \includegraphics[width=\textwidth]{talk_aspherical.png}
 \caption{Aspherical body: relative field errors against pyslfp through
 the map, against the shape amplitude (0 is the spherical mesh with the
-same connectivity), by degree. Stars: elements halved. Rebuilt from the
-new amplitude sweep.}
+same connectivity), by degree. Stars: elements halved.}
 \label{fig:aspherical}
 \end{figure}
 
@@ -898,11 +1329,11 @@ new amplitude sweep.}
 \subsection{What is tested, and the aim}
 
 This family checks \emph{derivatives} of the response with respect to the
-model, which is the first step towards adjoint and topography kernels.
-Its first member needs no new theory: the radius $r_k$ of one interior
-interface is shifted by $\eps$. Every member of the family is still
-spherical, so pyslfp solves it exactly. The 3-D solver describes each
-member from \emph{one fixed mesh}, through the piecewise-linear radial map
+model, the quantity that adjoint and topography kernels compute. Its
+member here needs no new theory: the radius $r_k$ of one interior interface is
+shifted by $\eps$. Every member of the family is still spherical, so
+pyslfp solves it exactly. The 3-D solver describes each member from
+\emph{one fixed mesh}, through the piecewise-linear radial map
 \begin{equation}
   \xi(\vx) = f(r)\,\rhat,\qquad f \text{ affine on each } [b_j,b_{j+1}],\quad
   f(b_j) = b_j + \eps\,\delta_{jk},
@@ -920,13 +1351,14 @@ per-region forms allow. The comparison is between central differences,
   D_{1\text{D}} = \frac{R_{\text{pyslfp}}(+\eps)-R_{\text{pyslfp}}(-\eps)}{2\eps},
   \label{eq:fd}
 \end{equation}
-for each load Love number $R$. Both are $\partial R/\partial r_k+O(\eps^2)$.
-Because the mesh is fixed, the discretisation bias $R_{3\text{D}}-R$ is a
-smooth function of $\eps$ and largely cancels in $D_{3\text{D}}$. The
-comparison therefore tests the \emph{derivative}, through the mapped
-assembly, at an accuracy better than that of $R_{3\text{D}}$ itself.
-Note that $D_{1\text{D}}$ is a finite difference of pyslfp solves, not an
-analytic perturbation-theory kernel\review{r:derivlabel}.
+for each load Love number $R$. Both are $\partial R/\partial r_k+O(\eps^2)$;
+a ladder in $\eps$ (the server profile runs $0.01$ and $0.02$) separates
+the $O(\eps^2)$ remainder from the discretisation. Because the mesh is
+fixed, the discretisation bias $R_{3\text{D}}-R$ is a smooth function of
+$\eps$ and largely cancels in $D_{3\text{D}}$. The comparison therefore
+tests the \emph{derivative}, through the mapped assembly, at an accuracy
+better than that of $R_{3\text{D}}$ itself. $D_{1\text{D}}$ is a finite
+difference of pyslfp solves, not an analytic perturbation-theory kernel.
 
 \subsection{Assumptions and implementation details}
 
@@ -940,13 +1372,21 @@ analytic perturbation-theory kernel\review{r:derivlabel}.
   not from mesh integrals of the base fields. The Love-number
   normalisation \eqref{eq:loadlove} depends on this: a $2\%$ error in $g$
   at $\eps=0.02$ would otherwise swamp the derivative.
-\item Shift runs use the interpolated $F$. The exact map's slope jumps at
-  the moving interface, and on curved facets the quadrature points of
-  the one-sided interface kernels lie $O(h^2)$ inside the analytic
-  radius, so they picked up the fluid-side slope. That was the whole of
-  the earlier outward-shift pathology of slip\_broken. The interpolation
+\item Shift runs use the interpolated $F$ (the driver forces
+  \code{-map-interp} for any \code{-map-shift} run). The exact map's slope
+  jumps at the moving interface, and on curved facets the quadrature points
+  of the one-sided slip interface kernels lie $O(h^2)$ inside the analytic
+  radius, so with the exact map most of each facet would receive the
+  fluid-side slope where the solid-side value belongs. The per-SubMesh
+  interpolant samples only its own elements, and the map's value is
+  continuous, so it is side-consistent by construction. The interpolation
   perturbs the model by $O(h^p)$ consistently at both signs, which cancels
-  in \eqref{eq:fd}.
+  in \eqref{eq:fd}. Measured with slip\_broken on \code{fluid\_core}
+  ($h=0.3$): with the exact map the $+\eps$ shift ran about 9.6k iterations
+  per degree with polluted Love numbers ($h'_1\approx-72$, \code{spurious}
+  about 1.5); with the interpolated map both signs run in 4--5k iterations
+  with \code{spurious} at the $3$--$9\times10^{-3}$ floor and sane Love
+  numbers.
 \item Every augmented-Lagrangian sweep runs at full tolerance in shift
   runs, so that the endpoints are reproducible.
 \item Comparisons: $h'$ at every degree, $l'$ and $k'$ from degree 2,
@@ -955,55 +1395,56 @@ analytic perturbation-theory kernel\review{r:derivlabel}.
 
 \subsection{Results}
 
-Campaign of 1 Oct: $\eps=\pm0.02$, $h=0.3$, order 2, degrees $0$--$3$.
+Local campaign profile: $\eps=\pm0.02$, $h=0.3$, order 2, degrees $0$--$3$.
 \begin{center}
 \small
 \begin{tabular}{@{}llP{10cm}@{}}
 \toprule
 model & method & $|D_{3\text{D}}-D_{1\text{D}}|/|D_{1\text{D}}|$ \\
 \midrule
-\code{fluid\_core} & referential & $h'_0$ 0.8\,\%, $h'_2$ 6.5\,\%, $l'_2$ 12\,\%, $k'_2$ 1.8\,\%, $h'_3$ 1.9\,\%, $l'_3$ 15\,\%, $k'_3$ 0.9\,\% \\
-\code{fluid\_core} & slip\_broken & $h'_0$ 0.8\,\%, $h'_2$ 25\,\%, $l'_2$ 2.8\,\%, $k'_2$ 39\,\%, $h'_3$ 5.1\,\%, $l'_3$ 20\,\%, $k'_3$ 11\,\% \\
-\code{two\_solid} & referential & $h'_0$ 2.9\,\%, $h'_2$ 8.3\,\%, $l'_2$ 5.1\,\%, $k'_2$ 12\,\%, $h'_3$ 17\,\%, $l'_3$ 5.1\,\%, $k'_3$ 11\,\% \\
+\code{fluid\_core} & referential & $h'_0$ 0.8\,\%, $h'_2$ 6.4\,\%, $l'_2$ 12\,\%, $k'_2$ 1.7\,\%, $h'_3$ 1.9\,\%, $l'_3$ 14\,\%, $k'_3$ 0.8\,\% \\
+\code{fluid\_core} & slip\_broken & $h'_0$ 0.8\,\%, $h'_2$ 25\,\%, $l'_2$ 12\,\%, $k'_2$ 19\,\%, $h'_3$ 5.6\,\%, $l'_3$ 23\,\%, $k'_3$ 4.9\,\% \\
+\code{two\_solid} & referential & $h'_0$ 2.9\,\%, $h'_2$ 8.1\,\%, $l'_2$ 5.1\,\%, $k'_2$ 11\,\%, $h'_3$ 17\,\%, $l'_3$ 5.2\,\%, $k'_3$ 11\,\% \\
 \bottomrule
 \end{tabular}
 \end{center}
 The degree-0 derivative agrees to 0.8\,\% for both methods on
 \code{fluid\_core}, and the referential method's $k'$ derivatives agree to
-1--2\,\%. The degree-2 and $l'$ entries are worse, and slip\_broken's
-degree-2 derivatives are off by 25--40\,\%, which is more than the
-README's ``few-percent'' summary suggests\review{r:pertslip}. The absolute
-agreement at each $\eps$ (left panels) is flat across the ladder: the
-mapped solves track the perturbed models as well as the unmapped solve
-tracks the base model. Its degree-2 value, about 17\,\% and set by
-$l'_2$, is the same for every $\eps$ and both methods. The README
-attributes it to the $O(N^2)$ mismatch of the compressible methods on
-this non-neutral core. On \code{two\_solid} the derivatives are small (the
-interface lies deep, with modest jumps), and relative discrepancies of
-5--17\,\% are within an order of magnitude of the error of the numbers
-themselves. A ladder in $\eps$ (0.01, 0.02), as the server profile has,
-would separate the $O(\eps^2)$ remainder from discretisation.
+1--2\,\%; the $l'$ entries inherit the small-denominator amplification of
+$l'$. The slip\_broken derivatives at degrees 2 and 3 are several times
+further from the reference than the referential ones on the same mesh and
+map; the two methods share the shift map and the reference, so the
+difference lies in the slipping forms under a moving interface, and those
+derivatives are not verified. The absolute agreement at each $\eps$ (left
+panels) is flat across the ladder: the mapped solves track the perturbed
+models as well as the unmapped solve tracks the base model. Its degree-2
+value, about 17\,\% and set by $l'_2$, is the same for every $\eps$ and
+both methods: it is the $O(N^2)$ mismatch of the compressible methods
+against pyslfp's neutral fluid on this non-neutral core
+(\S\ref{sec:formulations}), not a shift or solver effect. On
+\code{two\_solid} the derivatives are small (the interface lies deep, with
+modest jumps), and relative discrepancies of 5--17\,\% are within an order
+of magnitude of the error of the numbers themselves.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{pert_fc_referential.png}\\[1ex]
 \includegraphics[width=\textwidth]{pert_fc_slip_broken.png}\\[1ex]
 \includegraphics[width=\textwidth]{pert_ts_referential.png}
-\caption{Interface-shift check, redrawn: absolute agreement with pyslfp by
-degree and shift (left); the 3-D central difference against the 1-D one
-(middle; Love number by marker, degree by colour); and the relative
-discrepancy of each derivative (right), which the identity plot cannot
-resolve for the small derivatives. Top: \code{fluid\_core} referential;
-middle: \code{fluid\_core} slip\_broken; bottom: \code{two\_solid}
-referential.}
+\caption{Interface-shift check: absolute agreement with pyslfp by
+degree and shift (left; the unmapped base run labelled $\eps=0$); the 3-D
+central difference against the 1-D one (middle; Love number by marker,
+degree by colour); and the relative discrepancy of each derivative
+(right), which the identity plot cannot resolve for the small
+derivatives. Top: \code{fluid\_core} referential; middle:
+\code{fluid\_core} slip\_broken; bottom: \code{two\_solid} referential.}
 \end{figure}
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.5\textwidth]{talk_derivative.png}
-\caption{Talk figure: both methods on one identity plot, from the
-1 Oct runs. The earlier version read the 30 Sep slip\_broken shift runs,
-made before the outward-shift fix.}
+\caption{Both methods on one identity plot: the 3-D central difference
+against the 1-D reference (\code{fluid\_core}).}
 \end{figure}
 
 %=============================================================================
@@ -1039,20 +1480,22 @@ Gaver--Stehfest \\
 The box and sphere sub-families separate the time integration and the
 viscoelastic discretisation from gravity and fluids (the box from
 spherical geometry as well), which the quasi-static elastic families
-test on their own. Its references are exact
-to about $10^{-10}$, so any mismatch is the code's. That is what lets it
-cover many situations cheaply: every forcing against every scheme, step
-ladders, mesh ladders, and contrasts of eight decades. The Love-number
-histories remain the integrated test of the self-gravitating machinery.
+test on their own. Their references are exact to about $10^{-10}$, so any
+mismatch is the code's. That is what lets them cover many situations
+cheaply: every forcing against every scheme, step ladders, mesh ladders,
+and contrasts of eight decades. The Love-number histories remain the
+integrated test of the self-gravitating machinery. The library's
+integrators, and the choice between them that these benchmarks support,
+are described in \code{doc/viscoelasticity.md}, section ``Time stepping''
+(subsection ``Choosing a scheme'').
 
 \subsection{The time integrators}
 \label{sec:steppers}
 
-This subsection summarises how each integrator tested below works: what it
-computes per step, what it costs, and where its order and stability come
-from. The implementation is \code{ViscoelasticOperator}
-(\code{src/viscoelastic.cpp}); \code{doc/viscoelasticity.md} has the
-design notes.
+This subsection states what each tested integrator computes per step and
+where its order, exactness and stability come from, as far as the results
+below need it. The implementation is \code{ViscoelasticOperator}
+(\code{src/viscoelastic.cpp}).
 
 \paragraph{The semi-discrete system.}
 The state is the set of internal variables $m_k$, one per Prony branch,
@@ -1096,129 +1539,66 @@ $\Delta t$ changes $\beta$, so the operator must be reassembled and,
 eventually, the preconditioner rebuilt. With a fixed step the operator is
 assembled once.
 
-\paragraph{Explicit Runge--Kutta (RK4).}
-\code{Mult} evaluates the rate: one solve with $K_U$ at the stage time,
-then $(d-m_k)/\tau_k$ pointwise. Any explicit MFEM solver can drive it. The
-tested one is classical RK4: four solves per step and fourth order. The
-operator never changes. Its stability interval on the negative real axis
-is about $[-2.785,0]$, so $\Delta t\lesssim2.8\,\tau_{\min}$ whatever the
-accuracy needed. That is cheap when nothing is stiff and hopeless when
-$\tau_{\max}/\tau_{\min}$ is large.
-
-\paragraph{Exponential Euler (ETD1).}
-Solve with $K_U$ at $t_n$ for $d^n$, then relax exactly with the strain
-frozen over the step:
-\begin{equation}
-  m_k^{n+1} = e^{-h_k}m_k^{n} + \bigl(1-e^{-h_k}\bigr)\,d^{n}.
-\end{equation}
-This is the exact solution of $\dot m=(d-m)/\tau$ for constant $d$. The
-local error is $O(\Delta t^2\dot d)$, so the scheme is first order. It
-takes one solve per step, always with $K_U$ (no reassembly), and has no
-step restriction. Under creep ($d$ growing) it lags systematically. It is
-also the embedded companion of the adaptive scheme.
-
-\paragraph{Exponential trapezoid (ExpTrap).}
-By variation of constants,
-\begin{equation}
-  m_k(t_{n+1}) = e^{-h_k}m_k^{n}
-   + \frac{1}{\tau_k}\int_0^{\Delta t}e^{-(\Delta t-s)/\tau_k}\,d(t_n+s)\,\mathrm{d}s .
-\end{equation}
-ExpTrap replaces $d$ by its linear interpolant between $d^n$ and $d^{n+1}$
-and integrates exactly:
-\begin{equation}
-  m_k^{n+1} = e^{-h}m_k^{n} + \alpha\,d^{n} + \beta\,d^{n+1},\qquad
-  \alpha = \frac{1-e^{-h}}{h}-e^{-h},\quad
-  \beta = 1-\frac{1-e^{-h}}{h}
-\end{equation}
-(series for small $h$). In the form of \eqref{eq:ve-effective},
-$a_k=e^{-h}m_k^n+\alpha d^n$ and the weight is
-$\beta_k=1-\beta=(1-e^{-h})/h$. It takes one solve per step: $d^n$ is
-reused from the previous step's end, which is cached, so only the first
-step pays for an extra unrelaxed solve. The load is evaluated at
-$t_{n+1}$. Properties:
+\paragraph{The schemes.}
 \begin{itemize}[leftmargin=*]
-\item second order, and \emph{exact} whenever the strain is linear in
-  time over the step (Maxwell creep under constant stress at any
-  $\Delta t$);
-\item for $h\to0$, $\alpha,\beta\to h/2$: the ordinary trapezoid rule;
-\item for $h\to\infty$, $\alpha\to0$ and $\beta\to1$: $m^{n+1}=d^{n+1}$
-  with the long-term operator, which is exactly the relaxed equilibrium.
-  The decay factor $e^{-h}$ is exact, so there is no step restriction and
-  no oscillation (Crank--Nicolson, by contrast, has amplification
-  $\to-1$ there and is deliberately absent);
-\item the error is controlled by how far $d$ is from linear over a step,
-  i.e.\ by $\Delta t^2\ddot d$. A fast or kinked load costs accuracy, not
-  stability.
+\item \emph{RK4} evaluates the rate by one $K_U$ solve per stage: four
+  solves per step, fourth order, the operator never changes. Its stability
+  interval on the negative real axis is about $[-2.785,0]$, so
+  $\Delta t\lesssim2.8\,\tau_{\min}$ whatever the accuracy needed.
+\item \emph{ETD1} (exponential Euler) solves with $K_U$ at $t_n$ for $d^n$
+  and relaxes exactly with the strain frozen over the step,
+  $m_k^{n+1} = e^{-h_k}m_k^{n} + (1-e^{-h_k})\,d^{n}$: the exact solution
+  for constant $d$, first order, one solve per step, no step restriction.
+  Under creep it lags systematically.
+\item \emph{ExpTrap} (exponential trapezoid) replaces $d$ by its linear
+  interpolant between $d^n$ and $d^{n+1}$ in the variation-of-constants
+  formula and integrates exactly:
+  \begin{equation}
+    m_k^{n+1} = e^{-h}m_k^{n} + \alpha\,d^{n} + \beta\,d^{n+1},\qquad
+    \alpha = \frac{1-e^{-h}}{h}-e^{-h},\quad
+    \beta = 1-\frac{1-e^{-h}}{h},
+  \end{equation}
+  so the effective weight is $\beta_k=(1-e^{-h})/h$. One solve per step
+  ($d^n$ is the cached end of the previous step), the load at $t_{n+1}$.
+  It is second order and \emph{exact} whenever the strain is linear in time
+  over the step (Maxwell creep under constant stress at any $\Delta t$); for
+  $h\to0$ it is the ordinary trapezoid rule, for $h\to\infty$ it returns
+  $m^{n+1}=d^{n+1}$ with the long-term operator, the relaxed equilibrium,
+  with no step restriction and no oscillation. Its error is controlled by
+  how far $d$ is from linear over a step, $\Delta t^2\ddot d$.
+\item \emph{BE} (MFEM \code{BackwardEulerSolver}) gives
+  $m_k^{n+1} = (m_k^{n} + h_k\,d^{n+1})/(1+h_k)$, weights $1/(1+h_k)$: one
+  solve per step, first order, L-stable.
+\item \emph{SDIRK23} (MFEM \code{SDIRK23Solver(2)}) is the two-stage
+  singly diagonally implicit method with $\gamma=1-1/\sqrt2$:
+  \begin{equation}
+  \begin{array}{c|cc}
+    \gamma & \gamma & \\
+    1-\gamma & 1-2\gamma & \gamma\\ \hline
+    & \tfrac12 & \tfrac12
+  \end{array}
+  \end{equation}
+  Each stage is a backward-Euler solve of step $\gamma\Delta t$; both share
+  one effective operator, so it costs two solves and one assembly per step
+  size. It is second order ($b^{T}c=\tfrac12$) and L-stable:
+  $R(\infty)=1-b^{T}A^{-1}\mathbf 1=1-(4\gamma-1)/(2\gamma^2)=0$ exactly for
+  this $\gamma$, with stage order 1 and stage loads at
+  $t_n+\gamma\Delta t$ and $t_n+(1-\gamma)\Delta t$. MFEM's default
+  \code{SDIRK23Solver()} is the third-order, A- but not L-stable variant;
+  the drivers use the L-stable one. The displacement left by the second
+  stage belongs to the stage state, so an observation between steps costs
+  an extra unrelaxed solve.
+\item \emph{The adaptive exponential trapezoid} takes ExpTrap trial steps
+  and uses the ETD1 companion (nodal work, no solve) as a first-order error
+  estimate, with the step factor $\min(4,\max(0.2,0.9\,\text{err}^{-1/2}))$
+  and rejection when $\text{err}>1$. The estimate is conservative for the
+  propagated second-order solution, by a factor of order $\tau/\Delta t$.
+  Every accepted step has a new $\Delta t$, hence new weights and a
+  reassembly, and every rejected step costs a solve.
 \end{itemize}
-
-\paragraph{Backward Euler (BE).}
-Through MFEM's \code{BackwardEulerSolver}: \code{ImplicitSolve} returns
-the rate $k=(m^{n+1}-m^n)/\Delta t$ with
-\begin{equation}
-  m_k^{n+1} = \frac{m_k^{n} + h_k\,d^{n+1}}{1+h_k},\qquad
-  \beta_k = \frac{1}{1+h_k},\quad a_k=\frac{m_k^n}{1+h_k},
-\end{equation}
-and the load is evaluated at $t_{n+1}$. It takes one solve per step and is
-first order and L-stable (amplification $1/(1+h)\to0$). For $h\gg1$ it
-returns the relaxed equilibrium like ExpTrap, but its error at moderate
-$h$ is $O(\Delta t)$.
-
-\paragraph{SDIRK23 (MFEM \code{SDIRK23Solver(2)}).}
-This is a two-stage singly diagonally implicit RK method with
-$\gamma=1-1/\sqrt2\approx0.293$:
-\begin{equation}
-\begin{aligned}
-  k_1 &= F\bigl(t_n+\gamma\Delta t,\; m^n+\gamma\Delta t\,k_1\bigr),\\
-  k_2 &= F\bigl(t_n+(1-\gamma)\Delta t,\; m^n+(1-2\gamma)\Delta t\,k_1+\gamma\Delta t\,k_2\bigr),\\
-  m^{n+1} &= m^n + \tfrac{\Delta t}{2}(k_1+k_2),
-\end{aligned}
-\qquad
-\begin{array}{c|cc}
-  \gamma & \gamma & \\
-  1-\gamma & 1-2\gamma & \gamma\\ \hline
-  & \tfrac12 & \tfrac12
-\end{array}
-\end{equation}
-Each stage is a backward-Euler solve of step $\gamma\Delta t$ (weights
-$1/(1+\gamma h)$). Both stages share one effective operator, so it costs
-two solves and one assembly per step size. It is second order
-($b^{T}c=\tfrac12$; this $\gamma$ is not the third-order one) and
-L-stable: $R(\infty)=1-b^{T}A^{-1}\mathbf 1=1-(4\gamma-1)/(2\gamma^2)=0$
-exactly for this $\gamma$. It has stage order 1, and the stage loads are
-taken at $t_n+\gamma\Delta t$ and $t_n+(1-\gamma)\Delta t$. MFEM's default
-\code{SDIRK23Solver()} is the third-order, A- but not L-stable variant;
-the drivers use the L-stable one. Note that the displacement left by the
-second stage belongs to the stage state, not to $m^{n+1}$, so an
-observation between steps costs an extra unrelaxed solve (and a switch
-of operator). BE and ExpTrap leave a consistent displacement.
-
-\paragraph{Adaptive exponential trapezoid.}
-Each trial step is an ExpTrap step. Its ETD1 companion $\hat m$ (nodal
-work only, no solve) gives a free first-order error estimate
-\begin{equation}
-  \text{err} = \Bigl[\tfrac1N\sum_j\Bigl(\frac{m_j^{n+1}-\hat m_j}
-   {\text{atol}+\text{rtol}\max(|m_j^n|,|m_j^{n+1}|)}\Bigr)^2\Bigr]^{1/2},
-  \qquad
-  \Delta t\leftarrow\Delta t\cdot\min\bigl(4,\max(0.2,\,0.9\,\text{err}^{-1/2})\bigr).
-\end{equation}
-A step with err $>1$ is rejected and retried. The exponent $1/2$ matches
-the $O(\Delta t^2)$ local error of the first-order companion. Because the
-estimate belongs to ETD1, it is conservative for the propagated
-second-order solution, by a factor of order $\tau/\Delta t$. There is no
-stability limit, so adaptivity is purely about accuracy: small steps
-where the load or $\tau$ changes quickly, long strides across quiet
-periods. The price is that every accepted step has a new $\Delta t$,
-hence new weights and a reassembly (the preconditioner is reused while
-the iteration count stays within a factor 2 of its count at setup), and
-every rejected step costs a solve.
-
-\paragraph{State-dependent relaxation times.}
-With a power law, $\tau_k$ depends on the stress. ExpTrap and the implicit
-stages then run a predictor--corrector. The first pass uses the times of
-the start state. The times are then re-evaluated at the midpoint state
-(ExpTrap) or the end state (BE, SDIRK stages) and the step is repeated,
-by default once. Each pass is an extra solve with a different effective
-operator. ETD1 and the explicit schemes simply use the current times.
+With a power law, $\tau_k$ depends on the stress, and ExpTrap and the
+implicit stages run a predictor--corrector (one corrector pass by
+default, each an extra solve).
 
 \begin{table}[H]
 \centering
@@ -1421,26 +1801,41 @@ plane-wave reduction as well. The matrix of \eqref{eq:slab-ode} has
 eigenvalues $\pm k$ (double) whatever the moduli. The propagators are
 therefore polynomials in the moduli with coefficients depending on $kH$
 alone, and the transfer functions $W(H;s)$, $U(H;s)$ are \emph{rational}
-in $s$. The AAA algorithm (Nakatsukasa, S\`ete \& Trefethen 2018) recovers the poles and residues from
-630 samples in the right half-plane and on rays off the negative real
+in $s$. The AAA algorithm \cite{AAA2018} recovers the poles and residues
+from 630 samples in the right half-plane and on rays off the negative real
 axis. Two independent checks are stored with every reference:
 \begin{itemize}[leftmargin=*]
 \item the fit error at fresh complex points: $2$--$4\times10^{-14}$;
-\item the Heaviside response by fixed-Talbot inversion (complex $s$,
-  $M=32$) against the modal sum: $10^{-12}$--$10^{-10}$.
+\item the Heaviside response by fixed-Talbot inversion \cite{AbateValko2004}
+  (complex $s$, $M=32$) against the modal sum: $10^{-12}$--$10^{-10}$.
 \end{itemize}
 The poles come out real to $10^{-9}$ and non-positive. The flowing slab's
 pole is at $|p|<10^{-16}$.
+
+\paragraph{The reference at large contrasts.}
+At viscosity contrasts $C\ge10^4$ the relaxation rates span up to 16
+decades, and AAA can no longer resolve the slab's transfer function from
+its samples: fit errors of $10^{-8}$--$10^{-2}$, spurious complex poles,
+positive poles and an overflowing modal sum at $C=10^8$. The slab
+reference therefore checks itself. When the modal form fails its checks
+(fit error above $10^{-9}$, a positive pole, or disagreement with Talbot
+above $10^{-7}$) and the load is a Heaviside, it takes the history from
+fixed-Talbot inversion (\code{"method": "talbot"}), which evaluates the
+transfer function exactly at moderate complex $s$ and never needs the
+extreme rates resolved. Other histories are flagged
+\code{"reliable": false}. The two agree where both work: at $C=10^4$, the
+modal and the Talbot $W(8)$ differ by $10^{-6}$.
 
 \paragraph{Observables and metrics.}
 For the box, the mean strain ($e_{xx}$, $e_{yy}$) and the branch variables
 $m_{k,xx}$. For the slab, the surface amplitudes
 $W=(u_z,c)/(c,c)$ and $U=(u_h,g)/(g,g)$ on $z=H$, with $g=-\nabla_hc/|k|$
 (boundary linear forms). The metrics are those of the Love-number
-histories, taken over $t=0^+$ and every output time: the \emph{history}
-error $\max_t|f_{\text{FE}}-f_{\text{ref}}|/\max_t|f_{\text{ref}}|$,
-reported as the worst over the observables; the \emph{elastic} error at
-$t=0^+$; and the \emph{relax} error of $f(t)-f(0^+)$.
+histories (\S\ref{sec:fe-histories}), taken over $t=0^+$ and every output
+time: the \emph{history} error
+$\max_t|f_{\text{FE}}-f_{\text{ref}}|/\max_t|f_{\text{ref}}|$, reported as
+the worst over the observables; the \emph{elastic} error at $t=0^+$; and
+the \emph{relax} error of $f(t)-f(0^+)$.
 
 \paragraph{The driver and its step grid.}
 \code{viscoelastic\_box} reads the case, builds the mesh (element
@@ -1453,16 +1848,16 @@ breakpoints. Every interval is divided into
 $\max(\text{\code{-min-steps}},\lceil\ell/\Delta t\rceil)$ equal steps, and
 a step equal to the previous one up to rounding \emph{is} the previous
 one, so that a fixed $\Delta t$ keeps a single effective operator. Two
-details turned out to matter:
+details matter:
 \begin{itemize}[leftmargin=*]
 \item \emph{Jumps.} The step that ends at a jump must see the load's left
   limit, and the next must start from the right limit. The history
   evaluates the left limit at the flagged time, and
-  \code{ViscoelasticOperator::InvalidateDisplacement()} (new) drops the
-  displacement cached for the pre-jump load. The evaluation must also
-  snap the stepped time to the jump time. Rounding can put it an ulp past
-  the jump, outside the piece that ends there, and the first stepper
-  sweep found exactly that: an $O(\Delta t)$ error at isolated step sizes.
+  \code{ViscoelasticOperator::InvalidateDisplacement()} drops the
+  displacement cached for the pre-jump load. The evaluation also snaps the
+  stepped time to the jump time: rounding can put it an ulp past the jump,
+  outside the piece that ends there, which costs an $O(\Delta t)$ error at
+  isolated step sizes.
 \item \emph{The observation cache.} The stepped time equals the output
   time only up to rounding, and the driver must not reset it, or the
   operator's displacement cache (keyed on $(m,t)$) misses. Each output
@@ -1508,30 +1903,29 @@ body & load & ETD1 & BE & ExpTrap & SDIRK23 & RK4 \\
 \end{tabular}
 \end{center}
 Every scheme has its design order on every body it is stable on, and
-exactness appears where the theory of \S\ref{sec:steppers} predicts it:
+exactness appears where \S\ref{sec:steppers} predicts it:
 \begin{itemize}[leftmargin=*]
 \item Under strain control the strain is prescribed. ExpTrap is then
   exact ($10^{-13}$--$10^{-16}$) for every piecewise-linear history
   (Heaviside, ramp, load\_unload, sawtooth), and ETD1 for every
-  piecewise-constant one (Figure~\ref{fig:box-dt}, right).
+  piecewise-constant one (Figure~\ref{fig:box-dt}, bottom).
 \item Maxwell creep under a constant stress is linear in time, so
   every scheme of order at least one except ETD1 is exact. Under a ramp
   it is quadratic, and SDIRK23 and RK4 remain exact.
 \item \code{prony\_wide} has $\tau_{\min}=10^{-3}$, and RK4 is unstable on
   the whole ladder ($\Delta t\ge 2^{-10}>2.8\tau_{\min}$, 170 runs).
 \end{itemize}
-One result is not in the theory of \S\ref{sec:steppers}: \textbf{ExpTrap
-loses half an order on the stiff multi-branch body under stress control}
-(1.5 against SDIRK23's 2.0, Figure~\ref{fig:box-dt}, middle). At
-$\Delta t=2^{-10}$ its error is $4\times10^{-6}$ against SDIRK23's
-$2\times10^{-7}$, while under strain control the same body gives it
-order 2 or exactness. The likely cause is the coupling. Under stress
+One result goes beyond the design orders: \textbf{ExpTrap loses half an
+order on the stiff multi-branch body under stress control} (1.5 against
+SDIRK23's 2.0, Figure~\ref{fig:box-dt}, middle). At $\Delta t=2^{-10}$ its
+error is $4\times10^{-6}$ against SDIRK23's $2\times10^{-7}$, while under
+strain control the same body gives it order 2 or exactness. Under stress
 control the strain $\delta$ depends on all branch variables
 \eqref{eq:zero-d}, so the stiff branches ($\tau\ll\Delta t$) put
 components into $\delta(t)$ that vary on their own time scale inside a
-step. ExpTrap's linear interpolation of $\delta$ misses them, whereas
-SDIRK23's L-stable stages damp them. This is a stiff order reduction of
-the familiar kind, but it has not been analysed here.
+step; ExpTrap's linear interpolation of $\delta$ misses them, whereas
+SDIRK23's L-stable stages damp them. This is a stiff order reduction; it
+has not been analysed further.
 
 \begin{figure}[H]
 \centering
@@ -1562,9 +1956,7 @@ With the breakpoints unaligned (Figure~\ref{fig:box-align}):
 \item a $C^1$ breakpoint (smooth\_step, ramped\_periodic) costs nothing.
 \end{itemize}
 A production driver should therefore put every load jump on the step
-grid, and it is what the box driver does by default. This is also how
-the driver bug of \S\ref{sec:box} was found: an $O(\Delta t)$ error at
-isolated step sizes with the jumps aligned.
+grid, which the box driver does by default.
 
 \begin{figure}[H]
 \centering
@@ -1599,31 +1991,21 @@ $10^{-5}$ & \code{sls}, periodic & --- & --- & 2049 & 2065 & 273 & 4422 \\
 \bottomrule
 \end{tabular}
 \end{center}
-The regime decides the winner (Figure~\ref{fig:box-cost}):
-\begin{itemize}[leftmargin=*]
-\item \emph{Relaxation after a step load} (Heaviside, load\_unload):
-  the adaptive trapezoid is cheapest, by a factor of 3--5 on the stiff
-  bodies. It takes small steps through each transient and strides once
-  the response is quiet. Its error is far below rtol there, because the
-  ETD1 estimate is conservative.
-\item \emph{Sustained periodic forcing}: adaptivity is the worst choice
-  (1400--23000 solves), since the conservative estimate keeps every
-  step small for the whole run. On non-stiff bodies RK4 wins at tight
-  targets (273 solves for $10^{-5}$ on \code{sls}), but on a stiff one it
-  is bound by stability (16401 on \code{prony\_wide} whatever the
-  target).
-\item \emph{ExpTrap and SDIRK23} are the robust fixed-step choices. They
-  cost about the same per unit accuracy (ExpTrap has one solve per step,
-  SDIRK23 two but a smaller error constant). ExpTrap wins when the strain
-  is close to linear over a step, and SDIRK23 on the stiff multi-branch
-  body, where ExpTrap's order drops.
-\item The first-order schemes are never competitive beyond $10^{-3}$.
-\end{itemize}
-Solves are not the whole cost. The adaptive trapezoid reassembles the
-effective operator at every accepted step (assemblies equal solves in
-these runs), a fixed-step implicit scheme assembles once per step size,
-and RK4 never reassembles. On a problem where assembly and preconditioner
-setup dominate, adaptivity pays that price at every step.
+The regime decides the winner (Figure~\ref{fig:box-cost}). After a step
+load (Heaviside, load\_unload) the adaptive trapezoid is cheapest, by a
+factor of 3--5 on the stiff bodies, and its error is far below rtol there
+because the ETD1 estimate is conservative. Under sustained periodic
+forcing it is the worst choice (1400--23000 solves), since the same
+estimate keeps every step small for the whole run. On non-stiff bodies
+RK4 wins at tight targets (273 solves for $10^{-5}$ on \code{sls}), but on
+a stiff one it is bound by stability (16401 on \code{prony\_wide} whatever
+the target). ExpTrap and SDIRK23 cost about the same per unit accuracy;
+SDIRK23 wins on the stiff multi-branch body, where ExpTrap's order drops.
+The first-order schemes are never competitive beyond $10^{-3}$. Solves are
+not the whole cost: the adaptive trapezoid reassembles at every accepted
+step (assemblies equal solves in these runs), a fixed-step implicit scheme
+once per step size, RK4 never. These results are the basis of the
+recommendations in \code{doc/viscoelasticity.md}, ``Choosing a scheme''.
 
 \begin{figure}[H]
 \centering
@@ -1681,22 +2063,19 @@ sample.
   $n=12$ and $0.1$ at $n=16$; noise of $10^{-8}$ costs $3\%$ at $n=12$.
 \end{itemize}
 
-\paragraph{What it says about the gravitating mismatches.}
+\paragraph{What it says about the gravitating comparison.}
 The Love-number histories differ from the FE by $10^{-2}$ in $h'$ and $k'$
-and by up to $0.46$ in $l'_4$. Stehfest's own error is $10^{-4}$ or below
-on smooth relaxation spectra, so the inversion \emph{as such} cannot
-explain those differences. Noise in pyslfp's transform values could, if
-it were $10^{-8}$ or more relative. The existing check bounds it: raising
-the order from 12 to 16 moved the pyslfp reference by less than
-$5\times10^{-4}$ (\code{love/README.md}), and order 16 amplifies random
-noise about 400 times more than order 12, which puts the noise in the
-$10^{-12}$ range. On that evidence the reference side is unlikely to be
-the main cause, at least as random noise. Smooth systematic errors in
-$R(s)$, e.g.\ from a radial discretisation tolerance, are amplified less,
-and are not excluded by this argument. Two caveats about the comparison
-itself. Here no $U$ history changes sign, unlike the spherical $l'$, and
-the slabs have no buoyancy modes. A direct test would re-evaluate a few
-pyslfp transform values at tighter solver tolerances.
+and by up to $0.46$ in $l'_4$ (\S\ref{sec:fe-histories}). Stehfest's own
+error is $10^{-4}$ or below on smooth relaxation spectra, so the inversion
+\emph{as such} cannot explain those differences. Random noise in pyslfp's
+transform values could, if it were $10^{-8}$ or more relative; raising the
+order from 12 to 16 moves the pyslfp reference by less than
+$5\times10^{-4}$, and order 16 amplifies random noise about 400 times more
+than order 12, which bounds that noise near $10^{-12}$. Smooth systematic
+errors in $R(s)$, e.g.\ from a radial discretisation tolerance, are
+amplified less and are not excluded by this argument. The slab comparison
+differs from the spherical one in two respects: no $U$ history changes
+sign, unlike the spherical $l'$, and the slabs have no buoyancy modes.
 
 \begin{figure}[H]
 \centering
@@ -1743,14 +2122,13 @@ order 2, $n_z=5$). Every layer interface lies on element faces
   ($\tau=0.01$, $0.2$ thick) carries the large strain gradients, so at
   $n_z=5$ (one element across it) the error is $0.25$--$0.6$, and it
   converges from $n_z=10$ on ($8.5\times10^{-2}\to8.9\times10^{-3}$ at
-  $n=1$, $p=2$). Weak layers need elements across them, as one would
-  expect.
+  $n=1$, $p=2$). Weak layers need elements across them.
 \item \emph{3-D.} The plane wave and the checkerboard behave as their
   2-D counterparts, which checks the horizontal-isotropy reduction of the
   reference. At $p=1$, $0.19\to0.054$ from $n_z=5$ to $10$; at $p=2$,
   $n_z=5$, $4.5\times10^{-3}$ (plane wave) and $1.2\times10^{-2}$
   (checkerboard, $k=\sqrt2\pi$). The $p=2$, $n_z=10$ runs (106k
-  unknowns, over 1.5 h each on 4 ranks) belong to the server profile.
+  unknowns, over 1.5\,h each on 4 ranks) belong to the server profile.
 \end{itemize}
 \paragraph{Two floors that are time error.}
 Two order-2 ladders level off near $10^{-4}$ at $n_z=20$: \code{prony\_lid}
@@ -1759,14 +2137,14 @@ under the periodic load ($9.1\times10^{-5}$). Both are the time step,
 not the mesh. At $\Delta t/4$ they drop to $1.7\times10^{-5}$ and
 $1.2\times10^{-5}$. SDIRK23 at the original step gives $1.1\times10^{-5}$
 and $1.7\times10^{-5}$. On \code{prony\_lid} SDIRK23 is therefore 16 times
-more accurate than ExpTrap at the same step. This is the stiff
-multi-branch order reduction of \S\ref{sec:box-steppers} (the $\tau=0.01$
-branch), now in a spatially structured problem.
+more accurate than ExpTrap at the same step: the stiff multi-branch order
+reduction of \S\ref{sec:box-steppers} (the $\tau=0.01$ branch), in a
+spatially structured problem.
 
 \paragraph{Interfaces inside elements.}
 On uniform meshes that do \emph{not} follow the layers
 (\code{-no-conform}; $n_z=8,16,32$ against the interfaces at $0.6$ and
-$0.8$, Figure~\ref{fig:box-slab}, right), the composite rheology
+$0.8$, Figure~\ref{fig:box-slab}, bottom), the composite rheology
 (element attribute from the element's centre) staircases the interface,
 and its error stalls: \code{lid} $0.12\to0.027\to0.027$. The pointwise
 rheology resolves the interface at the quadrature points and the
@@ -1802,23 +2180,10 @@ $C=1,10^2,10^4,10^6,10^8$. Every scheme runs on $\Delta t=1,\dots,1/128$
 and the adaptive one at $\text{rtol}=10^{-1}$--$10^{-4}$; order 2,
 $n_z=10$, Heaviside load. Alongside, the \code{gradient} column has
 $\tau$ varying geometrically over $C$ with depth. This is 488 runs in
-about two hours on ten cores.
-
-\paragraph{The reference at large contrasts.}
-At $C\ge10^4$ the relaxation rates span up to 16 decades, and AAA can no
-longer resolve the slab's transfer function from its samples: fit errors
-of $10^{-8}$--$10^{-2}$, spurious complex poles, positive poles and an
-overflowing modal sum at $C=10^8$. The slab reference therefore checks
-itself. When the modal form fails its checks (fit error above $10^{-9}$,
-a positive pole, or disagreement with Talbot above $10^{-7}$) and the load
-is a Heaviside, it takes the history from fixed-Talbot inversion, which
-evaluates the transfer function exactly at moderate complex $s$ and never
-needs the extreme rates resolved. Other histories are flagged
-unreliable. The two agree where both work: at $C=10^4$, the modal and the
-Talbot $W(8)$ differ by $10^{-6}$. The first sweep had scored the FE
-against the broken modal sums. With the corrected references every
-$C\ge10^4$ slab settles at the $n_z=10$ spatial error ($4.5\times10^{-4}$),
-like $C=1$ ($2.9\times10^{-4}$).
+about two hours on ten cores. At $C\ge10^4$ the slab references are the
+Talbot histories (\S\ref{sec:box}); with them every $C\ge10^4$ slab
+settles at the $n_z=10$ spatial error ($4.5\times10^{-4}$), like $C=1$
+($2.9\times10^{-4}$).
 
 \paragraph{Results (Figures~\ref{fig:box-contrast-col}, \ref{fig:box-contrast-slab}).}
 \begin{itemize}[leftmargin=*]
@@ -1833,15 +2198,13 @@ like $C=1$ ($2.9\times10^{-4}$).
 \item \emph{The cost moves into the linear solver.} The effective
   modulus $C_\infty+\sum_k\beta_kC_k$ has $\beta_k\to\tau_k/\Delta t$ in
   the weak layer, so its shear stiffness there collapses and the elastic
-  operator becomes badly conditioned. CG iterations per solve rise from
-  about 55 at $C=1$ to 150--225 (column) and 230--340 (slab) at
-  $C\ge10^4$. They fall as $\Delta t$ shrinks, because the effective
-  modulus approaches the unrelaxed one. On the graded column, with $\tau$
-  varying smoothly over $C$, they reach 500--2500 at $C\ge10^6$. ETD1
-  and RK4 solve with the unrelaxed operator and stay at about 50--65 at
-  every contrast. The preconditioner (BoomerAMG on the effective
-  operator) is the place to act, e.g.\ by elasticity-aware AMG options
-  or by deflating the near-null space of the relaxed region.
+  operator becomes badly conditioned. CG iterations per solve (BoomerAMG
+  on the effective operator) rise from about 55 at $C=1$ to 150--225
+  (column) and 230--340 (slab) at $C\ge10^4$. They fall as $\Delta t$
+  shrinks, because the effective modulus approaches the unrelaxed one. On
+  the graded column, with $\tau$ varying smoothly over $C$, they reach
+  500--2500 at $C\ge10^6$. ETD1 and RK4 solve with the unrelaxed operator
+  and stay at about 50--65 at every contrast.
 \item \emph{RK4} is bound by $\Delta t\lesssim2.8/C$ and is not run beyond
   $C=100$.
 \item \emph{ETD1 does not converge at large contrast on the slab.} Its
@@ -1855,10 +2218,10 @@ like $C=1$ ($2.9\times10^{-4}$).
   not carry, and only goes away once $\Delta t\lesssim\tau_{\min}$.
 \item \emph{The adaptive trapezoid at $C=10^8$} (column) takes 35000
   solves to reach rtol $10^{-1}$. Its error estimate follows the
-  $\tau=10^{-8}$ branch through its initial transient, which the fixed-step
-  L-stable schemes simply step over with no loss of accuracy. With
-  extreme $\tau_{\min}$, adaptivity needs a lower bound on the step, or
-  an estimate that weights branches by their effect on the observables.
+  $\tau=10^{-8}$ branch through its initial transient, which the
+  fixed-step L-stable schemes step over with no loss of accuracy. (The
+  benchmark sets no lower step bound; the solver has one,
+  \code{SetStepBounds}.)
 \item \emph{$C=100$ is the spatially hardest slab.} Every scheme stalls
   at $2.8\times10^{-2}$ at $n_z=10$. Refinement gives $2.3\times10^{-3}$
   at $n_z=20$ and $1.8\times10^{-4}$ at $n_z=40$ (order $\approx3.6$), so
@@ -1879,9 +2242,10 @@ iterations per solve (bottom) against elastic solves.}
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{box_contrast_n1.png}
-\caption{The contrast ladder, slab ($n=1$), against the corrected
-references: every scheme but ETD1 reaches the spatial floor of
-$n_z=10$; at $C=100$ that floor is high (resolution, see text).}
+\caption{The contrast ladder, slab ($n=1$), against the references
+(Talbot histories at $C\ge10^4$): every scheme but ETD1 reaches the
+spatial floor of $n_z=10$; at $C=100$ that floor is high (resolution, see
+text).}
 \label{fig:box-contrast-slab}
 \end{figure}
 
@@ -1931,7 +2295,15 @@ time varying sideways,
 from $1$ on one side to $C$ on the other across the polar axis $x_a$
 ($z$ in 3-D, $x$ in 2-D, so that the order-0 or cosine loads stay
 symmetric). The variation is smooth, so there is no interface for the
-mesh to follow. Contrasts $C=1,10^2,10^4$ are used.
+mesh to follow. Contrasts $C=1,10^2,10^4$ are used. \code{lateral\_weak}
+has $\tau$ from $1/C$ to $1$ instead, in a standard-linear-solid mantle
+($\mu_\infty=0.1$, one branch $0.9$). Its mantle cannot be a Maxwell body:
+a free, non-gravitating body with an elastic core inside a fully relaxing
+shell has a zero-stiffness mode, the motion of the core relative to the
+lid, which the whole-body rigid projection does not remove and which the
+odd lateral variation forces through degree 1, so the response grows
+without bound. This is a hazard of non-gravitating free-body tests with
+relaxing shells around elastic cores, not of the integrators.
 
 \paragraph{The exact reference.}
 For $u=U(r)Y\hat x+V(r)\nabla_1Y$ in a layer of constant moduli, with
@@ -1981,9 +2353,11 @@ with $h=0.25,0.18$, order 2. All runs use ExpTrap at $\Delta t=1/40$ and
 the Heaviside load, 16 outputs to $t=8$. That is 64 runs in about 15
 minutes; the 3-D runs take 2--6 minutes each on 4 ranks, and finer balls
 belong to the server profile. Every reference passed its checks (AAA
-fit $\sim10^{-14}$, Talbot against modal $\sim10^{-11}$).
+fit $\sim10^{-14}$, Talbot against modal $\sim10^{-11}$). Per solve, a disc
+at $h=0.1$, order 2, on 2 ranks costs about 0.12\,s, a ball at $h=0.25$ on
+4 ranks about 0.55\,s.
 
-\paragraph{Results (Figure~\ref{fig:sphere-radial}).}
+\paragraph{Results (Figures~\ref{fig:sphere-radial}, \ref{fig:sphere-radial-3d}).}
 \begin{itemize}[leftmargin=*]
 \item \emph{Rates on curved meshes.} Order 2 converges at about fourth
   order in the surface coefficients and order 1 at second, as on the
@@ -2017,6 +2391,13 @@ against the exact histories, degrees 2 and 4, orders 1 (dotted) and 2
 \label{fig:sphere-radial}
 \end{figure}
 
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\textwidth]{sphere_radial_3d.png}
+\caption{Balls: history error of $U_2$, $V_2$ against $h$, order 2.}
+\label{fig:sphere-radial-3d}
+\end{figure}
+
 \subsection{Sphere: the integrators with lateral viscosity variations}
 \label{sec:sphere-lateral}
 
@@ -2035,18 +2416,19 @@ the adaptive trapezoid at rtol $10^{-2}$--$10^{-4}$. Two models are used:
 The reference for each case is SDIRK23 at $\Delta t=1/256$ on the same
 mesh. ExpTrap at the same step measures that reference's error:
 $5\times10^{-8}$--$2.5\times10^{-7}$ (Heaviside, load\_unload) and
-$5$--$7\times10^{-6}$ (periodic). Errors are taken over all degrees
-together, relative to the largest coefficient of the family ($U$ or
-$V$). A per-degree scale would divide the numerical leakage into the
+$5$--$7\times10^{-6}$ (periodic) for \code{lateral}; $6\times10^{-5}$--$10^{-4}$
+for \code{lateral\_weak}, which sets its floor. Errors are taken over all
+degrees together, relative to the largest coefficient of the family ($U$
+or $V$). A per-degree scale would divide the numerical leakage into the
 uncoupled degrees by itself.
 
 \paragraph{The coupling.}
 A laterally varying viscosity couples the degrees. The largest
 coefficient of a degree other than the load's, relative to the load's
 degree, is $3\times10^{-3}$ at $C=1$ (the mesh's own asymmetry), and
-$0.09$--$0.34$ at $C=10^2$ and $10^4$. The relaxation genuinely
-redistributes the response over degrees, which no radial benchmark can
-test.
+$0.09$--$0.34$ at $C=10^2$ and $10^4$ (\code{lateral\_weak}:
+$0.21$--$0.32$). The relaxation genuinely redistributes the response over
+degrees, which no radial benchmark can test.
 
 \paragraph{Results: a slow region (Figure~\ref{fig:sphere-lateral}).}
 Every scheme keeps its order and its cost whatever $C$, because
@@ -2063,24 +2445,11 @@ CG needs 90--125 iterations per solve on these curved discs whatever the
 scheme.
 
 \paragraph{Results: a weak region (Figure~\ref{fig:sphere-lateral-weak}).}
-\code{lateral\_weak} has $\tau$ from $1/C$ to $1$, so $\tau_{\min}=1/C$
-and the problem is stiff. Its mantle is a standard linear solid
-($\mu_\infty=0.1$, one branch $0.9$). The first version had a Maxwell
-mantle, and its response diverged at $C=10^4$: every degree grew by a
-factor of about 30 between $t=4$ and $8$, degree 1 reached about 300
-against an elastic response of $0.4$, and the step reference disagreed
-with itself by 99\%. With a mantle that relaxes completely, the elastic
-core of this free, non-gravitating body is held by nothing. Its motion
-relative to the lid is a zero-stiffness mode that the whole-body rigid
-projection does not remove, and the odd lateral variation forces it
-(through degree 1). With $\mu_\infty=0.1$ the response is bounded and
-SDIRK23 and ExpTrap agree to $6\times10^{-5}$ at $\Delta t=1/64$. This
-is a hazard of non-gravitating free-body tests with relaxing shells
-around elastic cores, not of the integrators. The step reference is now
-good to $6\times10^{-5}$--$10^{-4}$, which sets the floor. The coupling
-into other degrees is $0.21$--$0.32$. The adaptive trapezoid is not run
-here: its estimate follows the $\tau=1/C$ transient, as on the box
-column, and its runs took over an hour each on a disc.
+\code{lateral\_weak} has $\tau_{\min}=1/C$, so the problem is stiff.
+SDIRK23 and ExpTrap agree to $6\times10^{-5}$ at $\Delta t=1/64$. The
+adaptive trapezoid is not run here: its estimate follows the $\tau=1/C$
+transient, as on the box column, which makes a run on a disc last over an
+hour.
 \begin{itemize}[leftmargin=*]
 \item ExpTrap and SDIRK23 reach $10^{-3}$ in 129--529 solves at both
   contrasts, Heaviside and periodic alike. Their errors stay near the
@@ -2125,16 +2494,15 @@ worth using, and where. Cost is counted in \emph{elastic solves}, the unit
 that transfers to the 3-D self-gravitating problems, where one solve is
 one quasi-static system. \code{survey.py} drives
 \code{examples/viscoelastic\_schemes} on a clamped beam
-(\code{data/beam-quad.mesh}, order 2, 330 unknowns) with a Maxwell body
+(\code{data/beam-quad.mesh}, order 2) with a Maxwell body
 under the pull $p(t)=p_0[1+\tfrac12\sin(2\pi t/T_p+\varphi)]$. For each
 scheme it finds the coarsest step (halving from one step per $\tau$), or
 the loosest adaptive tolerance, that reaches a target relative error of
 the displacement. The error is measured over the \emph{history}, the
 worst of $t_{\text{final}}=4$ and four interior checkpoints, against RK4
-at a very small step. The schemes are ETD1 (exponential Euler), ExpTrap
-(exponential trapezoid), BE (backward Euler), SDIRK23 (L-stable, two
-solves per step), RK4 (explicit, stable for $\Delta t\lesssim2.8\tau_{\min}$)
-and the adaptive exponential trapezoid. Two axes are swept:
+at a very small step. The schemes are ETD1, ExpTrap, BE, SDIRK23, RK4
+(stable for $\Delta t\lesssim2.8\tau_{\min}$) and the adaptive exponential
+trapezoid. Two axes are swept:
 \begin{itemize}[leftmargin=*]
 \item \emph{stiffness}: a second Maxwell branch with $\tau/r$,
   $r=\tau_{\max}/\tau_{\min}\in\{1,10,100,1000\}$, standing in for
@@ -2149,13 +2517,11 @@ At a target of $10^{-3}$: RK4 is cheapest when nothing is stiff (17
 solves), but its cost follows the stability limit (1025 at $r=100$, 8193
 at $r=1000$). SDIRK23 stays at 33--65 solves across the whole stiffness
 axis, and the adaptive trapezoid at 94--157. ExpTrap grows from 30 to 510.
-BE needs 250--510 and ETD1 2000--8000. Along the regime axis, fast loads
-make every scheme pay to resolve the forcing, and slow loads leave
-relaxation in control, where the A-stable schemes win (ExpTrap 2 solves
-at $T_p=42\tau$). ETD1's flat 2046 is genuine (reached at
-$\Delta t=1/512$): it is first order. Every point reached its target, so
-the stiffness figure's caption about arrows for unreached targets
-described nothing; it now appears only when there are arrows.
+BE needs 250--510 and ETD1 2000--8000 (its flat 2046, reached at
+$\Delta t=1/512$, is genuine first-order cost). Along the regime axis,
+fast loads make every scheme pay to resolve the forcing, and slow loads
+leave relaxation in control, where the A-stable schemes win (ExpTrap 2
+solves at $T_p=42\tau$). Every point reached its target.
 
 \begin{figure}[H]
 \centering
@@ -2173,11 +2539,14 @@ relaxation-time contrast (left) and against the load period (right).}
 The reference gives the \emph{history} $f(t)$ of a Love number (any of
 $h'_l,l'_l,k'_l$, and the tidal $h_l,l_l,k_l$) of a layered body whose
 solid layers are Maxwell bodies (deviatoric relaxation, elastic in bulk,
-relaxation time $\tau_j=\eta_j/\mu_j$), when the load is switched on at
-$t=0$ and held: $f(0^+)$ is the elastic Love number, and $f(t)$ then
-relaxes. pyslfp solves only \emph{elastic} problems, and only with real
-moduli. The method below turns the viscoelastic history into a set of
-elastic solves of modified models, then reassembles the history from them.
+relaxation time $\tau_j=\eta_j/\mu_j$), or elastic, when the load is
+switched on at $t=0$ and held: $f(0^+)$ is the elastic Love number, and
+$f(t)$ then relaxes. pyslfp solves only \emph{elastic} problems, and only
+with real moduli. The method below turns the viscoelastic history into a
+set of elastic solves of modified models, then reassembles the history
+from them. \code{laplace\_reference.py} supports the uniform-layer models
+\code{homogeneous}, \code{homogeneous\_lithosphere}, \code{two\_solid},
+\code{fluid\_core} and \code{inner\_core}.
 
 \paragraph{The correspondence principle.}
 Write $F(s)=\int_0^\infty e^{-st}f(t)\,\mathrm{d}t$ for the Laplace
@@ -2214,8 +2583,8 @@ $F$. The general inversion formula (the Bromwich integral) and its
 accurate numerical versions (Talbot's contour, used in the box
 sub-family, \S\ref{sec:box}) need $F$ at complex $s$, i.e.\ elastic
 solves with complex moduli, which pyslfp does not provide. The
-Gaver--Stehfest method needs $F$ on the positive real axis only, which is
-why it is used.
+Gaver--Stehfest method \cite{Gaver1966,Stehfest1970} needs $F$ on the
+positive real axis only, which is why it is used.
 
 \paragraph{How the inversion works.}
 Fix $t$ and put $a=\ln 2/t$. Gaver's idea is to average $f$ against a
@@ -2252,7 +2621,7 @@ formula, with $n$ even the total number of transform values, is
    \frac{j^{n/2}(2j)!}{(n/2-j)!\,j!\,(j-1)!\,(k-j)!\,(2j-k)!}.
 \end{equation}
 The weights $V_k$ are fixed numbers once $n$ is chosen. The reference
-uses $n=12$: twelve elastic solves per output time, at
+uses $n=12$ (\code{--stehfest}): twelve elastic solves per output time, at
 $s=\ln2/t,\,2\ln2/t,\dots,12\ln2/t$, from which every Love number at
 every degree is read.
 
@@ -2272,7 +2641,7 @@ Two errors compete.
 \end{itemize}
 Both were measured on the box slabs against exact histories
 (\S\ref{sec:box-stehfest}): with exact transform values, $n=12$ is
-accurate to $10^{-6}$--$1.6\times10^{-4}$, and $n=16$ is no better. With
+accurate to $10^{-7}$--$1.6\times10^{-4}$, and $n=16$ is no better. With
 random relative noise of $10^{-10}$ in the transform, $n=12$ degrades a
 small horizontal amplitude to $3\times10^{-4}$, and noise of $10^{-8}$
 degrades it to $3\%$. The method also fails outright when $f$ grows
@@ -2283,37 +2652,45 @@ the next paragraph.
 A compressible layer of uniform density has $N^2<0$. While its shear holds
 it is stable, but once the shear relaxes, buoyancy is unopposed. The
 transform then has poles on the positive real axis, the growth rates
-$s_p$ of Rayleigh--Taylor-like modes. Stehfest's samples
-$s_k=k\ln2/t\ge\ln 2/t$ are honest Laplace integrals of the (growing)
-history only while $\ln2/t>s_p$. The script scans the real axis
-(log grid, then a dense grid where the horizon is decided). A pole is a
-bracket where $h'$ and $l'$ both change sign through large values. It
-marks every time beyond $t_h=\ln2/\max s_p$ invalid. Measured ($\tau=1$):
-\code{homogeneous} $s_p=0.0199$ ($t_h=35\tau$); \code{homogeneous\_lithosphere}
-$0.0051$ ($136\tau$); \code{fluid\_core} $0.0085$ ($82\tau$). The default
-output times, $0.011\cdot2^{5k/6}\tau$ for $k=0,\dots,12$ (to $11.3\tau$),
-lie inside all three. The finite-element run carries the same growing
-modes.
+$s_p$ of Rayleigh--Taylor-like modes, accumulating towards $s=0$.
+Stehfest's samples $s_k=k\ln2/t\ge\ln 2/t$ are honest Laplace integrals of
+the (growing) history only while $\ln2/t>s_p$. The script scans the real
+axis (a log grid, \code{--scan}, \code{--scan-density}, then a dense grid
+where the horizon is decided, \code{--fine-scan}: close pairs of poles hide
+from a coarse grid). A pole is a bracket where $h'$ and $l'$ both change
+sign through large values. Every time beyond $t_h=\ln2/\max s_p$ is marked
+invalid. Measured ($\tau=1$): \code{homogeneous} $s_p=0.0199$ (degree 1,
+$t_h=35\tau$); \code{homogeneous\_lithosphere} $0.0051$ (degree 2,
+$136\tau$); \code{fluid\_core} $0.0085$ (degree 4, $82\tau$). The default
+output times, $0.011\cdot2^{5k/6}\tau_{\min}$ for $k=0,\dots,12$ (to
+$11.3\tau$), lie inside all three; their ratio is irrational in the step
+grid of any fixed-step run. The finite-element run carries the same
+growing modes, and nothing in the comparison hides them.
 
 \paragraph{The relaxed limit is not $t\to\infty$.}
 With no elastic layer the body relaxes to a fluid ball, and pyslfp
-(rightly) refuses the relaxed solve. With an elastic layer, the
-``relaxed'' solve (Maxwell layers at $\mu=0$) is pyslfp's \emph{static,
-neutral} fluid. A non-neutral compressible Maxwell layer relaxes towards
-its $\kappa$-response instead, and here towards no equilibrium at all.
-The relaxed value is therefore a label, not a target: on
-\code{homogeneous\_lithosphere}, $h'_2$ crosses it at about $7\tau$ and
-keeps going (Figure~\ref{fig:series}).
+(rightly) refuses the relaxed solve; the reference records it as
+unavailable. With an elastic layer, the ``relaxed'' solve (Maxwell layers
+at $\mu=0$) is pyslfp's \emph{static, neutral} fluid. A non-neutral
+compressible Maxwell layer relaxes towards its $\kappa$-response instead
+(\code{doc/gauged\_fluid.md}, ``Equivalence and the Adams--Williamson
+condition''), and here towards no equilibrium at all. The relaxed value
+is therefore a label, not a target: on \code{homogeneous\_lithosphere} the
+degree-2 and degree-3 $h'$ histories overshoot it ($h'_2$ crosses it at
+about $7\tau$ and is $1.18$ of the way there at $11.3\tau$), and degree 1
+drifts away from it (Figure~\ref{fig:series}).
 
 \paragraph{Sanity checks.}
-These are stored with the reference. The inversion at $t_0=10^{-6}\tau$
-against the elastic numbers agrees to $10^{-6}$--$4\times10^{-6}$ (this is
-the inversion's accuracy). Every $h',k',h,k$ history is monotone over the
-valid times, with wiggles below ten times that accuracy forgiven. Where a
-relaxed value exists, the script reports the fraction of the way to it,
-as information only.
+These are stored with the reference (\code{"sanity"}). The inversion at
+$t_0=10^{-6}\tau_{\min}$ against the elastic numbers agrees to at most
+$6\times10^{-6}$ for every model and number ($10^{-7}$--$6\times10^{-6}$):
+this is the inversion's accuracy. Every $h',k',h,k$ history is monotone
+over the valid times, with wiggles below ten times that accuracy forgiven.
+Where a relaxed value exists, the script reports the fraction of the way
+to it, as information only.
 
 \subsection{The finite-element histories}
+\label{sec:fe-histories}
 
 \paragraph{The driver.}
 \code{viscoelastic\_love} loads a case exactly as \code{love\_benchmark}
@@ -2328,11 +2705,13 @@ switched on together, so one evolution serves every degree, and
   \sigma = \kappa\,\mathrm{tr}\,\varepsilon\,I + 2\mu(d-m),\qquad
   \dot m = (d-m)/\tau,\quad d=\mathrm{dev}\,\varepsilon,\ m(0)=0 .
 \end{equation}
-The Love numbers are read at each output time by
-\eqref{eq:loadlove}. Fixed-step schemes take, between consecutive output
-times, the same number of equal steps: at least \code{-steps} (4) and
-more if needed to keep $\Delta t\le0.25\tau_{\min}$. Output times are hit
-exactly and are not tied to a step grid. SDIRK23 is the default.
+The Love numbers are read at each output time by \eqref{eq:loadlove}.
+With a Dahlen fluid degree 0 is not comparable (\S\ref{sec:lovedef}), and
+the default $l_{\min}$ is 2. Fixed-step schemes take, between consecutive
+output times, the same number of equal steps: at least \code{-steps} (4)
+and more if needed to keep $\Delta t\le0.25\tau_{\min}$
+(\code{-dt-max}). Output times are hit exactly and are not tied to a step
+grid. SDIRK23 is the default scheme.
 
 \paragraph{The comparison metrics (\code{compare.py}).}
 For each number $f$ and degree, over the valid output times together
@@ -2345,30 +2724,48 @@ with $t=0^+$:
 \end{align}
 The history metric takes the worst time, not the final time alone, so
 that a step that is right at one time and wrong at others cannot hide.
-The \code{elastic} metric isolates the spatial error, and \code{relax}
-isolates the error of the relaxation itself, which is what the stepping
-answers for.
+The output times are geometric with an irrational ratio, chosen
+independently of the step cap, and each interval is subdivided afresh, so
+they sample the relaxation at unrelated phases of the stepping and no
+aliased trajectory can score well stroboscopically. The \code{elastic}
+metric isolates the spatial error, and \code{relax} isolates the error of
+the relaxation itself, which is what the stepping answers for.
 
 \paragraph{Results.}
-Campaign (\code{fluid\_core}, $h=0.3$, order 2, $\tau_{\text{mantle}}=1$,
-degrees 2--4, SDIRK23, 79 steps, 158 solves, 93\,s): the history errors
-are $5\times10^{-3}$--$1.1\times10^{-2}$ in $h'$, $6\times10^{-3}$--$1.3\times10^{-2}$
-in $k'$, and $1.5\times10^{-2}$, $6.3\times10^{-2}$, $0.46$ in $l'_{2,3,4}$.
-The README records the stepping as not the limit: halving the step moves
-$h',k'$ by about $2\times10^{-5}$. The errors are spatial and fall with
-$h$ (\code{homogeneous} $h'_2$: $2.2\times10^{-2}\to1.0\times10^{-2}$ from
-$h=0.3$ to $0.2$). $l'_4$ is the worst resolved. It is small, changes
-sign, and its error grows late, where the buoyancy modes start to matter.
-The new dense runs reproduce these numbers ($h'_2$ history
-$1.09\times10^{-2}$ against $1.06\times10^{-2}$). The lithosphere model,
-with its elastic lid, does better in $h'$ and $k'$ ($3\times10^{-3}$--$1.5\times10^{-2}$)
-and in $l'_4$ (0.10).
+Order 2, eight ranks, $\tau=1$ (mantle or interior), degrees 2--4, SDIRK23
+at the defaults (79 steps, 158 stepping solves); history errors against
+the stored references (\code{viscoelastic/love/references/}):
+\begin{center}
+\small
+\begin{tabular}{@{}P{3.6cm}cccr@{}}
+\toprule
+case & $h'$ & $k'$ & $l'_{2}$ / $l'_3$ / $l'_4$ & wall \\
+\midrule
+\code{fluid\_core}, $h=0.3$ & $0.5$--$1.1\times10^{-2}$ & $0.6$--$1.3\times10^{-2}$ & $1.5\times10^{-2}$ / $6.3\times10^{-2}$ / $0.46$ & 90\,s \\
+\code{homogeneous}, $h=0.3$ & $0.6$--$2.3\times10^{-2}$ & $0.7$--$2.9\times10^{-2}$ & $0.19$ / $0.40$ / $1.04$ & 38\,s \\
+\code{homogeneous}, $h=0.2$ & $0.2$--$1.0\times10^{-2}$ & $0.3$--$1.2\times10^{-2}$ & $0.08$ / $0.13$ / $0.30$ & 85\,s \\
+\code{homogeneous\_\allowbreak lithosphere} ($\tau=1,\infty$), $h=0.3$ & $0.3$--$1.0\times10^{-2}$ & $0.4$--$1.6\times10^{-2}$ & $1.8\times10^{-2}$ / $5.1\times10^{-2}$ / $0.10$ & 78\,s \\
+\bottomrule
+\end{tabular}
+\end{center}
+The time stepping is not what limits these: on \code{fluid\_core}, halving
+the step moves $h'$, $k'$ by about $2\times10^{-5}$; the adaptive trapezoid
+at rtol $10^{-3}$ agrees to $10^{-5}$ but costs 512 solves and 512
+assemblies (310\,s: every accepted step is a new effective modulus); and
+ExpTrap at the same step agrees to about $1.4\times10^{-4}$ for 79 solves.
+The errors are spatial and fall with $h$ (\code{homogeneous} $h'_2$:
+$2.2\times10^{-2}\to1.0\times10^{-2}$ from $h=0.3$ to $0.2$), the
+relaxation part more slowly than the elastic part. $l'_4$ is the worst
+resolved: it is small, changes sign, and its error grows late, where the
+buoyancy modes start to matter. A Stehfest order of 16 moves the reference
+by less than $5\times10^{-4}$ there. The local campaign stage
+(\code{--stages viscoelastic plot}) reproduces the \code{fluid\_core} row.
 
 \begin{figure}[H]
 \centering
 \includegraphics[width=0.75\textwidth]{ve_fc_history.png}
-\caption{Campaign histories on a logarithmic time axis (\code{fluid\_core}):
-reference (line) and FE (markers) at the 13 default times.}
+\caption{Histories on a logarithmic time axis (\code{fluid\_core}, local
+campaign): reference (line) and FE (markers) at the 13 default times.}
 \end{figure}
 
 \begin{figure}[H]
@@ -2380,19 +2777,33 @@ single-time check would mislead: it scores $2\times10^{-4}$ there against
 a history error of $10^{-2}$.}
 \end{figure}
 
-\paragraph{Time series (new, Figure~\ref{fig:series}).}
-For exposition, the histories are rerun at 48 equally spaced times
-($0.25$--$12\tau$) on \code{fluid\_core} (Maxwell mantle) and on
-\code{homogeneous\_lithosphere} (Maxwell interior under an elastic
-$\approx670$\,km lid), with the reference at the same times
-(pole scan off; both horizons are beyond $80\tau$). \code{compare.py}
-draws them on a linear time axis when a run has 20 or more output times.
-The figures show the shape of the relaxation that the logarithmic plots
-hide: the immediate elastic jump, the roughly exponential approach on the
-Maxwell scale, the faster relaxation of higher degrees, and on the
-lithosphere model the overshoot of the static-fluid level, which is the
-instability caveat of \S\ref{sec:laplace} made visible. Cost: 192 steps,
-384 solves, about 400\,s each.
+\paragraph{Time series (Figure~\ref{fig:series}).}
+The histories at 48 equally spaced times ($0.25$--$12\tau$), on
+\code{fluid\_core} (Maxwell mantle) and on \code{homogeneous\_lithosphere}
+(Maxwell interior under an elastic $\approx670$\,km lid), $h=0.3$, order
+2, degrees 2--4, with the reference at the same times and the pole scan
+off (both horizons are beyond $80\tau$). They reproduce the campaign
+numbers ($h'_2$ history $1.09\times10^{-2}$ against $1.06\times10^{-2}$)
+at a cost of 192 steps and 384 solves, about 400\,s each. From
+\code{<build>/benchmarks/viscoelastic/love}, with \code{T} the 48 times:
+\begin{verbatim}
+./laplace_reference fluid_core --tau 1 --times T --scan-density 0 \
+    --fine-scan 0 0 0 --out laplace_fluid_core_series.json
+mpiexec -np 8 ../../bin/viscoelastic_love -c <fluid_core h0.3 case> \
+    -o 2 -lmax 4 -tau 1 -times T(comma-separated) \
+    -out fe_fluid_core_series.json
+./compare fe_fluid_core_series.json \
+    --reference laplace_fluid_core_series.json
+\end{verbatim}
+and the same for \code{homogeneous\_lithosphere} with \code{--tau 1 inf}
+(\code{-tau 1,inf}) on its own case (\code{make\_case
+homogeneous\_lithosphere --h 0.3}). \code{compare.py} draws a run with 20
+or more output times on a linear time axis as well
+(\code{<stem>\_series.png}). The figures show the shape of the relaxation
+that the logarithmic plots hide: the immediate elastic jump, the roughly
+exponential approach on the Maxwell scale, the faster relaxation of higher
+degrees, and on the lithosphere model the overshoot of the static-fluid
+level, the instability caveat of \S\ref{sec:laplace} made visible.
 
 \begin{figure}[H]
 \centering
@@ -2409,279 +2820,174 @@ $\tau=1$).}
 \begin{figure}[H]
 \centering
 \includegraphics[width=\textwidth]{talk_viscoelastic.png}
-\caption{Talk figure: $h'_l(t)$ for both models.}
+\caption{$h'_l(t)$ for both models, from the same runs.}
 \end{figure}
 
 %=============================================================================
-\section{Figure review}
-\label{sec:figures}
+\section{Measurements from the examples and the unit tests}
+\label{sec:other}
 %=============================================================================
 
-\subsection{Changes made to the plotting scripts}
+These measurements were made outside the benchmark families, on the small
+problems of the examples and the unit tests, and are recorded here so that
+the method notes can state their conclusions without the numbers.
 
-\begin{description}[leftmargin=1.5em,style=nextline]
-\item[\code{love\_numbers/plot.py}]
-  \begin{itemize}
-  \item \emph{Bug}: field runs of different formulations shared one key
-    (\code{h0.3\_o2}). The gauged field map overwrote the Dahlen one, the
-    spectrum legend showed two identical labels, and
-    \code{summary.md} attributed the gauged run's field errors (0.40) to
-    the Dahlen row. Keys now carry the method. Maps are written per
-    method, and titles name it.
-  \item \emph{Bug}: the $h$-ladder grouped runs by order alone, so on a
-    single-$h$ cross-method tree it fitted ``rates'' across formulations
-    at one $h$ (vertical lines labelled $p=2.0$ etc.). Ladders are now
-    per order and variant. A tree without a ladder draws no convergence
-    figure and removes a stale one.
-  \item \emph{Bug}: the convergence plot asked for the largest degree of
-    any run, which only some rungs reached, so the second degree was
-    silently dropped. It now uses the degrees every rung solved.
-  \item \emph{Clarity}: colours were cycled from an 8-colour list, so
-    with ten series two colours repeated, and colours changed between
-    figures. Each formulation and CMB treatment now has one fixed colour,
-    shared with \code{talk\_figures.py}. Order is shown by marker, the map
-    by hollow markers, the Schur solver dotted, combined runs dashed, and
-    the mesh size by lightness. \code{nomass}/\code{uniform} are drawn thin
-    so that the full treatment shows through where they coincide.
-  \item \emph{Clarity}: legends with up to ten entries sat on the data.
-    They are now outside the panels. Element-size axes had no tick labels
-    (a ladder spans less than a decade); they are now labelled at the
-    sizes run, with near-coincident labels thinned. Fitted rates are
-    printed beside the lines with a guide of slope $\text{order}+1$. The
-    potential at degree one (zero by the choice of frame) is dropped
-    from the field spectrum. Iterations are on a logarithmic axis, so the
-    Dahlen and gauged costs are not flattened against the slipping ones.
-  \end{itemize}
-\item[\code{perturbation/plot.py}] Annotations overprinted each other
-  ($h'_0$ and $l'_2$). Markers now encode the Love number and colours
-  the degree. A third panel shows the relative discrepancy of each
-  derivative, which is the actual result and was invisible on the
-  identity plot for the small derivatives. The unmapped base run is
-  labelled ``eps = 0 (unmapped)'' instead of ``eps = +0''.
-\item[\code{viscoelastic/love/compare.py}] New \code{\_series.png}: linear-time
-  histories with the elastic value at $t=0$ and the relaxed level. Layer
-  labels read ``mantle $\tau=1$'' and ``lithosphere elastic'' instead of
-  ``mantle 1''.
-\item[\code{viscoelastic/stepping/survey.py}] The ``arrows'' caption is drawn only
-  when an arrow is drawn, the stability limit quoted matches the code
-  ($2.8\tau_{\min}$), and the regime caption wraps.
-\item[\code{talk\_figures.py}] \code{aspherical.png} is rebuilt as error
-  against amplitude from the genuine sweep; it had been labelling an
-  $\eps=0.05$ run as $0.02$ and its halved-element run as $0.02$.
-  \code{derivative.png} shows both methods from the 1 Oct runs (it had
-  read the pre-fix 30 Sep slip\_broken runs), uses a legend instead of
-  overprinting labels, and labels the axis as the 1-D reference, not
-  ``perturbation theory''. New: \code{ladder.png}, \code{models.png},
-  \code{viscoelastic.png}, \code{fieldmap.png}.
-\end{description}
+\paragraph{Schur CG against block MINRES (mixed class).} On a 2-D test
+problem of the mixed self-gravitating class at order 2, the
+Schur-complement CG solver, whose nested inner solves dominate, takes
+1.1\,s against 0.07\,s for block MINRES on the same system, roughly an
+order of magnitude.
 
-\subsection{Further suggestions (not done)}
+\paragraph{Gauge penalty: leakage of a near-null mode.} On the coarse
+2-D/3-D test meshes of the gauged tests, at $\eps=10^{-2}$ with three
+refinements, a uniform tidal gradient leaks about 3\,\% of a comparable
+physical response into the solid, growing like $k/\eps$ with $k$ the
+refinement count.
 
-\begin{itemize}[leftmargin=*]
-\item \code{field3d.png} (ParaView) is a faceted half-ball with an
-  unlabelled colour bar and much white space; \code{fieldmap.png}
-  carries the same message more legibly. A better 3-D render would
-  colour the whole sphere by $U$ with a diverging map and add the
-  displacement arrows.
-\item An accuracy--cost scatter (error against seconds per solve, one
-  point per method and mesh) would summarise the methods comparison in
-  one panel once a cross-method ladder exists.
-\item \code{identity.png} hard-codes the slip value. A slip\_broken
-  identity run in the campaign would let it read a log like the others.
-\item A figure of the CMB report on a stratified core across $h$ (the
-  deviation from full against the full treatment's own error) would show
-  when the approximation becomes the bottleneck, which is the question
-  the report asks.
-\end{itemize}
+\paragraph{Augmented Lagrangian contraction (slipping interface).} On the
+coarse 2-D test disc of the slip tests, the interleaved AL and gauge loop
+contracts the normal jump by about $10^2$ over the sweeps, to a floor set
+by the interleaved gauge source ($\sim6\times10^{-5}$ of the normal trace,
+independent of $\theta$), while the tangential jump remains $O(1)$.
+
+\paragraph{Pre-stress in loading on an ellipse
+(\code{examples/prestress\_loading}).} A homogeneous 2-D ellipse with
+semi-axes $a=1+e$, $b=1/a$, referential self-gravitating class, the
+mapped minimum-deviatoric equilibrium stress $\mathbf S_e$, $G=0.1$
+(pressure to shear-modulus ratio $p(0)/\mu=0.31$), order 2, serial. The
+loading response is computed with the full generated $\mathbf S_e$ and
+with its pressure part alone (the quasi-hydrostatic approximation of
+standard practice, which is not an equilibrium stress off sphericity), the
+bare elastic tensor held fixed:
+\begin{center}
+\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$e$ & deviatoric fraction of $\mathbf S_e$ & $|\delta\vu|/|\vu|$ & $|\delta\zeta|/|\zeta|$ \\
+\midrule
+0.005 & 0.0050 & $5.1\times10^{-4}$ & $3.7\times10^{-5}$ \\
+0.02 & 0.0198 & $2.1\times10^{-3}$ & $1.6\times10^{-4}$ \\
+0.05 & 0.0488 & $5.5\times10^{-3}$ & $4.9\times10^{-4}$ \\
+0.1 & 0.0954 & $1.26\times10^{-2}$ & $1.4\times10^{-3}$ \\
+0.2 & 0.182 & $3.39\times10^{-2}$ & $4.9\times10^{-3}$ \\
+0.3 & 0.258 & $7.06\times10^{-2}$ & $1.26\times10^{-2}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The displacement difference is about $0.1\,e$ at small $e$ and grows
+faster beyond; it scales like the product $e\cdot(p/\mu)$. It is
+negligible at Earth's non-hydrostatic figure and 1--7\,\% for
+$e=0.1$--$0.3$.
 
 %=============================================================================
-\section{Points for review}
-\label{sec:review}
+\begin{thebibliography}{99}
 %=============================================================================
 
-These are things that look wrong, inconsistent or unexplained. They are
-recorded, not fixed.
+\bibitem{AWahrZhong2013}
+G.~A, J.~Wahr \& S.~Zhong, 2013.
+Computations of the viscoelastic response of a 3-D compressible Earth to
+surface loading: an application to Glacial Isostatic Adjustment in
+Antarctica and Canada, \emph{Geophys.\ J.\ Int.}, 192, 557--572.
 
-\begin{enumerate}[label=R\arabic*,leftmargin=*]
-\item \label{r:gaugedfield} \textbf{Gauged field errors include the
-  fluid.} \code{field\_benchmark} measures $\|\vu-\vu_{\text{ref}}\|$ over
-  the whole displacement SubMesh, which for the gauged method includes
-  the fluid core. There the reference displacement is written as zero,
-  while the gauged displacement is a genuine (gauge-dependent) field.
-  The 0.40 error of the gauged \code{fluid\_core} run is this artefact.
-  The norm should be restricted to the solid attributes, or the fluid
-  excluded from the comparison.
-  \emph{Status 2 Oct:} fixed — \code{field\_benchmark} now takes the
-  $u$ error over the solid elements alone and writes the fluid's norm
-  separately (\code{u\_fluid\_norm}, a gauge diagnostic). Measured on
-  \code{fluid\_core} h\,0.3/o2: gauged $u$ (solid) $1.9\times10^{-2}$
-  (dahlen $1.3\times10^{-2}$), fluid gauge norm $0.046$ — the artefact
-  explanation is confirmed.
-\item \label{r:aspherical} \textbf{The stored amplitude comparison was
-  not one.} \code{talk\_data/aspherical\_eps0.02\_o2.json} records
-  $\eps=0.05$ and the stock mesh (built at the default
-  $\eps=0.05$). It is the same problem as the $\eps=0.05$ run, which is
-  why the two agreed to seven digits. The ``elements halved'' run is also
-  at $\eps=0.05$, not $0.02$. The README's conclusion holds on the
-  genuine sweep (\S\ref{sec:relabel}), but the README and the old talk
-  figure state it on the wrong evidence. The driver's default
-  \code{-eps 0.05} must match the mesh's $\eps$ by hand; nothing checks
-  this (the mesh manifest could carry it).
-  \emph{Status 2 Oct:} the mislabelled JSON is deleted;
-  \code{aspherical\_body.py} now records $\eps$, $\beta$ and the buffer
-  in the mesh manifest's \code{meta} block, and
-  \code{aspherical\_reference} adopts them (a contradicting flag
-  aborts). The driver also had, since commit \code{eac0b91}, a
-  geometric seatbelt (the pulled-back surface must land on the unit
-  sphere to $10^{-2}$) that would have refused a mismatched invocation
-  — though not a misnamed output file, which is what actually happened.
-\item \label{r:slipleak} \textbf{Lateral leakage in mapped slip\_broken.}
-  Mapped slip\_broken runs have \code{spurious} 0.6 at $l=1$ and
-  $6\times10^{-2}$ at $l\ge2$, against $3$--$8\times10^{-3}$ unmapped and
-  unchanged for the welded referential. This fits the slipping-interface
-  forms not being covariant (identity $1.2\times10^{-2}$), but the README
-  describes the mapped runs as reproducing the unmapped ones without
-  this caveat.
-  \emph{Status 2 Oct:} the README now carries the caveat, and the code
-  narrows the suspects: the $\varphi_e=\mathrm{id}$ mismatch-piece
-  limitation documented in \code{referential\_problem.hpp} belongs to
-  the \emph{single-valued} organisation, which refuses maps outright,
-  while the broken-$\zeta$ organisation that slip\_broken uses is
-  intended fully mapped — so some term of it is non-covariant in a way
-  its own documentation does not know.
-  \emph{Further, same day:} the identity driver now probes the sixteen
-  broken-$\zeta$ blocks and the stored constraint kernels. Every
-  $\zeta$--$\zeta$ block agrees to machine precision; every
-  $u$-involving block differs at $1$--$2.5\times10^{-4}$; the kernels
-  are exonerated ($B_n$ at $2\times10^{-16}$ — the Nanson
-  $\nu=\mathrm{adj}(F)^T n$ is invariant under face-fixing shears of
-  $F$ — and $P_b$, $K_{vz}$ at $10^{-7}$), and the base rows are
-  welded-certified, so by elimination the non-covariant content sits in
-  $B_\Sigma$/$G_\Sigma$ themselves: the $P_T F^{-1}$ slot and the
-  gravity $\mathbf{A}$-vector are not invariant under those shears,
-  which the interpolated $F$ carries on the interface (MFEM evaluates
-  $F$ from the adjacent volume element). The identity residual
-  \emph{anti-converges} ($u$ $1.2\times10^{-2}$ at $h=0.3$,
-  $4.5\times10^{-2}$ at $h=0.2$), a genuine defect rather than
-  interpolation noise. Two further probes of the exact-$F$ benchmark
-  leakage: (i) $G_\Sigma$ cannot be scaled out differentially — at
-  \code{-gs-scale 0.5} even the \emph{unmapped} degree-1 spurious blows
-  up to $0.46$ (and the mapped solve diverges), so $G_\Sigma$ sits
-  inside a razor-sharp degree-1 cancellation and the mapped leakage is
-  plausibly a small relative perturbation of it, hugely amplified;
-  (ii) the slip rigid null-pair residuals (now printed by
-  \code{love\_benchmark -diag}) survive the map essentially unchanged
-  (translations $2.4$ vs $2.6\times10^{-3}$, rotations doubled at
-  $\sim10^{-3}$), so the null-pair structure itself is not broken.
-  Settling the exact-$F$ mechanism needs either a $B_\Sigma$
-  counterpart of the scale hook, a difference-field map of the
-  mapped-vs-unmapped solutions, or a theory pass on the mapped
-  $B_\Sigma$/$G_\Sigma$ derivation (doc/slip\_interface.tex) — the
-  degree-1 cancellation identifies exactly which combination must be
-  preserved by the mapped assembly.
-\item \label{r:pertslip} \textbf{slip\_broken degree-2 derivatives.} The
-  README says the slip\_broken derivatives agree ``at the few-percent
-  level'' for degrees 3--4. The 1 Oct data give $h'_2$ 25\,\%, $k'_2$
-  39\,\%, $k'_3$ 11\,\%, against 6.5\,\%, 1.8\,\% and 0.9\,\% for
-  referential on the same mesh. The two methods share the shift map and
-  the reference, so the difference sits in the slipping forms under a
-  moving interface. Possibly the same non-covariance as
-  \ref{r:slipleak}. \emph{Status 2 Oct:} open; see \ref{r:slipleak}'s
-  status — the same scheduled diagnostic covers both.
-\item \label{r:cmbclaim} \textbf{``Loading-safe, $\le0.1\,\%$''.} The top-level
-  README states the CMB approximations are within 0.1\,\% for loading at
-  $l\ge2$. That holds for $h'$ (the table in \code{cmb\_conditions.md} is
-  $h'$ only). $l'_2$ and $k'_2$ deviate by about 0.3\,\%, and the talk
-  figure shows $k'_2$ at 0.29\,\%. Still below the mesh error, but the
-  sentence should say which number.
-  \emph{Status 2 Oct:} fixed — the README names $h'$ and the
-  $\sim0.3\,\%$ of $l'_2$, $k'_2$.
-\item \label{r:ladder} \textbf{The \code{fluid\_core} ladder is not
-  asymptotic.} Order 3 is flat from $h=0.3$ to $0.15$ and then drops by
-  10--100$\times$ at $0.12$ alone, and the geometry-order-3 ladder is
-  less accurate than geometry order 2 and does not drop. The angular cap
-  holds the CMB elements at $0.165$ for $h\ge0.165$, which explains some
-  of the flatness (half the ladder does not refine the CMB) but not the
-  drop. Candidates: a cancellation at $0.12$, a floor from the DtN
-  degree (16) or the reference, or the geometry. The fitted rates of
-  this ladder should not be quoted as convergence orders.
-  \emph{Status 2 Oct:} the cap arithmetic is confirmed in planetmodel
-  ($\min(h, 0.3r)$ with $r_{\text{cmb}}=0.549\to0.165$); an uncapped
-  ladder (\code{--angular 1.0}, every rung refining the CMB) now lives
-  in \code{runs\_campaign/ladder}. On it the order-3 flat-then-cliff is
-  gone: the degree-2 scaled error falls monotonically-ish
-  ($7.7\times10^{-3}\to2.5\times10^{-5}$ over $h=0.3\to0.12$, one
-  non-monotone rung at $0.15$), and the field errors fall throughout —
-  but the implied degree-2 rate ($\sim6$) is superconvergent, so the
-  Love-number columns still carry cancellation and fitted rates should
-  still not be quoted; the field-error rates are the quotable ones.
-\item \label{r:gaugedprofile} \textbf{Gauged $\phi_1$ inside the core.}
-  In \code{profiles.png} the gauged method's degree-1 potential leaves the
-  reference inside the fluid core ($r\lesssim0.5$) while matching at the
-  interfaces. It may be the degree-one frame correction (applied with the
-  background gravity of the profile layer) or the gauge, but it is
-  unexplained.
-  \emph{Status 2 Oct:} measured and sharpened — it is the formulation,
-  not the plot. The degree-1 $\phi$ profile's relative RMS deviation
-  from the reference is, for the gauged method, $0.119$ in the core and
-  $0.053$ in the mantle at $h=0.3$, and $0.120$/$0.056$ at $h=0.2$ —
-  flat in $h$ — while dahlen's falls with refinement
-  ($0.013\to0.010$ core). It is also flat in the gauge
-  $\eps\in[10^{-2},10^{-1}]$ and in the refinement count, and $\phi$ is
-  gauge-invariant under exact relabellings, so this is a systematic
-  $\sim12\,\%$ defect of the gauged formulation's degree-1 interior
-  response (its surface values stay at the 1\,\% level). The gauged
-  formulation's degree-1 terms need review before the method is used
-  for interior fields.
-\item \label{r:identityheader} \textbf{Stale header in
-  \code{relabelled\_identity.cpp}.} The header comment still says that the
-  gauge penalty is ``the one non-covariant assembly piece'' and that the
-  identity is informational where gauge machinery runs. The code (strict
-  for every welded case) and the README (covariant penalty, $1.6\times10^{-7}$)
-  say otherwise. The same run prints a gauge semi-convergence warning
-  (contraction 0.95 at $\eps=10^{-2}$), which does not affect the identity
-  but says the gauge refinement is not contracting on that mesh.
-  \emph{Status 2 Oct:} the header is rewritten to match the code (strict
-  on every welded case; the slip leg informational with the
-  non-covariant term unlocalised). The semi-convergence itself remains
-  open — the gauged field run on \code{fluid\_core} h\,0.3 prints
-  contraction $1.013$, and the gauged solid field error is insensitive
-  to $\eps\in[10^{-2},1]$ and to the refinement count.
-\item \label{r:worst} \textbf{``Worst error'' columns are $l'$ columns.}
-  The summaries' worst-of-six error at degree 2 is nearly always $l'_2$,
-  a small number (e.g.\ $-0.0175$ on \code{fluid\_core}), so the column
-  reads 17\,\% for methods whose $h'$, $k'$ are at 1\,\%. A relative error
-  against $\max(|x_{\text{ref}}|,\text{scale})$, or per-number columns,
-  would be more informative.
-  \emph{Status 2 Oct:} fixed — the summary columns now use a scaled
-  error (each quantity against its own largest reference value over the
-  degrees) and are headed ``worst scaled error''; \code{fluid\_core}
-  degree 2 reads $1$--$2\times10^{-2}$ across the methods.
-\item \label{r:derivlabel} \textbf{``Perturbation theory'' label.} The
-  1-D side of the derivative check is a central difference of pyslfp
-  solves, not a perturbation-theory kernel. The old talk figure's axis
-  said ``perturbation theory (1-D reference)''. Relabelled; worth
-  keeping distinct until the adjoint kernels exist.
-\item \textbf{Survey stability statement.} \code{survey.py}'s caption
-  said $\Delta t\lesssim\tau_{\min}$ while the code, the example and the
-  README say $2.8\tau_{\min}$ (RK4). Corrected in the caption.
-\item \textbf{Mixed-vintage data in the summaries.} \code{love\_numbers/runs}
-  (28 Sep) predates later solver changes (gauge penalty, AL tolerances),
-  and \code{runs\_methods} (30 Sep) contains slip\_broken shift runs
-  made before the outward-shift fix. The talk figures read from both.
-  Before any external use the methods and model sweeps should be rerun
-  on the current code; the campaign script can do this unattended.
-  \emph{Status 2 Oct:} done — \code{runs\_campaign}'s stale results
-  (its slip rows, 30 Sep, predated the 1 Oct slip fix) were moved to
-  \code{runs\_campaign\_stale\_20261002} and the local campaign, the
-  model sweep (h\,0.2, orders 2 and 3, eight models), the prem\_4 CMB
-  variants and the uncapped ladder were rerun on the current code (all
-  stages ok); \code{talk\_figures.py}'s defaults now read
-  \code{runs\_campaign} throughout and all nine talk figures are
-  regenerated, retiring \code{love\_numbers/runs} and
-  \code{runs\_methods}. On the current code the mapped slip\_broken
-  leakage persists at about half strength (\code{spurious} 0.36 at
-  $l=1$, $6$--$9\times10^{-2}$ at $l\ge2$).
-\end{enumerate}
+\bibitem{AbateValko2004}
+J.~Abate \& P.~P.~Valk\'o, 2004.
+Multi-precision Laplace transform inversion,
+\emph{Int.\ J.\ Numer.\ Meth.\ Engng}, 60, 979--993.
+
+\bibitem{AlAttarCrawford2016}
+D.~Al-Attar \& O.~Crawford, 2016.
+Particle relabelling transformations in elastodynamics,
+\emph{Geophys.\ J.\ Int.}, 205, 575--593.
+
+\bibitem{AW10}
+D.~Al-Attar \& J.~H.~Woodhouse, 2010.
+On the parametrization of equilibrium stress fields in the Earth,
+\emph{Geophys.\ J.\ Int.}, 181, 567--576.
+
+\bibitem{Dahlen1974}
+F.~A.~Dahlen, 1974.
+On the static deformation of an earth model with a fluid core,
+\emph{Geophys.\ J.\ R.\ astr.\ Soc.}, 36, 461--485.
+
+\bibitem{Gaver1966}
+D.~P.~Gaver, 1966.
+Observing stochastic processes, and approximate transform inversion,
+\emph{Operations Research}, 14, 444--459.
+
+\bibitem{Huang2023}
+P.~Huang, R.~Steffen, H.~Steffen, V.~Klemann, P.~Wu, W.~van der Wal,
+Z.~Martinec \& Y.~Tanaka, 2023.
+A commercial finite element approach to modelling Glacial Isostatic
+Adjustment on spherical self-gravitating compressible earth models,
+\emph{Geophys.\ J.\ Int.}, 235, 2231--2256.
+
+\bibitem{Latychev2005}
+K.~Latychev, J.~X.~Mitrovica, J.~Tromp, M.~E.~Tamisiea, D.~Komatitsch \&
+C.~C.~Christara, 2005.
+Glacial isostatic adjustment on 3-D Earth models: a finite-volume
+formulation, \emph{Geophys.\ J.\ Int.}, 161, 421--444.
+
+\bibitem{Martinec1999}
+Z.~Martinec, 1999.
+Spectral, initial value approach for viscoelastic relaxation of a
+spherical earth with a three-dimensional viscosity---I. Theory,
+\emph{Geophys.\ J.\ Int.}, 137, 469--488.
+
+\bibitem{Martinec2000}
+Z.~Martinec, 2000.
+Spectral-finite element approach to three-dimensional viscoelastic
+relaxation in a spherical earth, \emph{Geophys.\ J.\ Int.}, 142, 117--141.
+
+\bibitem{MurphyGolubWathen2000}
+M.~F.~Murphy, G.~H.~Golub \& A.~J.~Wathen, 2000.
+A note on preconditioning for indefinite linear systems,
+\emph{SIAM J.\ Sci.\ Comput.}, 21, 1969--1972.
+
+\bibitem{AAA2018}
+Y.~Nakatsukasa, O.~S\`ete \& L.~N.~Trefethen, 2018.
+The AAA algorithm for rational approximation,
+\emph{SIAM J.\ Sci.\ Comput.}, 40, A1494--A1522.
+
+\bibitem{Spada2011}
+G.~Spada, V.~R.~Barletta, V.~Klemann, R.~E.~M.~Riva, Z.~Martinec,
+P.~Gasperini, B.~Lund, D.~Wolf, L.~L.~A.~Vermeersen \& M.~A.~King, 2011.
+A benchmark study for glacial isostatic adjustment codes,
+\emph{Geophys.\ J.\ Int.}, 185, 106--132.
+
+\bibitem{Stehfest1970}
+H.~Stehfest, 1970.
+Algorithm 368: Numerical inversion of Laplace transforms,
+\emph{Commun.\ ACM}, 13, 47--49.
+
+\bibitem{TrompMitrovica1999}
+J.~Tromp \& J.~X.~Mitrovica, 1999.
+Surface loading of a viscoelastic earth---I. General theory,
+\emph{Geophys.\ J.\ Int.}, 137, 847--855.
+
+\bibitem{WuNi1996}
+P.~Wu \& Z.~Ni, 1996.
+Some analytical solutions for the viscoelastic gravitational relaxation of
+a two-layer non-self-gravitating incompressible spherical earth,
+\emph{Geophys.\ J.\ Int.}, 126, 413--436.
+
+\bibitem{WuPeltier1982}
+P.~Wu \& W.~R.~Peltier, 1982.
+Viscous gravitational relaxation, \emph{Geophys.\ J.\ R.\ astr.\ Soc.}, 70,
+435--485.
+
+\bibitem{CitcomSVE2025}
+T.~Yuan, S.~Zhong \& G.~A, 2025.
+CitcomSVE-3.0: a three-dimensional finite-element software package for
+modeling load-induced deformation and glacial isostatic adjustment for an
+Earth with a viscoelastic and compressible mantle,
+\emph{Geosci.\ Model Dev.}, 18, 1445--1461.
+
+\bibitem{Zhong2003}
+S.~Zhong, A.~Paulson \& J.~Wahr, 2003.
+Three-dimensional finite-element modelling of Earth's viscoelastic
+deformation: effects of lateral variations in lithospheric thickness,
+\emph{Geophys.\ J.\ Int.}, 155, 679--695.
+
+\end{thebibliography}
 
 \end{document}

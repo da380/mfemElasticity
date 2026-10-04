@@ -2,8 +2,8 @@
  * @file poisson.hpp
  * @brief Exterior boundary conditions for Poisson's equation on a domain
  * with a spherical (circular in 2-D) outer boundary: the Dirichlet-to-Neumann
- * operator, and the multipole operators (and their linearisation about a
- * mapped geometry) coupling a source region to that boundary.
+ * operator, and the multipole operator coupling a source region to that
+ * boundary, with its linearisation in a displacement of the source.
  */
 
 #pragma once
@@ -20,18 +20,21 @@ namespace mfemElasticity {
 /**
  * @brief Galerkin representation of the Dirichlet-to-Neumann (DtN) operator
  * for Poisson's equation on a spherical boundary. This is associated with
- * the bilinearform
+ * the bilinear form
  * \f[
- * (v,u) \mapsto \int_{\partial \Omega} v \frac{\partial u}{\partial n} \dd S,
+ * (v,u) \mapsto -\int_{\partial \Omega} v \frac{\partial u}{\partial n}
+ * \dd S,
  * \f]
- * where the normal derivative is determined from the boundary values of \f$u\f$
- * using the exterior solution of Laplace's equations expressed using the
- * appropriate spectral basis (i.e., Fourier series in 2D and spherical
- * harmonics in 3D).
+ * where the outward normal derivative is that of the decaying exterior
+ * solution of Laplace's equation with the boundary values of \f$u\f$,
+ * expressed in the appropriate spectral basis (i.e., Fourier series in 2D
+ * and spherical harmonics in 3D). The form is symmetric and positive
+ * semi-definite; added to the Laplacian stiffness it gives the whole-space
+ * problem on the bounded domain.
  *
  * In 2D the Dirichlet-to-Neumann map results in the following:
  * \f[
- * \int_{\partial \Omega} v \frac{\partial u}{\partial n} \dd S =
+ * -\int_{\partial \Omega} v \frac{\partial u}{\partial n} \dd S =
  * \frac{1}{\pi b^{2}}\sum_{k\ne 0} |k| v_{k} u_{k},
  * \f]
  * where
@@ -48,7 +51,7 @@ namespace mfemElasticity {
  *
  * In 3D the corresponding expression is:
  * \f[
- * \int_{\partial \Omega} v \frac{\partial u}{\partial n} \dd S =
+ * -\int_{\partial \Omega} v \frac{\partial u}{\partial n} \dd S =
  * \frac{1}{ b^{3}}\sum_{lm} (l+1) v_{lm} u_{lm},
  * \f]
  * where
@@ -167,7 +170,7 @@ class PoissonDtNOperator : public mfem::Operator,
    * and normalisation of SurfaceHarmonics (as returned by
    * BoundaryHarmonicCoefficients, which serves any spherical boundary). The
    * 2-D operator has no degree-zero term, and that coefficient is returned
-   * as zero.
+   * as zero. Collective on the communicator in parallel.
    * @param x The input vector (Dirichlet data).
    * @param y Harmonic coefficients, sized to the basis.
    */
@@ -200,9 +203,10 @@ class PoissonDtNOperator : public mfem::Operator,
  * \f[
  * (v,f) \mapsto \int_{\partial \Omega} v \frac{\partial u}{\partial n} \dd S,
  * \f]
- * where the normal derivative \f$\partial u / \partial n \f$ is determined from
- * the force term \f$f\f$ using a Multipole expansion of the exterior
- * solution.
+ * where the outward normal derivative \f$\partial u / \partial n \f$ is that
+ * of the decaying solution of \f$\Delta u = f\f$, with \f$f\f$ supported in
+ * the marked domains inside the boundary, determined from \f$f\f$ by a
+ * Multipole expansion of the exterior solution.
  *
  *
  * It inherits from `mfem::Operator` for its matrix-vector product and from
@@ -378,9 +382,12 @@ class PoissonMultipoleOperator : public mfem::Operator,
  * (v,\bvec{u}) \mapsto \int_{\partial \Omega} v \frac{\partial u}{\partial n}
  * \dd S,
  * \f]
- * where the normal derivative \f$\partial u / \partial n \f$ is determined from
- * the displacement term \f$\bvec{u}\f$ using a Multipole expansion of the
- * exterior solution.
+ * where the normal derivative \f$\partial u / \partial n \f$ is that of
+ * PoissonMultipoleOperator with the source \f$f = -\nabla\cdot(\rho
+ * \bvec{u})\f$, the Eulerian perturbation of a density \f$\rho\f$ (one by
+ * default) under the displacement \f$\bvec{u}\f$; after integration by
+ * parts the trial side pairs \f$\rho\,\bvec{u}\f$ with the gradients of the
+ * interior harmonics.
  *
  *
  * It inherits from `mfem::Operator` for its matrix-vector product and from
@@ -585,7 +592,7 @@ class PoissonLinearisedMultipoleOperator : public mfem::Operator,
    * @brief Constructs a parallel PoissonLinearisedMultipoleOperator for all
    * domains. This overload automatically uses `AllDomainsMarker` from
    * `tr_fes->GetMesh()` to include all domain attributes in the assembly across
-   * all processor, and uses the default density value.
+   * all processors, and uses the default density value.
    * @param comm The MPI communicator.
    * @param tr_fes Pointer to the parallel trial finite element space.
    * @param te_fes Pointer to the parallel test finite element space.

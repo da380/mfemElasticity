@@ -5,15 +5,18 @@
 // problem: a clamped beam (data/beam-quad.mesh: attribute 1 clamped,
 // attribute 2 pulled) with a Maxwell or standard-linear-solid rheology and a
 // pull varying on the relaxation-time scale, p(t) = p0 (1 + 0.5 sin(2 t /
-// tau)). Every scheme is run from t = 0 to t_final for a list of step sizes
+// tau)) at the defaults (-tp sets the period in units of tau, -ph the
+// phase). Every scheme is run from t = 0 to t_final for a list of step sizes
 // and compared with a reference solution (RK4 at a very small step, which is
 // stable there); the table reports, per run,
 //
 //   error   relative max-norm error of the internal variables at t_final
 //   u-error relative max-norm error of the displacement over the HISTORY:
-//           the worst of t_final and four interior checkpoints, so that a
-//           coarse step cannot alias a fast load and still score well on
-//           the final state (the checkpoint solves are not counted as cost)
+//           the worst of t_final and three interior checkpoints (the
+//           quarters of the run), so that a coarse step cannot alias a fast
+//           load and still score well on the final state (the checkpoint
+//           solves are not counted as cost; a fixed-step run whose step
+//           count is not a multiple of four is judged on t_final alone)
 //   solves  elastic solves (the cost unit: one linear system each)
 //   asm     operator assemblies (a change of effective modulus)
 //   pc      preconditioner setups (the expensive part of an assembly)
@@ -34,9 +37,9 @@
 // limit then involves the effective (shorter) times, and a run that blows
 // up is reported as unstable.
 //
-// With -targets (a list of relative errors of the final displacement) a
-// second table answers the practical question: to reach a given accuracy at
-// t_final, what does each scheme cost? For every target and scheme the
+// With -targets (a list of relative errors, measured as u-error above) a
+// second table answers the practical question: to reach a given accuracy
+// over the run, what does each scheme cost? For every target and scheme the
 // step is halved (from one step per tau) until the error is met, and the
 // cost at that step is reported; for the adaptive solver the tolerance is
 // tightened by factors of 2 from 0.1 until the target is met.
@@ -62,28 +65,37 @@
 // the stiff case, where the explicit schemes are bound to dt < 2.8 tau/r
 // while the exponential and implicit ones are not.
 //
-// What the tables say on the beam at order 2 (solves to reach a relative
-// error of 1e-2 / 1e-3 / 1e-4 in the final displacement):
-//   one relaxation time, smooth forcing: RK4 17/17/33, ExpTrap 5/17/65,
-//     SDIRK23 9/17/65, BE 16/256/2048, ETD1 257/2049/16385 — nothing is
-//     stiff, so the explicit scheme is cheapest and the first-order schemes
-//     are hopeless;
-//   two relaxation times, ratio 100: RK4 1025 for any target (stability),
-//     SDIRK23 17/65/129, ExpTrap 17/129/513, adaptive ExpTrap 47/66/123,
-//     BE 16/256/2048;
-//   power law, gamma = 5: SDIRK23 33/65, RK4 65/65, ExpTrap 33/129,
-//     BE 128/1024.
-// So: for a stiff or nonlinear body the implicit and exponential schemes
-// pay for themselves, MFEM's L-stable SDIRK23 (two solves per step) being
-// the best fixed-step choice and the adaptive trapezoid the best at tight
-// tolerances after a transient; the exponential trapezoid keeps its edge
-// only where the strain is close to linear over a step.
+// What the cost-to-target table prints at the defaults (order 2, one
+// refinement, serial build), as elastic solves to reach a u-error of
+// 1e-2 / 1e-3 / 1e-4:
+//   one relaxation time (-targets 1e-2,1e-3,1e-4): RK4 17/17/33,
+//     ExpTrap 14/30/126, SDIRK23 17/33/129, adaptive ExpTrap 24/94/225,
+//     BE 29/253/4093, ETD1 254/2046/16382 -- nothing is stiff, so the
+//     explicit scheme is cheapest and the first-order schemes are not
+//     competitive;
+//   two relaxation times, ratio 100 (-tau-ratio 100 -targets ...): RK4
+//     1025 for any target (stability), SDIRK23 17/65/257, ExpTrap
+//     30/254/510, adaptive ExpTrap 40/112/244, BE 29/509/4093, ETD1
+//     510/4094/not reached;
+//   power law (-gamma 5 -targets 1e-2,1e-3): SDIRK23 33/129, RK4 65/65,
+//     ExpTrap 62/126, adaptive ExpTrap 66/269, BE 253/2004.
+// So: on the stiff body the implicit and exponential schemes pay for
+// themselves, while RK4 pays for stability; at gamma = 5 the stress
+// shortens the times only moderately and RK4 stays competitive at
+// moderate accuracy. The exponential trapezoid and SDIRK23 cost about the
+// same on the single-branch bodies; on the stiff two-branch body under this
+// stress-controlled load SDIRK23 is the cheaper fixed-step scheme, since
+// the exponential trapezoid's order drops there. Under this sustained
+// periodic pull the adaptive trapezoid at best matches the cheapest
+// fixed-step scheme (on the stiff body) and otherwise falls behind it: its
+// conservative error estimate keeps its steps small. These are the cases
+// of doc/viscoelasticity.md, "Choosing a scheme".
 //
 // One source serves the serial and the parallel build; the genuine
 // differences are the mesh partitioning and the global reductions on the
 // error metrics (the state vectors are distributed, so max-norms and
 // finiteness checks reduce over ranks — every rank must agree on the
-// halving decisions). Run with mpirun -np N in a parallel build.
+// halving decisions). Run with mpiexec -np N in a parallel build.
 // ============================================================================
 
 #include <chrono>
@@ -179,7 +191,7 @@ int main(int argc, char* argv[]) {
   real_t tau_ratio = 1.0;
   real_t t_final = 4.0;
   real_t p0 = 0.05;
-  // The default period pi tau keeps the historical pull sin(2 t / tau).
+  // The default period pi tau gives the pull sin(2 t / tau) of the header.
   real_t load_period = std::numbers::pi_v<real_t>;
   real_t load_phase = 0.0;
   int n_ref = 400;  // reference RK4 steps
@@ -208,9 +220,9 @@ int main(int argc, char* argv[]) {
   args.AddOption(&steps_arg, "-steps", "--steps-per-tau",
                  "Comma-separated list of steps per relaxation time.");
   args.AddOption(&targets_arg, "-targets", "--target-errors",
-                 "Comma-separated target relative errors of the final "
-                 "displacement for the cost-to-tolerance table (empty: "
-                 "none).");
+                 "Comma-separated target relative errors of the "
+                 "displacement history (u-error) for the "
+                 "cost-to-tolerance table (empty: none).");
   args.AddOption(&max_steps_per_tau, "-kmax", "--max-steps-per-tau",
                  "Give up on a target beyond this many steps per tau.");
   args.AddOption(&load_period, "-tp", "--load-period",
@@ -302,9 +314,10 @@ int main(int argc, char* argv[]) {
   }
 
   // One problem per run, so that the counters and warm starts are
-  // clean. The displacement is recorded at n_check interior checkpoints
-  // as well as t_final: the error is judged against the HISTORY, or a
-  // coarse step could alias a fast load and still land the final state.
+  // clean. The displacement is recorded at the n_check - 1 interior
+  // checkpoints as well as t_final: the error is judged against the
+  // HISTORY, or a coarse step could alias a fast load and still land the
+  // final state.
   // The checkpoint solves are pure output and are taken out of the cost.
   const int n_check = 4;
   auto run = [&](const std::string& name, ODESolver& ode, int n_steps,
@@ -530,8 +543,9 @@ int main(int argc, char* argv[]) {
   // --- Cost to reach a target accuracy ------------------------------------
   if (!targets.empty()) {
     if (Root())
-      cout << "\nCost to reach a target relative error of the final "
-            "displacement (coarsest step, or loosest rtol, that meets it):\n"
+      cout << "\nCost to reach a target relative error of the "
+            "displacement history (coarsest step, or loosest rtol, that "
+            "meets it):\n"
          << std::left << std::setw(14) << "scheme" << std::right
          << std::setw(9) << "target" << std::setw(9) << "dt/tau"
          << std::setw(11) << "u-error" << std::setw(8) << "solves"

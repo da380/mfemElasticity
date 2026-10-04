@@ -14,11 +14,15 @@ RadialUnitVectorCoefficient::RadialUnitVectorCoefficient(int dim)
   x0_ = 0.0;
 }
 
+// Hidden from Doxygen, which cannot match the unqualified parameter types
+// of these overloaded constructors to their declarations.
+/// @cond
 RadialUnitVectorCoefficient::RadialUnitVectorCoefficient(int dim,
                                                          const Vector& x0)
     : VectorCoefficient(dim), x0_(x0), x_(dim) {
   MFEM_VERIFY(x0.Size() == dim, "RadialUnitVectorCoefficient: x0 size.");
 }
+/// @endcond
 
 void RadialUnitVectorCoefficient::Eval(Vector& V, ElementTransformation& T,
                                        const IntegrationPoint& ip) {
@@ -55,6 +59,8 @@ BarotropicDensityGradientCoefficient::BarotropicDensityGradientCoefficient(
     VectorCoefficient& grad_rho, VectorCoefficient& grad_phi0)
     : grad_rho_(&grad_rho), grad_phi0_(&grad_phi0) {}
 
+// Hidden from Doxygen, as for RadialUnitVectorCoefficient above.
+/// @cond
 BarotropicDensityGradientCoefficient::BarotropicDensityGradientCoefficient(
     const GridFunction& rho, const GridFunction& phi0)
     : grad_rho_from_rho_(
@@ -67,6 +73,7 @@ BarotropicDensityGradientCoefficient::BarotropicDensityGradientCoefficient(
               "BarotropicDensityGradientCoefficient: the density and the "
               "potential must live on the same mesh.");
 }
+/// @endcond
 
 real_t BarotropicDensityGradientCoefficient::Eval(ElementTransformation& T,
                                                   const IntegrationPoint& ip) {

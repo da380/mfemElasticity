@@ -56,7 +56,7 @@
 // on the serial mesh first, so the layering is identical) and the
 // observation point, which lives on one rank and is reduced globally.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./viscoelastic_loading
 //    ./viscoelastic_loading -rtol 1e-3
 //    ./viscoelastic_loading -d 3 -nx 12 -ny 4 -o 1 -n 10

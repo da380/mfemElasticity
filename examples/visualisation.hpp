@@ -118,8 +118,8 @@ class CsvTable {
 
   bool Enabled() const { return !file_.empty(); }
 
-  // A plotting hint: title, x, y, group, xlabel, ylabel, logx, logy (see
-  // plot_csv.py).
+  // A plotting hint: title, note, x, y, group, xlabel, ylabel, logx, logy
+  // (see plot_csv.py).
   CsvTable& Meta(const std::string& key, const std::string& value) {
     meta_.emplace_back(key, value);
     return *this;

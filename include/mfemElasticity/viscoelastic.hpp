@@ -64,8 +64,9 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  * ETD1 use the times of the current state (ETD1: frozen over the step,
  * first order). The exponential trapezoid and the implicit stages use a
  * predictor–corrector: the effective modulus is built with the times of
- * the start state, the step is taken, the times are re-evaluated at the
- * midpoint (trapezoid) or end (backward Euler) state and the step repeated,
+ * the start state (trapezoid) or the last evaluated times (implicit
+ * stage), the step is taken, the times are re-evaluated at the midpoint
+ * (trapezoid) or end (backward Euler) state and the step repeated, up to
  * SetCorrectorIterations() times or until the times stop changing. Each
  * pass is one elastic solve with a different effective operator (see
  * LinearQuasiStaticProblemBase::SetPreconditionerReuse()). For a linear
@@ -86,11 +87,14 @@ void ExponentialTrapezoidWeights(mfem::real_t h, mfem::real_t& e,
  * (the effective modulus is @f$C_\infty + \sum_k \beta_k C_k@f$ with nodal
  * weights @f$\beta_k@f$); the operator switches the problem between its
  * unrelaxed and effective operators lazily, so mixing schemes is allowed
- * but costs a reassembly at each switch.
+ * but costs a reassembly at each switch. doc/viscoelasticity.md, "Time
+ * stepping" and "Choosing a scheme", tabulates the schemes and when to use
+ * each.
  *
  * Observation: after a step the displacement held by the quasi-static problem
- * is consistent with the new state for the trapezoid and implicit schemes, but
- * not after the explicit or exponential-Euler ones. SolveElastic() gives a
+ * is consistent with the new state for the trapezoid and backward-Euler
+ * schemes; after an SDIRK step it belongs to the last stage state, and after
+ * the explicit or exponential-Euler ones it is stale. SolveElastic() gives a
  * consistent displacement for any (m, t), re-solving only when needed;
  * SyncFields() copies the state into the registered output GridFunctions.
  *
@@ -302,7 +306,7 @@ class ViscoelasticOperator : public mfem::TimeDependentOperator {
   /// W with sigma_s = sum_t W_st m_t on unscaled tensor components
   /// (row-major, node-major: W(p)(s,t) at p ns ns + s ns + t).
   std::vector<mfem::Vector> branch_modulus_;
-  mfem::Vector CU_;  ///< anisotropic: nodal W-form of C_U (for the stress)
+  mfem::Vector CU_;  ///< nodal W-form of C_U (for the stress of state-dependent laws)
   std::vector<mfem::Vector> itau0_;         ///< nodal 1 / tau_k0
   mutable std::vector<mfem::Vector> itau_;  ///< current nodal 1 / tau_k
   bool linear_ = true;                      ///< no state-dependent law

@@ -20,9 +20,9 @@ using namespace mfem;
 
 namespace {
 
-// The schema written since planetmodel 1.2.3, and the one before it, which
-// differs only in lacking the model-derived records (layers[].fluid,
-// interfaces[].kind and .values, fields[].radial_degree).
+// The current schema, and the previous one, which differs only in lacking
+// the model-derived records (layers[].fluid, interfaces[].kind and .values,
+// fields[].radial_degree).
 const char* const kSchema = "planetmodel.mesh.manifest/5";
 const char* const kOldSchema = "planetmodel.mesh.manifest/4";
 

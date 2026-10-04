@@ -1,8 +1,12 @@
 # Null spaces, projection and gauge
 
-Notes for `null_space.hpp` (`NullSpaceProjector`, `ProjectedOperator`,
-`ProjectedSolver`, `MakeRigidModeProjector()`), used by the pure traction
-problem and by the self-gravitating problem.
+Notes for `null_space.hpp`: the rigid-mode coefficients (`RigidTranslation`,
+`RigidRotation`, `MappedRotation`), the basis `NullSpaceProjector` with
+`AddRigidModes()` and `MakeRigidModeProjector()`, and `ProjectedOperator` and
+`ProjectedSolver`. Their users are the pure traction problem
+(`LinearQuasiStaticTractionProblem::RigidModes()`), the mixed and referential
+self-gravitating problems (displacement modes and their block versions), and
+the background-state generator problems of `background.hpp`.
 
 ## Two different projections
 
@@ -45,8 +49,8 @@ on the unprojected `A` is weaker, for three reasons.
   `ProjectedSolver` around the preconditioner). An unprojected BoomerAMG or
   shifted-Laplacian preconditioner amplifies the round-off null component of
   the residual at every iteration, and CG diverges once the residual reaches
-  round-off. This shows in parallel; serial Gauss–Seidel happens not to
-  trigger it. `SetupCG()` sets the operator before the preconditioner so
+  round-off. This is observed in parallel; it is not observed with serial
+  Gauss–Seidel. `SetupCG()` sets the operator before the preconditioner so
   that the latter is not reset onto the projected operator.
 - **A warm start may carry a rigid component**, which the unprojected
   iteration would keep.
@@ -56,13 +60,39 @@ a vector that is numerically dependent on those already present, so a caller
 may add modes without checking for duplicates (region rotations on top of
 global ones, for instance).
 
+## Rigid modes of a mapped reference body
+
+When a problem is posed on a fixed reference body with a non-natural
+reference state, the rheology carries an equilibrium mapping φ_e
+(`Rheology::EquilibriumMapping()`, `viscoelasticity.md`) and the stiffness
+acts on the linearised Green strain sym(F_eᵀ Du). A plain rotation u = W x
+(W skew) is then not strain-free, since F_eᵀ W is not skew in general. The
+rotation of the *mapped* positions, u = W φ_e(x), is: Du = W F_e and
+F_eᵀ W F_e is skew. `MappedRotation(map, component)` is this vector
+coefficient (in 2-D the single in-plane rotation, component 2); at the
+identity map it equals `RigidRotation`. Translations are unchanged and
+are exact null vectors of the stiffness; with a pre-stressed reference
+state the mapped rotations are null through the moment balance of the
+background state, and discretely near-null, improving with refinement
+(`LinearQuasiStaticTractionProblem::RigidPairResiduals()` measures both).
+
+`AddRigidModes(P, fes, map)` appends the translations and the rotations (the
+mapped ones when `map` is non-null) of a displacement space of vdim 2 or 3
+to `P` as true-dof vectors and returns how many were added (modes already
+spanned are dropped). `MakeRigidModeProjector(fes, map)` returns a projector
+holding exactly these modes, on the space's communicator in parallel. The
+traction problem passes its rheology's equilibrium mapping (null for a
+natural reference state), the referential problems build the same modes from
+the reference rheology's mapping, and the background generator problems use
+the mapped rotations of the pulled-back problem.
+
 ## Element order on curved meshes
 
 A rigid rotation of a curved element is representable only when the geometry
 order does not exceed the displacement order. With order-1 displacements on
 an order-2 mesh the rotations are not in the space: the discrete rigid modes
-are poor null vectors and results shift visibly (about 10 % on the coarse
-self-gravitating test problem, against five-figure agreement at order 2).
+are poor null vectors and results shift by far more than the
+discretisation error; with matched orders they do not.
 Use a displacement order at least that of the geometry. The integrator tests
 that check rigid modes in the null space use isoparametric geometry for the
 same reason.

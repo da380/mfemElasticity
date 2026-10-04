@@ -1,8 +1,9 @@
 // ============================================================================
 // relabelling.hpp
 //
-// The relabelled (mapped) 3-D benchmark's local pieces
-// (doc/mappings.md; the flagship of the aspherical verification plan):
+// The relabelled (mapped) 3-D benchmark's local pieces (doc/mappings.md;
+// doc/benchmarks.tex, "The relabelling family" and "The perturbation
+// family"):
 //
 //  - RadialProfiles: the model's exact radial fields, read from the
 //    radial_profiles.txt that make_case.py writes (Chebyshev points of
@@ -31,11 +32,14 @@
 //    reference; on the interfaces the composition is the identity, so
 //    the harmonic analysis needs no change at all.
 //
+//  - InterfaceShift: the degree-0 shift of one interface used by the
+//    perturbation family (below).
+//
 // The exactness mode is the mapping object's: the analytic
-// CallableDiffeomorphism here gives convergence-to-reference runs
-// (variant 2b of the plan); its nodal interpolant
+// CallableDiffeomorphism here gives convergence-to-reference runs (leg A,
+// love_benchmark -map); its nodal interpolant
 // (mfemElasticity::Interpolate) gives the discrete change-of-variables
-// identity against the mapped mesh (variant 2a, relabelled_identity).
+// identity against the mapped mesh (leg B, relabelled_identity).
 // ============================================================================
 
 #pragma once
@@ -96,9 +100,10 @@ class RadialProfiles {
     MFEM_VERIFY(in.good(), "RadialProfiles: truncated " << path);
   }
 
-  /// The field at radius r: the layer holding r (boundaries go with the
-  /// layer above, matching the convention that interfaces belong to
-  /// both), interpolated barycentrically on its Chebyshev nodes.
+  /// The field at radius r: the layer holding r (a boundary radius goes
+  /// with the layer below it, a radius beyond the surface with the
+  /// outermost layer), interpolated barycentrically on its Chebyshev
+  /// nodes.
   real_t Eval(const std::string& name, real_t r) const {
     const Layer* layer = &layers_.back();
     for (const auto& l : layers_) {
@@ -342,8 +347,8 @@ inline CallableDiffeomorphism InteriorRelabelling(
       });
 }
 
-// The degree-0 interface shift (the tier-3 perturbation benchmark,
-// doc/mappings.md): a purely radial, piecewise-linear map of the
+// The degree-0 interface shift (the perturbation family,
+// doc/benchmarks.tex): a purely radial, piecewise-linear map of the
 // reference boundaries 0 = b_0 < ... < b_n onto shifted ones, moving
 // ONE interface by eps and leaving the centre, the other interfaces,
 // the surface and everything beyond fixed:
@@ -379,9 +384,9 @@ inline CallableDiffeomorphism InterfaceShift(
     // DISCONTINUOUS there, and the one-sided interface kernels are
     // assembled on the solid (outer) side, so radii within a roundoff
     // band of an interior boundary must take the OUTER segment's slope.
-    // The naive `r <= b[j+1]` handed those kernels the inner (fluid)
-    // slope exactly on Sigma - measured to drive most of the
-    // outward-shift AL pathology (interpolated-F maps are immune: they
+    // A plain `r <= b[j+1]` would hand those kernels the inner (fluid)
+    // slope exactly on Sigma, which degrades the augmented-Lagrangian
+    // sweeps of an outward shift (interpolated-F maps are immune: they
     // evaluate through the adjacent solid element).
     const real_t band = 1e-10 * b[n - 1];
     for (int j = 0; j + 1 < n; j++) {

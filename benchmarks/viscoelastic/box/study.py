@@ -243,7 +243,7 @@ def slab_cases(quick: bool, profile: dict) -> list[tuple[dict, list]]:
                             for o, nz in ladder]))
     # The deliberate misfit (-no-conform; every other run builds the mesh
     # around the layer interfaces): uniform nz = 8, 16, 32 against the lid
-    # at 0.8 (and the channel's 0.6/0.85), staircased (composite) or
+    # at 0.8 (and the channel's 0.6/0.8), staircased (composite) or
     # resolved at the points (pointwise).
     for model in ("lid", "channel"):
         c = cases.make_case(model, dim=2, mode=(1,), t_final=8.0,
@@ -436,7 +436,8 @@ def figures_steppers(recs: list[dict], out: Path) -> None:
     plt = _plt()
     ok = _ok(recs)
     names = list(hist.PRESETS)
-    # 1. error vs dt, per history (burgers, stress control, aligned).
+    # 1. error vs dt, per model and load, one panel per history
+    # (breakpoints aligned).
     for model in ("maxwell", "sls", "burgers", "prony_wide"):
         for load in ("uniaxial_stress", "uniaxial_strain"):
             sel = [r for r in ok if r["model"] == model
@@ -530,8 +531,9 @@ def figures_steppers(recs: list[dict], out: Path) -> None:
         fig.tight_layout()
         fig.savefig(out / "steppers_alignment.png")
         plt.close(fig)
-    # 4. the periodic transient: the burgers history and the pointwise
-    # error over time for a few schemes at dt = 1/8.
+    # 4. the periodic transient: the standard linear solid under a
+    # periodic stress, and the pointwise error over time for a few
+    # schemes at dt = 1/8.
     _transient_figure(recs, out, plt)
 
 

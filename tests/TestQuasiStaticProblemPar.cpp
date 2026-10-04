@@ -2,12 +2,18 @@
   Parallel tests for LinearQuasiStaticProblemBase /
   LinearQuasiStaticTractionProblem / LinearQuasiStaticClampedProblem on
   ParFiniteElementSpaces. Run with 1, 2 and 4 ranks; a standalone MPI program
-  returning the number of failed checks.
+  that prints a summary and exits non-zero if any check fails.
 
-  Every rank also solves the serial problem on the full mesh and compares
-  partition-independent quantities: the L2 norm of the clamped
-  displacement (plain and with a relaxation-weight field), and the exact
-  uniaxial strain of the traction problem.
+  - Clamped problem: every rank also solves the serial problem on the full
+    mesh and compares a partition-independent quantity, the L2 norm of the
+    displacement (plain, with a relaxation-weight field on an L2 space, and
+    after ClearRelaxationWeights).
+  - Traction problem: the exact uniaxial strain on every rank's elements,
+    at t = 0 and t = 1.
+  - The non-natural reference state: the mapped traction problem equals
+    the identity-mapped problem on the nodal-image mesh dof for dof, and
+    the mapped rigid modes are discrete null vectors (as in the serial
+    TestQuasiStaticProblem).
 */
 
 #include <mpi.h>

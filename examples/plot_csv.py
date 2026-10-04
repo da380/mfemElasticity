@@ -7,15 +7,16 @@ tables and the build copies this script:
     python3 plot_csv.py love_numbers.csv            # writes love_numbers.png
     python3 plot_csv.py viscoelastic_loading.csv --show
 
-The figure is written beside the table (or to --out), never into the source
-tree. Needs numpy and matplotlib.
+The figure is written beside the table, with the extension .png, or to
+--out. Needs numpy and matplotlib.
 
 A table describes its own plot in "# key: value" lines above the header:
 
     title   figure title
     x       the abscissa column (default: the first column)
     y       the ordinate columns, comma-separated; "|" starts a new panel
-            (default: every other column, one panel)
+            (default: every numeric column other than x, group and the
+            "_exact" columns, one panel)
     group   a column whose distinct values split the rows into curves
             (e.g. a scheme name); y then names one column per panel
     xlabel  axis label (default: the x column)

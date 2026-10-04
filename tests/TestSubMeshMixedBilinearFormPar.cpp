@@ -1,7 +1,7 @@
 /*
   Parallel tests for ParSubMeshMixedBilinearForm. Run with 1, 2 and 4
-  ranks. Not a gtest: a standalone MPI program returning the number of
-  failed checks.
+  ranks. Not a gtest: a standalone MPI program that exits non-zero if any
+  check fails.
 
   Every rank holds the full serial mesh as well, and evaluates the serial
   SubMeshMixedBilinearForm there as the reference. The check is the value

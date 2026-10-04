@@ -3,6 +3,10 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int q v : grad u for a linear field u = B x and a constant matrix field
+// v = A (random, non-symmetric; components in column-major order), against
+// DomainLFDeformationGradientIntegrator with the coefficient q A: checks
+// the component ordering of the matrix space and the index convention.
 TEST_P(BilinearFormIntegratorTests, DomainMatrixDeformationGradientIntegrator) {
   const auto& current_tuple = GetParam();
 

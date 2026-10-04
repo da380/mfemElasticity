@@ -61,7 +61,7 @@ Restricted to models whose layers have CONSTANT moduli (the velocities
 are rebuilt from the modified moduli, which needs no refitting there).
 The Stehfest order trades accuracy against cancellation; n = 12 in
 double precision gives ~4-5 significant figures on smooth transforms,
-plenty below the 3-D discretisation error it will referee.
+plenty below the 3-D discretisation error it referees.
 """
 from __future__ import annotations
 
@@ -430,7 +430,8 @@ def main() -> None:
                     "tau": None if t is None else
                     ("inf" if not math.isfinite(t) else t)}
                    for la, t in zip(layers, taus)],
-        # the old single-tau entry, kept for readers of the first schema
+        # the shortest Maxwell time, for readers that take a single tau
+        # (the per-layer values are under "layers")
         "tau": tau_min, "lmax": args.lmax, "stehfest": args.stehfest,
         "degree": degrees, "times": times,
         "elastic": {q: elastic[q] for q in QUANTITIES},

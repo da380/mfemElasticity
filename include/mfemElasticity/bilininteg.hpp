@@ -2,9 +2,11 @@
  * @file bilininteg.hpp
  * @brief Bilinear form integrators and discrete interpolators: couplings
  * between scalar, vector and matrix fields on nodal spaces, the general
- * (anisotropic) elasticity integrator, the transformed diffusion integrator,
- * the strain interpolators, and the boundary normal integrators of the
- * fluid–solid problems.
+ * (anisotropic) elasticity integrator, the geometric and material
+ * stiffnesses and the gravity blocks of the linearised referential system,
+ * the transformed diffusion integrator, the strain interpolators, the
+ * boundary normal integrators of the fluid–solid problems, and the
+ * one-sided kernels of the slipping-interface forms.
  */
 
 #pragma once
@@ -52,7 +54,7 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
    *
    * To define an instance, a vector coefficient is provided along, optionally,
    * with an integration rule. The vector coefficient must return values with
-   * size equal to the spatial dimension as the finite-element space.
+   * size equal to the spatial dimension of the finite-element space.
    *
    * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{q}\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`. If `nullptr`,
@@ -90,8 +92,9 @@ class DomainVectorScalarIntegrator : public mfem::BilinearFormIntegrator {
   /**
    * @brief Implementation of the element level assembly for the bilinear form.
    *
-   * @param trial_fe The trial finite element for the scalar field $u$.
-   * @param test_fe The test finite element for the vector field $v$.
+   * @param trial_fe The trial finite element for the scalar field \f$u\f$.
+   * @param test_fe The test finite element for the vector field
+   * \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @param elmat The output dense matrix representing the element stiffness
    * matrix.
@@ -443,8 +446,10 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
    * taken into account, with two orders removed to account for the spatial
    * derivatives. Variations in the coefficient are not considered.
    *
-   * @param trial_fe The trial finite element for the vector field $u$.
-   * @param test_fe The test finite element for the vector field $v$.
+   * @param trial_fe The trial finite element for the vector field
+   * \f$\bvec{u}\f$.
+   * @param test_fe The test finite element for the vector field
+   * \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @return A constant reference to the chosen `mfem::IntegrationRule`.
    */
@@ -506,8 +511,13 @@ class DomainDivVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  * \f$\bvec{w}\f$ is a vector coefficient.
  *
  * It is assumed that the vector fields are defined on finite element spaces
- * formed from the product of scalar nodal spaces. On the test space, the
+ * formed from the product of scalar nodal spaces. On the trial space, the
  * gradient operator must be defined.
+ *
+ * The product \f$\bvec{w}\cdot\bvec{u}\f$ is replaced by its nodal
+ * interpolant on the trial space: \f$\bvec{w}\f$ is evaluated at the
+ * trial element's nodes, and the gradient is that of the interpolant. The
+ * trial element must therefore be nodal.
  */
 class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -639,7 +649,7 @@ class DomainVectorGradVectorIntegrator : public mfem::BilinearFormIntegrator {
 class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  private:
   mfem::VectorCoefficient* QV =
-      nullptr; /**< Pointer to the vector coefficient \f$q\f$. */
+      nullptr; /**< Pointer to the vector coefficient \f$\bvec{q}\f$. */
   Diffeomorphism* map_ = nullptr; /**< Optional mapping (pull-back form). */
 
 #ifndef MFEM_THREAD_SAFE
@@ -654,7 +664,7 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  public:
   /**
    * @brief Constructor for DomainVectorDivVectorIntegrator.
-   * @param qv A reference to the `mfem::VectorCoefficient` \f$q\f$.
+   * @param qv A reference to the `mfem::VectorCoefficient` \f$\bvec{q}\f$.
    * @param ir An optional pointer to an `mfem::IntegrationRule`.
    */
   DomainVectorDivVectorIntegrator(mfem::VectorCoefficient& qv,
@@ -726,7 +736,7 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
 };
 
 /**
- * @brief BilinearFormIntegrator acting on a test matrix field, \f$\bf{v}\f$,
+ * @brief BilinearFormIntegrator acting on a test matrix field, \f$\bvec{v}\f$,
  * and a trial vector field, \f$\bvec{u}\f$ according to:
  * \f[
  *   (\bvec{v},\bvec{u}) \mapsto \int_{\Omega} q \,\bvec{v}: \deriv \bvec{u}
@@ -737,7 +747,7 @@ class DomainVectorDivVectorIntegrator : public mfem::BilinearFormIntegrator {
  * The matrix field must be defined on a nodal finite element space formed from
  * the product of a scalar space. The ordering of the matrix components
  * corresponds to a dense matrix using column-major storage (i.e., \f$v_{00},
- * v_{10}, v_{20}, v_{01}, \dots)\f$. The vector field must be defined on a
+ * v_{10}, v_{20}, v_{01}, \dots\f$). The vector field must be defined on a
  * nodal finite element space formed from the product of a scalar space for
  * which the gradient operator is defined. The vector and matrix fields need to
  * have compatible dimensions.
@@ -990,9 +1000,10 @@ class DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator
    * taken into account, with one order removed to account for the spatial
    * derivative. Variations in the coefficients are not considered.
    *
-   * @param trial_fe The trial finite element for the vector field $u$.
+   * @param trial_fe The trial finite element for the vector field
+   * \f$\bvec{u}\f$.
    * @param test_fe The test finite element for the trace-free symmetric matrix
-   * field $v$.
+   * field \f$\bvec{v}\f$.
    * @param Trans The element transformation.
    * @return A constant reference to the chosen `mfem::IntegrationRule`.
    */
@@ -1152,6 +1163,11 @@ class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
 #endif
 
  public:
+  /**
+   * @param S The @f$d \times d@f$ equilibrium stress coefficient.
+   * @param ir An optional integration rule; the default has order
+   * 2 OrderGrad(el).
+   */
   explicit GeometricStiffnessIntegrator(
       mfem::MatrixCoefficient& S, const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), S_(&S) {}
@@ -1161,6 +1177,9 @@ class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
                                const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), S_(&S), map_(&map) {}
 
+  /** @brief Element matrix: one copy of the scalar block
+   * @f$\int S_{AB}\,\partial_A\phi_a\,\partial_B\phi_b@f$ per displacement
+   * component (byNODES layout). */
   void AssembleElementMatrix(const mfem::FiniteElement& el,
                              mfem::ElementTransformation& Trans,
                              mfem::DenseMatrix& elmat) override;
@@ -1183,8 +1202,13 @@ class GeometricStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  * The Diffeomorphism here is the *equilibrium mapping* (exact or
  * interpolated per the object), not the relabelling pull-back of the
  * other mapped integrators: a relabelling composes into the mapping and
- * transforms the coefficients (AC18 eqs. 134–136, owned by the
+ * transforms the coefficients (Al-Attar et al. 2018, "AC18" of
+ * doc/gravitating_elasticity.md, eqs. 134–136; done by the
  * background-state layer), leaving this integrator's form unchanged.
+ * Consequently this is the plain pull-back of the elastic form only when
+ * @f$\hat C@f$ is the relabelled tensor; the relabelling pull-back of an
+ * unrelabelled tensor (e.g. the covariant gauge penalty) is
+ * ElasticTensorIntegrator(C, map) (doc/mappings.md, "Pitfalls").
  */
 class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -1199,7 +1223,8 @@ class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
   /**
    * @param C The Mandel-form second elastic tensor at equilibrium.
    * @param phi_e The equilibrium mapping (not owned).
-   * @param ir An optional integration rule.
+   * @param ir An optional integration rule; the default has order
+   * 2 OrderGrad(el).
    */
   MaterialStiffnessIntegrator(mfem::MatrixCoefficient& C,
                               Diffeomorphism& phi_e,
@@ -1216,6 +1241,11 @@ class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
    * is the Mandel vector of @f$\mathrm{sym}(\mathbf{F}^T Du)@f$. With
    * @f$\mathbf{F} = \mathbf{1}@f$ this is
    * ElasticTensorIntegrator::StrainDisplacementMatrix.
+   * @param dim The spatial dimension.
+   * @param gshape The physical shape-function gradients
+   * (@f$\mathrm{dof} \times d@f$).
+   * @param F The deformation gradient @f$\mathbf{F}@f$ at the point.
+   * @param B The output matrix, resized as needed.
    */
   static void StrainDisplacementMatrix(int dim, const mfem::DenseMatrix& gshape,
                                        const mfem::DenseMatrix& F,
@@ -1235,7 +1265,7 @@ class MaterialStiffnessIntegrator : public mfem::BilinearFormIntegrator {
  * background potential. The problem layer passes the scale
  * @f$s = 1/8\pi G@f$. Assembled through the rank-one structure of
  * @f$H = F_e^{-1}Du@f$ per basis function — no fourth-order coefficient
- * is formed.
+ * is formed. The default integration rule has order 2 OrderGrad(el).
  */
 class ReferentialGravityIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -1249,6 +1279,13 @@ class ReferentialGravityIntegrator : public mfem::BilinearFormIntegrator {
 #endif
 
  public:
+  /**
+   * @param phi_e The equilibrium mapping (not owned).
+   * @param grad_zeta0 The referential background-potential gradient
+   * @f$\mathbf{g}_0 = \nabla\zeta^0@f$.
+   * @param scale The factor @f$s@f$.
+   * @param ir An optional integration rule.
+   */
   ReferentialGravityIntegrator(Diffeomorphism& phi_e,
                                mfem::VectorCoefficient& grad_zeta0,
                                mfem::real_t scale = 1.0,
@@ -1267,15 +1304,17 @@ class ReferentialGravityIntegrator : public mfem::BilinearFormIntegrator {
  * @brief The displacement–potential coupling of the linearised
  * referential system (doc/gravitating_elasticity.md §3.1):
  * @f[
- *   (\zeta^1, v)\ \text{or}\ (u, \chi) \mapsto
- *   s \int_B \langle a'(u)\,\mathbf{g}_0, \nabla\chi\rangle\,dV,
- *   \qquad a'(u) = (\mathrm{tr}H)a_e - H a_e - a_e H^T,\
- *   H = F_e^{-1}Du,
+ *   (\zeta, v) \mapsto
+ *   s \int_B \langle a'(v)\,\mathbf{g}_0, \nabla\zeta\rangle\,dV,
+ *   \qquad a'(v) = (\mathrm{tr}H)a_e - H a_e - a_e H^T,\
+ *   H = F_e^{-1}Dv,
  * @f]
- * as a MixedBilinearForm integrator with the *scalar* potential space as
- * trial and the *vector* displacement space as test (the layout of the
- * existing coupling machinery; the transpose serves the other row). The
- * problem layer passes @f$s = 1/4\pi G@f$.
+ * with @f$a_e@f$, @f$\mathbf{g}_0@f$ as in ReferentialGravityIntegrator,
+ * as a MixedBilinearForm integrator with the *scalar* potential
+ * @f$\zeta@f$ as trial and the *vector* displacement @f$v@f$ as test;
+ * the transpose of the assembled matrix gives the potential-row block.
+ * The problem layer passes @f$s = 1/4\pi G@f$. The default integration
+ * rule has order trial + test order + OrderGrad(test_fe).
  */
 class ReferentialGravityCouplingIntegrator
     : public mfem::BilinearFormIntegrator {
@@ -1291,6 +1330,13 @@ class ReferentialGravityCouplingIntegrator
 #endif
 
  public:
+  /**
+   * @param phi_e The equilibrium mapping (not owned).
+   * @param grad_zeta0 The referential background-potential gradient
+   * @f$\mathbf{g}_0 = \nabla\zeta^0@f$.
+   * @param scale The factor @f$s@f$.
+   * @param ir An optional integration rule.
+   */
   ReferentialGravityCouplingIntegrator(
       Diffeomorphism& phi_e, mfem::VectorCoefficient& grad_zeta0,
       mfem::real_t scale = 1.0, const mfem::IntegrationRule* ir = nullptr)
@@ -1333,17 +1379,22 @@ class ReferentialGravityCouplingIntegrator
  * identity, see doc/mappings.md).
  * -# A `mfem::Coefficient` is provided which specifies the scalar part,
  * \f$f\f$, of a radial mapping \f$\boldsymbol{\xi}(\bvec{x}) = f(\bvec{x})
- * \bvec{x}\f$. \f$\bvec{F}\f$ is then that of the interpolant of the
- * mapping on the trial space.
+ * \bvec{x}\f$. Then \f$\bvec{F} = f\,\bvec{1} + \bvec{x}\otimes\nabla
+ * f_h\f$, with \f$f\f$ evaluated at the quadrature point and
+ * \f$\nabla f_h\f$ the gradient of the interpolant of \f$f\f$ on the trial
+ * space.
  * -# A `mfem::VectorCoefficient` which directly specifies
- * \f$\boldsymbol{\xi}\f$ is provided. \f$\bvec{F}\f$ is again that of the
- * trial-space interpolant.
+ * \f$\boldsymbol{\xi}\f$ is provided. \f$\bvec{F}\f$ is that of the
+ * interpolant of \f$\boldsymbol{\xi}\f$ on the trial space.
  * -# A `mfem::MatrixCoefficient` specifying \f$\bvec{a}\f$ is given directly.
  *
  * There is also a constructor for which no coefficients are provided, this
  * corresponding to the identity transformation.
  *
- * The remaining pulled-back Poisson pieces need no new integrators: the
+ * Modes 2 and 3 sample the coefficient at the trial element's nodes, so the
+ * trial element must be nodal.
+ *
+ * The remaining pulled-back Poisson pieces need no dedicated integrators: the
  * volume terms \f$\int J \rho\, \phi \phi' \dd x\f$ and \f$\int J \rho\,
  * \phi' \dd x\f$ are mfem::MassIntegrator and mfem::DomainLFIntegrator with
  * the coefficient \f$\rho\f$ multiplied by JacobianCoefficient.
@@ -1512,7 +1563,8 @@ class DeformationGradientInterpolator : public mfem::DiscreteInterpolator {
    * @param out_fe The output finite element for the matrix field.
    * @param Trans The element transformation.
    * @param elmat The output dense matrix representing the element interpolation
-   * matrix. Its dimensions will be `out_fe.GetDof()` by `in_fe.GetDof()`.
+   * matrix, of size `d*d*out_fe.GetDof()` by `d*in_fe.GetDof()`, with `d`
+   * the dimension of `in_fe`.
    */
   void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
                               const mfem::FiniteElement& out_fe,
@@ -1569,7 +1621,8 @@ class StrainInterpolator : public mfem::DiscreteInterpolator {
    * @param out_fe The output finite element for the symmetric matrix field.
    * @param Trans The element transformation.
    * @param elmat The output dense matrix representing the element interpolation
-   * matrix. Its dimensions will be `out_fe.GetDof()` by `in_fe.GetDof()`.
+   * matrix, of size `d*(d+1)/2*out_fe.GetDof()` by `d*in_fe.GetDof()`,
+   * with `d` the dimension of `in_fe`.
    */
   void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
                               const mfem::FiniteElement& out_fe,
@@ -1594,7 +1647,9 @@ class StrainInterpolator : public mfem::DiscreteInterpolator {
  * element space formed from the product of a scalar space on which the gradient
  * operator is defined. The output trace-free symmetric matrix field
  * \f$\bvec{v}\f$ must be defined on a nodal finite element space formed from
- * the product of a scalar space.
+ * the product of a scalar space. Its components are those of
+ * `TraceFreeSymmetricMatrixIndex`: the lower triangle in column-major order
+ * without the last diagonal entry, which is minus the sum of the others.
  */
 class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
  private:
@@ -1622,7 +1677,8 @@ class DeviatoricStrainInterpolator : public mfem::DiscreteInterpolator {
    * field.
    * @param Trans The element transformation.
    * @param elmat The output dense matrix representing the element interpolation
-   * matrix. Its dimensions will be `out_fe.GetDof()` by `in_fe.GetDof()`.
+   * matrix, of size `(d*(d+1)/2-1)*out_fe.GetDof()` by `d*in_fe.GetDof()`,
+   * with `d` the dimension of `in_fe`.
    */
   void AssembleElementMatrix2(const mfem::FiniteElement& in_fe,
                               const mfem::FiniteElement& out_fe,
@@ -1702,8 +1758,8 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The one-sided kernel of the slip-interface pressure form
- * (doc/slip_interface.tex, Proposition 1): on boundary elements of one
- * (solid-side) vector space,
+ * (doc/slip_interface.tex, proposition "The interface form"): on boundary
+ * elements of one (solid-side) vector space,
  * \f[
  *   G(\bvec{u}, \bvec{w}) = \oint_\Sigma \pi\;
  *     \bnu\cdot\nabla_\Sigma \bvec{u}\,[\,P_T F_e^{-1}\bvec{w}\,]\,\dd S,
@@ -1713,10 +1769,15 @@ class BoundaryNormalNormalIntegrator : public mfem::BilinearFormIntegrator {
  * \f$\nabla_\Sigma\f$ the tangential (surface shape-function) gradient,
  * and \f$P_T\f$ the tangential projector (the direction slot is
  * tangential on the slip constraint; the projector makes the discrete
- * form well defined off it). NON-symmetric by design: the symmetrised
- * two-field interface blocks are built from \f$G\f$ and the pairing by
- * NewSlipInterfaceMatrix. The space must be a nodal vector space with
- * vdim equal to the space dimension and Ordering::byNODES.
+ * form well defined off it). NON-symmetric by design: \f$\bvec{u}\f$
+ * occupies the test (row) slot and \f$\bvec{w}\f$ the trial (column)
+ * slot, and the symmetrised two-field interface blocks are built from
+ * \f$G\f$ and the pairing by NewSlipInterfaceMatrix
+ * (doc/slip_interface.tex, "One-sided assembly of the interface forms").
+ * \f$\bvec{n}\f$ is the boundary element's unit normal (CalcOrtho), i.e.
+ * the outward normal of the solid SubMesh. The space must be a nodal
+ * vector space with vdim equal to the space dimension and
+ * Ordering::byNODES.
  */
 class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
  private:
@@ -1736,6 +1797,8 @@ class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
       mfem::Coefficient& pi, const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), pi_{&pi} {}
 
+  /** @brief With the equilibrium mapping @p map (not owned) supplying
+   * \f$F_e\f$ and \f$\bnu\f$. */
   SlipInterfacePressureIntegrator(mfem::Coefficient& pi, Diffeomorphism& map,
                                   const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), pi_{&pi}, map_{&map} {}
@@ -1751,8 +1814,8 @@ class SlipInterfacePressureIntegrator : public mfem::BilinearFormIntegrator {
 
 /**
  * @brief The one-sided VECTOR kernel of the broken-\f$\zeta\f$ gravity
- * interface form (doc/slip_interface.tex, the gravity-interface
- * proposition): on boundary elements of one (solid-side) vector space,
+ * interface form (doc/slip_interface.tex, proposition "The gravity
+ * interface form"): on boundary elements of one (solid-side) vector space,
  * \f[
  *   G_A(\bvec{u}, \bvec{w}) = \oint_\Sigma
  *     \mathbf{A}\cdot\nabla_\Sigma \bvec{u}\,[\,P_T F_e^{-1}\bvec{w}\,]
@@ -1789,6 +1852,7 @@ class SlipInterfaceGravityIntegrator : public mfem::BilinearFormIntegrator {
                                  const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), grad_zeta0_{&grad_zeta0}, G_{G} {}
 
+  /** @brief With the equilibrium mapping @p map (not owned). */
   SlipInterfaceGravityIntegrator(mfem::VectorCoefficient& grad_zeta0,
                                  mfem::real_t G, Diffeomorphism& map,
                                  const mfem::IntegrationRule* ir = nullptr)
@@ -1816,9 +1880,10 @@ class SlipInterfaceGravityIntegrator : public mfem::BilinearFormIntegrator {
  *     q\,\nabla_\Sigma\zeta\cdot\bigl(P_T F_e^{-1}\bvec{w}\bigr)\,\dd S,
  *   \qquad q = \frac{\mathbf{b}\cdot\bnu}{4\pi G},
  * \f]
- * coefficients as SlipInterfaceGravityIntegrator. Assembled on the
- * solid side; the four rectangular \f$(\bvec{v}, \zeta)\f$ blocks are
- * built by NewSlipGravityInterfaceMatrix.
+ * coefficients as SlipInterfaceGravityIntegrator. Rows (test) are the
+ * vector dofs, columns (trial) the scalar dofs. Assembled on the solid
+ * side; the four rectangular \f$(\bvec{v}, \zeta)\f$ blocks are built by
+ * NewSlipGravityInterfaceMatrix.
  */
 class SlipInterfaceGravityScalarIntegrator
     : public mfem::BilinearFormIntegrator {
@@ -1833,11 +1898,16 @@ class SlipInterfaceGravityScalarIntegrator
 #endif
 
  public:
+  /** @param grad_zeta0 The referential background-potential gradient
+   *  \f$\nabla\zeta^0\f$ on the interface.
+   *  @param G The gravitational constant.
+   *  @param ir Optional integration rule; identity mapping. */
   SlipInterfaceGravityScalarIntegrator(
       mfem::VectorCoefficient& grad_zeta0, mfem::real_t G,
       const mfem::IntegrationRule* ir = nullptr)
       : mfem::BilinearFormIntegrator(ir), grad_zeta0_{&grad_zeta0}, G_{G} {}
 
+  /** @brief With the equilibrium mapping @p map (not owned). */
   SlipInterfaceGravityScalarIntegrator(
       mfem::VectorCoefficient& grad_zeta0, mfem::real_t G, Diffeomorphism& map,
       const mfem::IntegrationRule* ir = nullptr)

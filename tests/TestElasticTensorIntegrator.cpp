@@ -16,6 +16,8 @@
     matrices by the block rotation.
   - 2-D/3-D consistency: a plane-strain 2-D problem and an extruded 3-D
     slab give the same in-plane energy per unit thickness.
+  - Pull-back identity: the mapped integrator on the reference mesh equals
+    the standard integrator on the mapped mesh to machine precision.
 */
 
 namespace {
@@ -287,7 +289,8 @@ TEST(ElasticTensorPlaneStrain, SlabEnergy) {
   EXPECT_NEAR(e3 / h, e2, 1e-12 * std::abs(e2));
 }
 
-// Pull-back identity (doc/mappings.md, Section 5): with the mapping
+// Pull-back identity (doc/mappings.md, "The discrete change-of-variables
+// identity"): with the mapping
 // interpolated on the mesh's geometric space and one integration rule on
 // both sides, the mapped integrator on the reference mesh — referential
 // tensor, gshape -> gshape F^{-1}, w -> J w, the pulled-back 45-component

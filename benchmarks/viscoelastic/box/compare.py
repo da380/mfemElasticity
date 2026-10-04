@@ -1,7 +1,9 @@
 """Compare viscoelastic_box results with their exact reference.
 
-The metrics are those of the Love-number histories (../love/compare.py),
-per observable f over t = 0+ and every output time:
+The metrics follow those of the Love-number histories (../love/compare.py),
+per observable f over t = 0+ and every output time, all relative to the
+largest reference value (the Love-number elastic error is relative to
+f_ref(0+) instead):
 
   history   max_t |f_FE - f_ref| / max_t |f_ref|      (the headline)
   elastic   |f_FE(0+) - f_ref(0+)| / max_t |f_ref|    (spatial error)

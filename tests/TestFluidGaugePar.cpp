@@ -2,12 +2,14 @@
   Parallel tests for the gauged-fluid option of LinearQuasiStaticProblemBase
   on purely elastic bodies (see TestFluidGauge.cpp for the serial suite and
   the exact references). Run with 1, 2 and 4 ranks; a standalone MPI program
-  returning the number of failed checks.
+  returning 0 if every check passes, 1 otherwise.
 
   The exact Lame solution for uniform external pressure with a fluid core is
-  partition-independent, so every rank's error against it is the check; the
-  refinement-residual contraction and the epsilon-independence of the
-  solution are checked globally.
+  partition-independent, so the global relative L2 error against it is the
+  check, in 2-D and 3-D. Also checked: the gauge-residual count and decay
+  (under this conformal load the first residual sits at the near-kernel
+  noise floor; the contraction rate proper is asserted in the serial
+  suite), and the epsilon-independence of the refined solution.
 */
 
 #include <mpi.h>
@@ -178,5 +180,5 @@ int main(int argc, char* argv[]) {
                 << Mpi::WorldSize() << " ranks.\n";
     }
   }
-  return num_fails;
+  return num_fails == 0 ? 0 : 1;  // an exit status is taken modulo 256
 }

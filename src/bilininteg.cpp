@@ -919,8 +919,8 @@ void ReferentialGravityCouplingIntegrator::AssembleElementMatrix2(
               "not supported.");
 
 #ifdef MFEM_THREAD_SAFE
-  DenseMatrix dshape_u_, gshape_u_, dshape_p_, gshape_p_, F_, a_, M_;
-  Vector g0v_, w_, beta_, gamma_, fw_, agp_;
+  DenseMatrix dshape_u_, gshape_u_, dshape_p_, gshape_p_, F_, a_, M_, agp_;
+  Vector g0v_, w_, beta_, gamma_, fw_;
 #endif
   dshape_u_.SetSize(dof_u, dim);
   gshape_u_.SetSize(dof_u, dim);

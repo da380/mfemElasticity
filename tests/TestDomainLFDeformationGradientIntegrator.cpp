@@ -4,6 +4,10 @@
 class LinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int m : grad u for the matrix coefficient m_ij = (i+1)(j+2) x_i x_j and
+// u = |x|^2 x, against the integral of the L2 interpolant of the
+// pointwise contraction m : grad u, with grad u = 2 x x^T + |x|^2 1
+// computed by hand; the two agree to interpolation error.
 TEST_P(LinearFormIntegratorTests, DomainLFDeformationGradientIntegrator) {
   const auto& current_tuple = GetParam();
 

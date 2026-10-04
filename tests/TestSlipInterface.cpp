@@ -279,8 +279,9 @@ struct Model {
     return E;
   }
 
-  // Predicted volume Hessian (the Section-3 operators, per region, with
-  // each region's own first-order field).
+  // Predicted volume Hessian (the volume Hessians of doc/slip_interface.tex,
+  // "The second variation", per region, with each region's own
+  // first-order field).
   double SolidHess(const Vec2& x, const Mat2& Dv) const {
     const Mat2 Fe = phi.Grad(x);
     const Mat2 Ce = MatMul(MatT(Fe), Fe);
@@ -625,11 +626,11 @@ TEST(SlipInterface, DiscreteMatrixMatchesQuadrature) {
 
 
 // ---------------------------------------------------------------------------
-// Gravity for the broken motion (doc/slip_interface.tex, the gravity-
-// Hessian subsection): with a rigid stress-free solid (rho_s = 0 and the
-// hydrostatic fluid pressure vanishing at the interface, pi(rc) = 0),
-// B_Sigma and the extension terms switch off, isolating the new volume
-// pieces: the mismatch coupling (through its zeta1-eliminated
+// Gravity for the broken motion (doc/slip_interface.tex, "The gravity
+// Hessian of the broken motion, explicitly"): with a rigid stress-free
+// solid (rho_s = 0 and the hydrostatic fluid pressure vanishing at the
+// interface, pi(rc) = 0), B_Sigma and the extension terms switch off,
+// isolating the volume pieces specific to the broken motion: the mismatch coupling (through its zeta1-eliminated
 // stationary value) and the rho w.grad grad zeta0 w term. Exact
 // disc-preserving families (radial squeeze, rotation, composition);
 // the density stays radial, so the exact gravitational self-energy is
@@ -863,7 +864,8 @@ TEST(SlipInterface, GravityHessianIdentity) {
     }
   }
 
-  // The gravity-slip cross terms vanish (Lemma vol): the mixed
+  // The gravity-slip cross terms vanish (doc/slip_interface.tex, lemma
+  // "Second order: gravity stays volume-only"): the mixed
   // second derivative across (radial, rotation) equals the purely
   // elastic cross term; gravity contributes nothing.
   {
@@ -932,10 +934,10 @@ TEST(SlipInterface, GravityHessianIdentity) {
 }
 
 // ---------------------------------------------------------------------------
-// The broken-zeta organisation (doc/slip_interface.tex, the broken-zeta
-// subsection): region-wise composition makes both gravity sources
-// exact, the entire mismatch machinery vanishes, and its place is
-// taken by the jump condition [[zeta1]] = b.[[v]] and ONE new
+// The broken-zeta organisation (doc/slip_interface.tex, "Gravity: the
+// broken-zeta organisation"): region-wise composition makes both gravity
+// sources exact, the entire mismatch machinery vanishes, and its place is
+// taken by the jump condition [[zeta1]] = b.[[v]] and ONE additional
 // interface form (at phi_e = id, b = grad zeta0, q = b.nu / 4 pi G):
 //
 //   G_Sigma = oint { (|b|^2 / 8 pi G) nu . grad_S(vs + vf)[s]
@@ -1218,8 +1220,8 @@ TEST(SlipInterface, BrokenZetaGravityIdentity) {
 }
 
 // ---------------------------------------------------------------------------
-// Discrete realisation of the gravity pieces (the same pinning
-// treatment B_Sigma received): the fluid-side extension operator
+// Discrete realisation of the gravity pieces (pinned like B_Sigma
+// above): the fluid-side extension operator
 // (NewRadialFluidExtension) and the volume integrators that realise
 // the mismatch/Hessian terms at phi_e = id are cross-checked against
 // analytic quadrature on the two-layer mesh:
@@ -1237,7 +1239,7 @@ TEST(SlipInterface, BrokenZetaGravityIdentity) {
 //       and the needed contraction is the compensated combination
 //       G - M(rho grad grad zeta0) -- the SAME mass matrix as (b),
 //       since grad g0 = grad grad zeta0. tilde-v = E u_s is folded
-//       through the new extension and referenced against the analytic
+//       through the extension E and referenced against the analytic
 //       extension rule t(r) u_s(rc x-hat), t = (r/rc)^2.
 TEST(SlipInterface, DiscreteGravityPiecesMatchQuadrature) {
   using namespace mfem;
@@ -1422,8 +1424,8 @@ TEST(SlipInterface, DiscreteGravityPiecesMatchQuadrature) {
     }
   }
 
-  // Observed: order 1 at ~4e-2, order 2 at 2--5e-4 on every piece
-  // (a clean two-orders drop); 10x headroom on the bounds.
+  // Measured relative errors: order 1 ~4e-2, order 2 2--5e-4 on every
+  // piece (a two-orders drop); the bounds leave 10x headroom.
   EXPECT_LT(relMass[1], 5e-3);
   EXPECT_LT(relMass[1], relMass[0]);
   EXPECT_LT(relZeta[1], 5e-3);

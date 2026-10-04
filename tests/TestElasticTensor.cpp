@@ -61,7 +61,8 @@ DenseMatrix RandomSPD(int n) {
   return S;
 }
 
-// Evaluate a MatrixCoefficient at the centre of element 0 of a small mesh.
+// Evaluate a MatrixCoefficient at a fixed point near the centre of one
+// element of a small mesh.
 struct Point {
   explicit Point(int dim)
       : mesh(dim == 2 ? Mesh::MakeCartesian2D(2, 2, Element::QUADRILATERAL)
@@ -130,7 +131,7 @@ TEST_P(ElasticTensorTest, ConversionsRoundTrip) {
   SymmetricTensorBasis::Pack(dim, full.data(), Cm2);
   EXPECT_LT(MaxDiff(Cm, Cm2), kTol);
 
-  // Minor symmetries of the unpacked tensor.
+  // Minor and major symmetries of the unpacked tensor.
   auto at = [&](int i, int j, int k, int l) {
     return full[((i * dim + j) * dim + k) * dim + l];
   };
@@ -162,7 +163,8 @@ TEST_P(ElasticTensorTest, ConversionsRoundTrip) {
     EXPECT_NEAR(sig[s], v, kTol * (1.0 + std::abs(v)));
   }
 
-  // The projectors are orthogonal, complementary and idempotent.
+  // The volumetric and deviatoric projectors are idempotent, mutually
+  // orthogonal and complementary.
   DenseMatrix Pv, Pd, PP(n);
   SymmetricTensorBasis::VolumetricProjector(dim, Pv);
   SymmetricTensorBasis::DeviatoricProjector(dim, Pd);
@@ -171,6 +173,13 @@ TEST_P(ElasticTensorTest, ConversionsRoundTrip) {
   Mult(Pd, Pd, PP);
   EXPECT_LT(MaxDiff(PP, Pd), kTol);
   Mult(Pv, Pd, PP);
+  EXPECT_LT(PP.MaxMaxNorm(), kTol);
+  // Complementary: Pv + Pd = I.
+  PP = Pv;
+  PP += Pd;
+  for (int i = 0; i < PP.Height(); i++) {
+    PP(i, i) -= 1.0;
+  }
   EXPECT_LT(PP.MaxMaxNorm(), kTol);
 }
 
@@ -352,6 +361,7 @@ TEST_P(ElasticTensorTest, RotationOfGeneralTensor) {
   EXPECT_LT(MaxDiff(pt.Eval(rotated), Cr), kTol * Cm.MaxMaxNorm());
 }
 
+// RadialUnitVectorCoefficient returns the unit position vector.
 TEST_P(ElasticTensorTest, RadialAxis) {
   Point pt(dim);
   RadialUnitVectorCoefficient radial(dim);
@@ -368,7 +378,7 @@ INSTANTIATE_TEST_SUITE_P(ElasticTensor, ElasticTensorTest,
                          testing::Values(2, 3));
 
 // The 2-D tensor with an in-plane axis is the plane-strain restriction of
-// the 3-D tensor with the same axis (compared at the coefficient level).
+// the 3-D tensor with the same axis (compared through the static Build).
 TEST(ElasticTensorPlaneStrain, MatchesThreeD) {
   const double A = 3.1, C = 2.7, F = 1.1, L = 0.9, N = 1.2;
   ConstantCoefficient cA(A), cC(C), cF(F), cL(L), cN(N);

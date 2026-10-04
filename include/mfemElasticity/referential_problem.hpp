@@ -27,16 +27,18 @@ namespace mfemElasticity {
 /**
  * @brief A prescribed radial vacuum-extension operator @f$E@f$: buffer
  * displacement vdofs from body displacement vdofs
- * (doc/gravitating_elasticity.md §3.1, option (b)).
+ * (doc/gravitating_elasticity.md, "3.1 The linearised referential
+ * system", option (b)).
  *
  * Buffer dofs shared with the body (the @f$\partial B@f$ trace) copy their
  * body values exactly (through the SubMesh dof pairing), so
  * @f$u_{\mathrm{ext}}|_{\partial B} = u|_{\partial B}@f$ holds to
  * round-off. Interior buffer nodes at radius @f$r@f$ take the tapered
  * radial interpolation @f$t(r)\,u(x_s)@f$ with
- * @f$t = ((r_{\mathrm{out}} - r)/(r_{\mathrm{out}} - r_b))^2@f$ — so both
- * @f$t@f$ and @f$t'@f$ vanish at the outer (DtN) sphere, keeping
- * @f$a = 1@f$ there — and @f$x_s@f$ the radial projection onto the body
+ * @f$t = ((r_{\mathrm{out}} - r)/(r_{\mathrm{out}} - r_b))^p@f$,
+ * @f$p@f$ = @p taper_power (default 2) — for @f$p > 1@f$ both @f$t@f$ and
+ * @f$t'@f$ vanish at the outer (DtN) sphere, keeping @f$a = 1@f$ there —
+ * and @f$x_s@f$ the radial projection onto the body
  * surface (pulled inside by @p pullback for robust point location; the
  * interior rule is a gauge choice, so the pull-back is harmless). Any
  * other smooth extension is an equally valid gauge: agreement of
@@ -70,21 +72,23 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialVacuumExtension(
  * @brief A prescribed radial fluid-extension operator @f$E@f$: fluid
  * displacement vdofs from solid displacement vdofs — the smooth
  * solid-side extension @f$\tilde v@f$ of the gauged gravity treatment
- * for slipping interfaces (doc/slip_interface.tex, the gravity
- * subsection), for a fluid CORE inside a solid shell.
+ * for slipping interfaces (doc/slip_interface.tex, "Gravity: single-valued
+ * zeta, and two vanishing results"), for a fluid CORE inside a solid
+ * shell.
  *
  * Fluid dofs shared with the solid (the interface trace @f$\Sigma@f$)
  * copy their solid values exactly through the SubMesh dof pairing, so
  * @f$\tilde v|_\Sigma = v_s|_\Sigma@f$ holds to round-off — the property
  * the mismatch @f$w = v_f - \tilde v@f$ and the vanishing lemmas rely
  * on. Interior fluid nodes at radius @f$r@f$ take
- * @f$t(r)\,v_s(x_\Sigma)@f$ with @f$t = (r/r_c)^p@f$ (vanishing at the
- * centre, where the radial direction is undefined) and @f$x_\Sigma@f$
+ * @f$t(r)\,v_s(x_\Sigma)@f$ with @f$t = (r/r_c)^p@f$, @f$p@f$ =
+ * @p taper_power (vanishing at the centre, where the radial direction is
+ * undefined; centre nodes keep zero rows) and @f$x_\Sigma@f$
  * the radial projection onto the interface, pushed slightly outward
  * into the solid by @p pushout for robust point location. The interior
  * rule is a gauge choice: agreement of observables between two
- * @f$E@f$s is a gauge-invariance test. Two-sided variants (nested
- * shells) are deferred to the inner-core work.
+ * @f$E@f$s is a gauge-invariance test. The extension is one-sided:
+ * nested shells (a fluid layer between two solids) are not supported.
  *
  * Both spaces must share the solid space's FiniteElementCollection
  * object and live on SubMeshes of one parent. Returns fluid vsize by
@@ -112,7 +116,8 @@ std::unique_ptr<mfem::HypreParMatrix> NewRadialFluidExtension(
 
 /**
  * @brief The symmetrised slip-interface pressure blocks
- * (doc/slip_interface.tex, Proposition 1): with @f$G@f$ the one-sided
+ * (doc/slip_interface.tex, "The second variation", proposition "The
+ * interface form"): with @f$G@f$ the one-sided
  * kernel of SlipInterfacePressureIntegrator assembled on the solid
  * side, the pairing @f$J@f$, the sum map @f$S = [I, J]@f$ and the jump
  * map @f$D = [I, -J]@f$, the interface bilinear form on the broken pair
@@ -167,8 +172,9 @@ ParSlipInterfaceBlocks NewSlipInterfaceMatrix(
 
 /**
  * @brief The symmetrised broken-@f$\zeta@f$ gravity interface blocks
- * (doc/slip_interface.tex, the gravity-interface proposition
- * @f$G_\Sigma@f$). With @f$G_A@f$ the one-sided vector kernel of
+ * (doc/slip_interface.tex, "Gravity: the broken-zeta organisation",
+ * proposition "The gravity interface form"). With @f$G_A@f$ the one-sided
+ * vector kernel of
  * SlipInterfaceGravityIntegrator and @f$M_q@f$ the one-sided
  * scalar--vector kernel of SlipInterfaceGravityScalarIntegrator, both
  * assembled on the solid side, the polarised form on the broken pairs
@@ -180,9 +186,9 @@ ParSlipInterfaceBlocks NewSlipInterfaceMatrix(
  * with @f$S = [I, J]@f$, @f$D = [I, -J]@f$ on the vector pairing and
  * @f$S_\zeta = [I, J_\zeta]@f$ on the scalar pairing. The signs are
  * PLUS here (against B_Sigma's minus): the solid-side normal is
- * @f$-N@f$ of the derivation and both @f$\bnu@f$-linear coefficients
- * flip with it, cancelling the slip-slot minus of
- * @f$\bs = -F_e^{-1}\jump{\bv}@f$ — pinned by the
+ * @f$-N@f$ of the derivation and both @f$\boldsymbol{\nu}@f$-linear
+ * coefficients flip with it, cancelling the slip-slot minus of
+ * @f$\mathbf{s} = -F_e^{-1}\jump{\mathbf{v}}@f$ — pinned by the
  * discrete-vs-quadrature cross-check of TestSlipInterface.
  *
  * Vector–vector blocks in the (solid, fluid) ordering; the vz blocks
@@ -240,8 +246,8 @@ ParSlipGravityInterfaceBlocks NewSlipGravityInterfaceMatrix(
  * @f$\mathbf{S}_e@f$, and the equilibrium mapping @f$\varphi_e@f$. Its
  * stiffness is the total-Lagrangian split
  * MaterialStiffnessIntegrator + GeometricStiffnessIntegrator
- * (doc/gravitating_elasticity.md §2). No branches: relaxation weights are
- * no-ops (a viscoelastic extension supplies branch tensors later).
+ * (doc/gravitating_elasticity.md §2). No branches: the rheology is
+ * purely elastic and relaxation weights are no-ops.
  *
  * All inputs are non-owning and must outlive the rheology. Remember the
  * moduli convention: @f$\hat C@f$ is the *bare* tensor
@@ -327,7 +333,8 @@ class ReferentialElasticRheology : public Rheology {
  * area) loads the potential row alone,
  * @f$\ell_\zeta(\chi) = -\int_{\partial B}\sigma\chi\,dS@f$: the Eulerian
  * form's @f$-\int\sigma\nabla\Phi_0\cdot v@f$ is absorbed by the change of
- * variables (note §3.1). Further loads via ExternalLoad() /
+ * variables (doc/gravitating_elasticity.md §3.1). Further loads via
+ * ExternalLoad() /
  * ExternalPotentialLoad() / AddForce().
  *
  * **Null space.** Rigid modes carry *no* potential partners: the null
@@ -380,11 +387,17 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /**
    * @brief Ball-wide mode: regularise the pure-gauge vacuum-extension
    * field with the harmonic penalty @f$\epsilon\mu_g\int \nabla u :
-   * \nabla v@f$ on the marked (buffer) attributes, with the Tikhonov
-   * refinement of the gauge machinery removing the @f$O(\epsilon)@f$ bias
-   * from the observables (as for the gauged fluid: moderate epsilon and a
-   * few refinements; epsilon -> 0 without refinement wrecks the
-   * conditioning instead). Call before the first Solve().
+   * \nabla v@f$ on the marked (buffer) attributes, through the gauge
+   * machinery of SetGaugedFluid() with @p refinements Tikhonov
+   * refinements. Unlike the gauged fluid, the refinement is not reliable
+   * here: the buffer carries no physical stiffness, the generalised
+   * spectrum of the (operator, penalty) pair degenerates like @f$h^2@f$,
+   * and the refinement diverges under mesh and order refinement
+   * (doc/gauge_penalty_iteration.tex, "When it must fail: the spectral
+   * condition"). Use @p refinements = 0 (a single biased solve, with an
+   * @f$O(\epsilon)@f$ error in the observables), or the prescribed
+   * extension of SetPrescribedVacuumExtension(), which is exact. Call
+   * before the first Solve().
    */
   void SetVacuumExtension(const mfem::Array<int>& buffer_marker,
                           mfem::Coefficient& mu_gauge, mfem::real_t epsilon,
@@ -493,8 +506,11 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   /**
    * @brief Diagnostic: @f$\|A_{\mathrm{blk}} n\| / \|A\|_{\max}@f$ for
    * each rigid null pair @f$(u_r, 0)@f$ under the full block operator.
-   * Translations are exact discrete null vectors (round-off); rotations
-   * are near-null, decreasing with refinement. Assembles if needed.
+   * Without a vacuum extension, or with one that carries the body's rigid
+   * motions into the buffer, translations are exact discrete null vectors
+   * (round-off); the tapered NewRadialVacuumExtension does not, and makes
+   * them near-null. Rotations are near-null, decreasing with refinement.
+   * Assembles if needed.
    */
   std::vector<mfem::real_t> RigidPairResiduals();
 
@@ -506,8 +522,8 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
   bool SolveLinearSystem(const mfem::Vector& B, mfem::Vector& X) override;
 
   /** @brief Tikhonov refinement on the coupled system, as for the gauged
-   * fluid: refinement solves carry zero potential load, and the potential
-   * accumulates alongside the displacement. */
+   * fluid: refinement solves are cold-started and carry zero potential
+   * load, and the potential accumulates alongside the displacement. */
   bool GaugeRefine(mfem::Vector& X) override;
 
  protected:
@@ -611,7 +627,10 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
  * (doc/slip_interface.tex): the broken displacement pair
  * @f$(u_s, u_f)@f$ on solid and fluid SubMeshes of the ball and the
  * single-valued referential potential @f$\zeta^1@f$ on the ball — the
- * three-block system of the note's §"collected operator".
+ * three-block system of doc/slip_interface.tex, "The collected operator".
+ * EnableBrokenZeta() switches to the four-block broken-@f$\zeta@f$
+ * organisation (doc/slip_interface.tex, "Gravity: the broken-zeta
+ * organisation").
  *
  * **Blocks.**
  * - Solid row: the base class's material + geometric + referential-gravity
@@ -630,10 +649,11 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
  * - Interface: the pressure form @f$B_\Sigma@f$ (NewSlipInterfaceMatrix)
  *   plus the penalty @f$\theta[B_n, -B_nJ; -J^TB_n, J^TB_nJ]@f$ on the
  *   normal-jump constraint @f$\nu\cdot[\![u]\!] = 0@f$, with
- *   augmented-Lagrangian iterations driving the jump to zero,
- *   interleaved with the Tikhonov refinement of the fluid gauge penalty
- *   (the fluid displacement is determined only up to linearised
- *   relabellings, exactly as in the welded gauged formulation).
+ *   augmented-Lagrangian iterations driving the jump to zero (or a
+ *   multiplier block, EnableKKT()), interleaved with the Tikhonov
+ *   refinement of the fluid gauge penalty (the fluid displacement is
+ *   determined only up to linearised relabellings, exactly as in the
+ *   welded gauged formulation).
  *
  * **Null space**: common translations @f$(t, t, 0)@f$ and *independent*
  * mapped rotations of shell and core (a frictionless axisymmetric
@@ -645,12 +665,14 @@ class LinearQuasiStaticReferentialSelfGravitatingProblem
  * blocks are hypre products on true dofs with the cross-rank pairing
  * and extension operators.
  *
- * **Limitations** (deliberate, per the work plan): the *mismatch*
- * gravity pieces are assembled at @f$\varphi_e = \mathrm{id}@f$ (their
- * mapped variants are deferred with the mapped discrete-gravity unit;
- * the elastic, @f$B_\Sigma@f$ and §3 gravity terms are fully mapped);
- * one fluid region inside a solid shell (nested-shell/two-sided
- * extensions with the inner-core work).
+ * **Limitations**: the single-valued organisation assembles its
+ * *mismatch* gravity pieces at @f$\varphi_e = \mathrm{id}@f$ only and
+ * refuses a non-identity equilibrium mapping
+ * (Diffeomorphism::IsIdentity); its elastic, @f$B_\Sigma@f$ and
+ * referential gravity terms are fully mapped. Mapped and aspherical
+ * backgrounds use the broken-@f$\zeta@f$ organisation
+ * (EnableBrokenZeta()), assembled mapped throughout. One fluid region
+ * inside a solid shell (the radial fluid extension is one-sided).
  */
 class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
     : public LinearQuasiStaticReferentialSelfGravitatingProblem {
@@ -670,6 +692,8 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * @f$\Sigma@f$ (the background's pressure field).
    * @param interface_marker Boundary attributes of @f$\Sigma@f$ on the
    * *solid* SubMesh.
+   * @param gravitational_constant @f$G@f$ in the units of the problem.
+   * @param dtn_degree Truncation degree of the DtN expansion.
    * @param background_zeta0 Optional @f$\zeta^0@f$; when null it is
    * solved from the density over solid *and* fluid.
    */
@@ -701,13 +725,19 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * @brief The fluid gauge penalty @f$\epsilon\,2\mu_g\,\mathrm{dev}\,
    * \varepsilon(u_f):\mathrm{dev}\,\varepsilon(u_f')@f$ on the whole
    * fluid space (solver operator only; the interleaved refinement removes
-   * the @f$O(\epsilon)@f$ bias). Required before the first Solve().
+   * the @f$O(\epsilon)@f$ bias). Assembled covariantly as
+   * ElasticTensorIntegrator(C, map) with the deviatoric tensor and the
+   * rheology's equilibrium mapping, so that a relabelled problem's
+   * penalty is the pull-back of the unmapped one. Required before the
+   * first Solve().
    */
   void SetFluidGauge(mfem::Coefficient& mu_gauge, mfem::real_t epsilon);
 
-  /** @brief Constraint penalty @f$\theta@f$ and the number of
-   * augmented-Lagrangian iterations per Solve() (each interleaves one
-   * Tikhonov refinement of the fluid gauge). */
+  /** @brief Constraint penalty @f$\theta@f$ (default 100) and the number
+   * of augmented-Lagrangian iterations per Solve() (default 8; each
+   * interleaves one Tikhonov refinement of the fluid gauge). On the KKT
+   * path the count is the number of gauge-refinement solves, and
+   * @f$\theta@f$ the augmentation of the displacement blocks. */
   void SetConstraint(mfem::real_t theta, int al_iterations);
 
   /**
@@ -722,17 +752,21 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * @f$S@f$ (Golub–Greif) and the @f$1/\theta@f$-scaled lumped interface
    * mass preconditioning the multiplier block. The outer loop shrinks to
    * the gauge refinements (no multiplier updates); SetConstraint()'s
-   * iteration count bounds those refinements. Single-valued organisation
-   * only (EnableBrokenZeta() and EnableKKT() are mutually exclusive for
-   * now).
+   * iteration count sets the number of those refinement solves, all of
+   * which run. Single-valued organisation only (EnableBrokenZeta() and
+   * EnableKKT() are mutually exclusive). See doc/slip_interface.tex,
+   * "Constraint enforcement", "KKT enforcement".
    *
    * @param fes_scalar_solid Scalar space on the solid SubMesh; the
-   * multiplier is its restriction to the interface boundary dofs. One
-   * order below the displacement is the recommended (mortar-style)
-   * choice — measured ~1.6x cheaper than equal order at a
-   * constraint-discretisation shift well below mesh error
-   * (doc/kkt_slip_solver.md); equal order is the strictest constraint
-   * space and what the serial cross-check test uses. Not owned.
+   * multiplier is its restriction to the interface boundary dofs. Equal
+   * order with the displacement is the strictest constraint space (used
+   * by the serial cross-check test). One order below is the mortar-style
+   * choice: cheaper at an endpoint shift well below the mesh error, and
+   * the recommended setting in 3-D, but not robust everywhere — with
+   * quadratic displacements in 2-D it can make the gauge refinements
+   * diverge. With a lower-order multiplier, check that
+   * NormalJumpHistory() decreases (doc/slip_interface.tex, "The
+   * multiplier space"). Not owned.
    */
   void EnableKKT(mfem::FiniteElementSpace* fes_scalar_solid);
 
@@ -745,15 +779,16 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
   const mfem::Vector& KKTMultiplier() const { return lambda_; }
 
   /**
-   * @brief Inexact AL sweeps: the inner tolerance of the early sweeps is
-   * relaxed to @p loose_rel and tightens geometrically to the solver's
-   * relative tolerance, the final sweep always running at full
-   * tolerance. Roughly halves the cost on the 3-D benchmarks at a
-   * solver-endpoint shift an order below the mesh error (measured
-   * 1e-3 on fluid_core h = 0.3; doc/slip_interface.tex). The default
-   * @p loose_rel = 0 keeps every sweep at full tolerance — the
-   * reproducible-endpoint mode that strict comparisons and
-   * finite-difference studies must use.
+   * @brief Inexact sweeps (the AL sweeps of both organisations and the
+   * KKT path's gauge refinements): the inner tolerance of the early
+   * sweeps is relaxed to @p loose_rel and tightens geometrically to the
+   * solver's relative tolerance, the final sweep always running at full
+   * tolerance (doc/slip_interface.tex, "The sweep schedule"). Roughly
+   * halves the cost on the 3-D benchmarks at a solver-endpoint shift an
+   * order below the mesh error (doc/benchmarks.tex, "Solver settings:
+   * measured behaviour"). The default @p loose_rel = 0 keeps every sweep
+   * at full tolerance — the reproducible-endpoint mode that strict
+   * comparisons and finite-difference studies must use.
    */
   void SetSweepTolerance(mfem::real_t loose_rel) {
     sweep_loose_rel_ = loose_rel;
@@ -761,13 +796,14 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
 
   /**
    * @brief Switch to the broken-@f$\zeta@f$ organisation
-   * (doc/slip_interface.tex, sec:brokenzeta): the potential is composed
+   * (doc/slip_interface.tex, "Gravity: the broken-zeta organisation"):
+   * the potential is composed
    * region-wise, @f$(\zeta_o, \zeta_f)@f$ on the outer (solid + buffer)
    * and fluid regions, the gravity sources are exact — the fluid
    * extension and every mismatch term drop, so SetFluidExtension() is
    * not required — and their place is taken by the interface form
    * @f$G_\Sigma@f$ (NewSlipGravityInterfaceMatrix) and the scalar-jump
-   * constraint @f$\jump{\zeta^1} = \mathbf{b}\cdot\jump{\bv}@f$,
+   * constraint @f$\jump{\zeta^1} = \mathbf{b}\cdot\jump{\mathbf{v}}@f$,
    * imposed by penalty + augmented Lagrangian alongside the normal-jump
    * constraint. The vacuum extension (the outer region's own buffer
    * continuation) is still required. The DtN stays on the ball space
@@ -807,7 +843,7 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
   void ScaleBrokenGravityInterface(mfem::real_t s) { gs_scale_ = s; }
 
   /** @brief Scalar-jump energies @f$\sqrt{(c, c)_\Sigma}@f$,
-   * @f$c = \jump{\zeta^1} - \mathbf{b}\cdot\jump{\bv}@f$, at the end of
+   * @f$c = \jump{\zeta^1} - \mathbf{b}\cdot\jump{\mathbf{v}}@f$, at the end of
    * each AL iteration of the last broken-@f$\zeta@f$ Solve(). */
   const std::vector<mfem::real_t>& ZetaJumpHistory() const {
     return zeta_jump_history_;
@@ -838,14 +874,17 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
   /**
    * @brief Diagnostic: @f$\|A_{\mathrm{blk}}(u_s, u_f, 0)\| /
    * (\|A\|_{\max}\|(u_s,u_f)\|)@f$ under the full three-block operator
-   * (physical interface form included, penalty excluded). Assembles if
-   * needed.
+   * (physical interface form included, penalty and gauge penalty
+   * excluded). Assembles if needed. Single-valued organisation only.
    */
   mfem::real_t BlockNullPairResidual(const mfem::Vector& us_true,
                                      const mfem::Vector& uf_true);
 
   /** @brief Residuals of the slip null pairs: common translations, then
-   * the independent solid and fluid mapped rotations. */
+   * the independent solid and fluid mapped rotations. Single-valued
+   * organisation: BlockNullPairResidual() (penalties excluded);
+   * broken-@f$\zeta@f$ organisation: the full four-block solver operator,
+   * constraint penalties included, normalised by its largest entry. */
   std::vector<mfem::real_t> SlipRigidPairResiduals();
 
   /** @brief Diagnostic (broken mode, after a Solve): the assembled
@@ -873,7 +912,8 @@ class LinearQuasiStaticReferentialSelfGravitatingSlipProblem
    * @f$\nu@f$ alone), "Pb" the scalar-jump @f$b\otimes b@f$ mass (solid
    * u slot; the mapped @f$b = F^{-T}\nabla\zeta^0@f$), "Kvz" the mixed
    * @f$b@f$-kernel (zeta_s trial, solid u test), and "Mz" the plain
-   * interface scalar mass (zeta_s slot; no mapping ingredient). */
+   * interface scalar mass (zeta_s slot; no mapping ingredient); "KvzT"
+   * applies the transpose of "Kvz". */
   void ApplyBrokenKernel(const std::string& kernel, const mfem::Vector& x,
                          mfem::Vector& y);
 

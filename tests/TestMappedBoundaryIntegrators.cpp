@@ -1,11 +1,13 @@
-// Pull-back identity tests (doc/mappings.md, Section 5) for the boundary
-// (Nanson) machinery: for a smooth non-polynomial mapping interpolated on
+// Pull-back identity tests (doc/mappings.md, "The discrete
+// change-of-variables identity") for the boundary (Nanson) machinery: for a smooth non-polynomial mapping interpolated on
 // the mesh's geometric space, referential coefficients and one
 // integration rule on both sides, each mapped boundary term assembled on
 // the reference mesh must equal its standard counterpart on the mapped
-// mesh to round-off. Covered:
-//  - BoundaryNormalScalarIntegrator (F3 coupling): m dS -> nu dS exactly;
-//  - BoundaryNormalNormalIntegrator with the full F2 composition
+// mesh to round-off. (F2) and (F3) are the fluid-interface terms of
+// doc/self_gravitation.md, "Bilinear form". Covered:
+//  - BoundaryNormalScalarIntegrator (the (F3) coupling): m dS -> nu dS
+//    exactly;
+//  - BoundaryNormalNormalIntegrator with the full (F2) composition
 //    (referential rho times MappedBoundaryNormalDotCoefficient):
 //    (nu.u)(nu.u')/|nu| dS, exercising the adjacent-element gradient of
 //    GridFunctionDiffeomorphism on boundary transformations;
@@ -86,7 +88,7 @@ TEST_P(MappedBoundaryIntegratorsTest, MatchesMappedMesh) {
   TransformedFunctionCoefficient rho_ref(xi_h, rho_fn);
   TransformedVectorFunctionCoefficient g_ref(xi_h, g_fn);
 
-  // F3: int q p (m.v) dS.
+  // (F3): int q p (m.v) dS.
   {
     MixedBilinearForm a_ref(&sfes, &vfes);
     a_ref.AddBoundaryIntegrator(
@@ -106,7 +108,7 @@ TEST_P(MappedBoundaryIntegratorsTest, MatchesMappedMesh) {
         << "BoundaryNormalScalar";
   }
 
-  // F2 composition: int rho (m.g)(m.u)(m.u') dS.
+  // (F2) composition: int rho (m.g)(m.u)(m.u') dS.
   {
     MappedBoundaryNormalDotCoefficient mg_ref(g_ref, xi_h);
     ProductCoefficient q_ref(rho_ref, mg_ref);

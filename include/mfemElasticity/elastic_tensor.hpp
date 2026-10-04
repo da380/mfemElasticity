@@ -4,7 +4,8 @@
  * of symmetric tensors in the library's component ordering, a family of
  * MatrixCoefficients producing elasticity tensors in that representation
  * (isotropic, transversely isotropic, general Voigt input, rotated frames,
- * deviatoric splits). The integrator consuming them, ElasticTensorIntegrator,
+ * deviatoric splits, the relabelling transformation and the
+ * effective-to-bare conversion under hydrostatic pre-stress). The integrator consuming them, ElasticTensorIntegrator,
  * lives in bilininteg.hpp with the other bilinear form integrators.
  */
 
@@ -235,6 +236,8 @@ class RotatedElasticTensorCoefficient : public ElasticTensorCoefficient {
 class DeviatoricProjectionElasticTensorCoefficient
     : public ElasticTensorCoefficient {
  public:
+  /// @param dim Space dimension.
+  /// @param C The n_s x n_s Mandel tensor to split; not owned.
   /// @param deviatoric_part true: P C P; false: C - P C P.
   DeviatoricProjectionElasticTensorCoefficient(int dim,
                                                mfem::MatrixCoefficient& C,
@@ -249,27 +252,6 @@ class DeviatoricProjectionElasticTensorCoefficient
   mfem::DenseMatrix P_, Cq_, tmp_;
 };
 
-/**
- * @brief The bare (strain-energy) elastic tensor from the seismological
- * effective one under hydrostatic pre-stress with pressure @f$p^0@f$:
- * @f[
- *   C_{ijkl} = C^{\mathrm{eff}}_{ijkl}
- *     - p^0\,(\delta_{ij}\delta_{kl} - \delta_{il}\delta_{jk}
- *             - \delta_{ik}\delta_{jl}),
- * @f]
- * i.e. in Mandel form @f$\hat C = \hat C^{\mathrm{eff}} - p^0\,\hat 1
- * \hat 1^T + 2 p^0 I@f$ — the inverse of Woodhouse & Deuss (2007, eq. 61).
- * Tabulated (PREM) moduli are components of @f$C^{\mathrm{eff}}@f$; the
- * general referential form assembles the bare @f$C@f$, and this decorator
- * keeps model files seismological while making the conversion impossible
- * to forget (doc/gravitating_elasticity.md §2). Isotropically:
- * @f$\lambda = \lambda^{\mathrm{eff}} - p^0@f$,
- * @f$\mu = \mu^{\mathrm{eff}} + p^0@f$,
- * @f$\kappa = \kappa^{\mathrm{eff}} - p^0/3@f$; a fluid
- * (@f$\mu^{\mathrm{eff}} = 0@f$) has the bare shear modulus @f$p^0@f$.
- * The conversion is three-dimensional physics; the 2-D variant applies
- * the same Mandel formula and is formal.
- */
 /**
  * @brief The relabelling transformation of the second elastic tensor
  * (doc/gravitating_elasticity.md §1; the (C, S_e) form of AC18 eq. 136):
@@ -298,6 +280,28 @@ class RelabelledElasticTensorCoefficient : public ElasticTensorCoefficient {
   mfem::DenseMatrix F_, Qi_, Cq_, tmp_;
 };
 
+/**
+ * @brief The bare (strain-energy) elastic tensor from the seismological
+ * effective one under hydrostatic pre-stress with pressure @f$p^0@f$:
+ * @f[
+ *   C_{ijkl} = C^{\mathrm{eff}}_{ijkl}
+ *     - p^0\,(\delta_{ij}\delta_{kl} - \delta_{il}\delta_{jk}
+ *             - \delta_{ik}\delta_{jl}),
+ * @f]
+ * i.e. in Mandel form @f$\hat C = \hat C^{\mathrm{eff}} - p^0\,\hat 1
+ * \hat 1^T + 2 p^0 I@f$ — the inverse of Woodhouse & Deuss (2007, eq. 61).
+ * Tabulated (PREM) moduli are components of @f$C^{\mathrm{eff}}@f$; the
+ * general referential form assembles the bare @f$C@f$, and this decorator
+ * keeps model files seismological while making the conversion impossible
+ * to forget (doc/gravitating_elasticity.md §2, "The elastic tensor
+ * dictionary"). Isotropically:
+ * @f$\lambda = \lambda^{\mathrm{eff}} - p^0@f$,
+ * @f$\mu = \mu^{\mathrm{eff}} + p^0@f$,
+ * @f$\kappa = \kappa^{\mathrm{eff}} - p^0/3@f$; a fluid
+ * (@f$\mu^{\mathrm{eff}} = 0@f$) has the bare shear modulus @f$p^0@f$.
+ * The conversion is three-dimensional physics; the 2-D variant applies
+ * the same Mandel formula and is formal.
+ */
 class BareElasticTensorCoefficient : public ElasticTensorCoefficient {
  public:
   /**

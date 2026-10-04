@@ -2,10 +2,13 @@
 // benchmark_case.hpp
 //
 // What the drivers of the Love-number benchmark share: a case read from its
-// manifest and set up as a LinearQuasiStaticMixedSelfGravitatingProblem, the
-// harmonic analysis of its solution on the interfaces of the solid, the
-// translation that takes a solution to the centre-of-mass frame, and the
-// writing of numbers as JSON.
+// manifest and set up for the formulation chosen by -method (the Eulerian
+// LinearQuasiStaticMixedSelfGravitatingProblem for 'dahlen' and 'gauged',
+// the referential and slipping classes for the others), the harmonic
+// analysis of its solution on the interfaces of the solid, the translation
+// that takes a solution to the centre-of-mass frame, and the writing of
+// numbers as JSON. The formulations and the cases are described in
+// doc/benchmarks.tex, "The Love-number family".
 //
 // A case is what make_case.py writes: the mesh of the body and its buffer
 // shell, the density and the bulk and shear moduli as L2 GridFunctions on
@@ -274,10 +277,11 @@ struct CaseOptions {
                    "exact analytic mapping.");
     args.AddOption(&map_shift, "-map-shift", "--map-shift",
                    "Degree-0 interface shift eps (relabelling.hpp, the "
-                   "tier-3 perturbation benchmark): the named reference "
+                   "perturbation family): the named reference "
                    "interface moves radially by eps, the physical model "
                    "being the perturbed spherical one — pair with "
-                   "-profiles of THAT model. Referential methods only. "
+                   "-profiles of THAT model. Methods referential and "
+                   "slip_broken only. "
                    "Zero (default): off.");
     args.AddOption(&map_shift_interface, "-map-shift-interface",
                    "--map-shift-interface",
@@ -751,9 +755,9 @@ class Case {
   const InterfaceAnalysis& Surface() const { return analyses[surface]; }
   bool HasFluid() const { return fluid_attributes.Size() > 0; }
 
-  // What the method supports: the referential family solves the load
-  // problems only for now, and its potential is meaningful (an
-  // observable) on the displacement region, not by layer.
+  // What the method supports: the referential family is driven by
+  // surface loads only (Solve() refuses a tide), and its potential is
+  // meaningful (an observable) on the displacement region, not by layer.
   bool SupportsTide() const { return eulerian; }
   bool SupportsProfiles() const { return eulerian; }
 
@@ -1031,7 +1035,7 @@ class Case {
     const bool root = Mpi::Root();
     MFEM_VERIFY(p0,
                 "The referential methods need the p0 field: re-make the "
-                "case (make_case.py now exports it).");
+                "case (make_case.py exports it).");
     const bool slip = method == "slip" || method == "slip_broken";
 
     // The buffer: every parent attribute that is not a model layer.
@@ -1088,10 +1092,11 @@ class Case {
       // gradient is discontinuous AT the moving interface, and the
       // one-sided interface kernels evaluate it on the wrong side
       // there (systematically so on curved facets, whose quadrature
-      // points sit O(h^2) off the analytic radius) — measured to be
-      // the whole of the outward-shift AL pathology. The per-submesh
-      // interpolant is side-consistent by construction
-      // (benchmarks/perturbation/README.md).
+      // points sit O(h^2) off the analytic radius), which slows the
+      // augmented-Lagrangian sweeps and pollutes the Love numbers. The
+      // per-SubMesh interpolant is side-consistent by construction
+      // (benchmarks/perturbation/README.md; doc/benchmarks.tex, "The
+      // perturbation family").
       bool interp = options.map_interp;
       if (shifted && !interp) {
         if (root) {
@@ -1196,7 +1201,7 @@ class Case {
           fluid_attributes.Size() == 1 &&
               manifest.FluidSolidInterfaces(fluid_attributes[0]).Size() == 1,
           "The slipping methods support one fluid core inside a solid "
-          "shell for now (the nested-shell extensions are future work).");
+          "shell (nested shells are not supported).");
       fluid_sub_ = std::make_unique<ParSubMesh>(
           ParSubMesh::CreateFromDomain(*parent, fluid_attributes));
       fes_f_ = std::make_unique<ParFiniteElementSpace>(fluid_sub_.get(),
@@ -1331,7 +1336,7 @@ class Case {
           options.map_shift != 0.0 ? 0.0 : options.sweep_tol);
       if (options.kkt) {
         MFEM_VERIFY(method == "slip",
-                    "-kkt: single-valued slip only for now.");
+                    "-kkt: single-valued slip only.");
         auto* solid_mesh = static_cast<ParMesh*>(fes_u->GetMesh());
         if (options.kkt_order > 0) {
           fec_lam_ = std::make_unique<H1_FECollection>(

@@ -18,8 +18,11 @@
 // The solution is known up to a rigid translation when the load has a part
 // of degree one; it is taken to the frame of the centre of mass of the body
 // and its load, that of the reference, by the translation that removes the
-// degree-one part of the potential on the surface. With a fluid layer degree
-// zero is not comparable (README.md) and lmin is one.
+// degree-one part of the potential on the surface. With a fluid layer lmin
+// defaults to one: Dahlen's fluid differs from the reference at degree zero
+// by design (doc/gauged_fluid.md, "Degree 0"), and with the degrees summed
+// into one load that difference would enter every degree's fields. -lmin 0
+// includes degree zero anyway, for either method, to show it.
 //
 // Written: the relative L2 errors of u and phi, the coefficients of U, V and
 // phi on the surface beside the reference's, as JSON; and with -pv the
@@ -101,7 +104,9 @@ int main(int argc, char* argv[]) {
                  "Radial solutions of the reference (default: "
                  "reference_fields.txt beside the manifest).");
   args.AddOption(&lmin, "-lmin", "--min-degree",
-                 "Lowest degree of the load (default: 0, or 1 with a fluid).");
+                 "Lowest degree of the load (default: 0, or 1 with a fluid; "
+                 "-lmin 0 with a fluid shows Dahlen's degree-zero "
+                 "difference).");
   args.AddOption(&latitude, "-lat", "--latitude",
                  "Latitude of the cap's centre, in degrees.");
   args.AddOption(&longitude, "-lon", "--longitude",
@@ -120,15 +125,13 @@ int main(int argc, char* argv[]) {
   Case c(options);
   MFEM_VERIFY(c.eulerian,
               "field_benchmark supports the Eulerian methods (dahlen, "
-              "gauged) for now.");
+              "gauged).");
   Problem& problem = *c.problem;
   const auto& basis = c.Basis();
   const int n = basis.Size();
   if (lmin < 0) {
     lmin = c.HasFluid() ? 1 : 0;
   }
-  MFEM_VERIFY(!(c.HasFluid() && lmin == 0),
-              "Degree zero is not comparable with a fluid layer.");
 
   std::string reference_path = reference_file;
   if (reference_path.empty()) {

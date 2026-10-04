@@ -1,12 +1,12 @@
 /*
   Parallel tests for LinearQuasiStaticMixedSelfGravitatingProblem on
   ParFiniteElementSpaces (ParSubMesh body inside a ParMesh ball). Run with 1, 2
-  and 4 ranks; a standalone MPI program returning the number of failed checks.
+  and 4 ranks; a standalone MPI program returning 0 if every check passes, 1 otherwise.
 
   Every rank also builds the serial problem on the full mesh; the parallel
   and serial solutions are compared through partition-independent
-  quantities (global L2 norms of the displacement and of the potential, the
-  rigid-mode residuals), for both solver types and with a relaxation
+  quantities (global L2 norms of the displacement, the potential and the
+  background potential, the rigid-mode residuals), for both solver types and with a relaxation
   weight, and the time-scaling of the load is checked in parallel.
 */
 
@@ -121,13 +121,10 @@ void RunCase(int dim, int order, const std::string& label) {
     p.SetSolverType(type);
     p.AssembleForce(0.0);
     Check(p.Solve() ? 0.0 : 1.0, 0.0, label + name + " solve");
-    // The parallel and serial solvers of the same type agree to solver
-    // tolerance; across types the gauge regularisation differs at the level
-    // of the rigid-mode residuals, so compare with the serial default.
-    const double tol =
-        type == LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::BlockMINRES
-            ? 1e-8
-            : (order == 1 ? 1e-4 : 1e-5);
+    // Both parallel solvers agree with the serial reference (block MINRES)
+    // to solver tolerance: the two solver types solve the same system
+    // (measured agreement about 1e-11).
+    const double tol = 1e-8;
     Check(RelErr(L2Norm(p.Displacement()), u_ref), tol,
           label + name + " |u|");
     Check(RelErr(L2Norm(p.Potential()), phi_ref), tol,
@@ -179,5 +176,5 @@ int main(int argc, char* argv[]) {
                 << Mpi::WorldSize() << " ranks.\n";
     }
   }
-  return num_fails;
+  return num_fails == 0 ? 0 : 1;  // an exit status is taken modulo 256
 }

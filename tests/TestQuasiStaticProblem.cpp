@@ -20,6 +20,9 @@
     isotropic problem, relaxed or not.
   - LinearQuasiStaticTractionProblem under uniaxial stress gives the exact
     constant strain.
+  - SetMassWeightedGauge selects the solution with zero rho-weighted linear
+    and angular momentum (the Euclidean-gauge solution does not have it),
+    and SetEuclideanGauge restores the Euclidean one.
   - Loads scale with time through the registered coefficients, and
     AddForce superposes exactly like an integrator on the load.
   - The non-natural reference state (ReferentialElasticRheology with an
@@ -231,14 +234,26 @@ TEST_P(ElasticProblemTest, PreconditionerReuse) {
     } else {
       EXPECT_EQ(problem.NumPreconditionerSetups(), assemblies);
     }
-    // A large drift makes the count grow: with reuse the preconditioner is
-    // rebuilt at the following assembly.
+    // A large drift makes the iteration count grow (with reuse, the
+    // preconditioner is rebuilt at the following assembly); the solution
+    // must still be the exact one.
     ConstantCoefficient tiny(0.01), mu_tiny(0.01 * kMu);
     SumCoefficient lambda_tiny(*kappa, mu_tiny, 1.0, -2.0 / dim);
     problem.SetRelaxationWeights({&tiny});
     ASSERT_TRUE(problem.Solve());
     auto u_ref = DirectClamped(lambda_tiny, mu_tiny, ess_bdr, b);
     EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref), 1e-8);
+    // The next assembly, a small further drift that would not by itself
+    // force a rebuild, rebuilds the preconditioner: the large drift marked
+    // it stale.
+    const int setups = problem.NumPreconditionerSetups();
+    ConstantCoefficient near(0.011), mu_near(0.011 * kMu);
+    SumCoefficient lambda_near(*kappa, mu_near, 1.0, -2.0 / dim);
+    problem.SetRelaxationWeights({&near});
+    ASSERT_TRUE(problem.Solve());
+    EXPECT_EQ(problem.NumPreconditionerSetups(), setups + 1);
+    auto u_near = DirectClamped(lambda_near, mu_near, ess_bdr, b);
+    EXPECT_LT(RelMaxDiff(problem.Displacement(), u_near), 1e-8);
   }
 }
 

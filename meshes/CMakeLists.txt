@@ -118,6 +118,10 @@ meshes_add(layered_earth.py    elastogravity_two_layer_2d
                                ARGS --all)
 meshes_add(aspherical_body.py  aspherical_2d aspherical_buffer_2d
                                aspherical_3d aspherical_buffer_3d
+                               aspherical_fluid_core_buffer_2d
+                               spherical_fluid_core_buffer_2d
+                               aspherical_fluid_core_buffer_3d
+                               spherical_fluid_core_buffer_3d
                                MFEM ARGS --all)
 
 add_custom_target(meshes ALL DEPENDS ${MESHES_OUTPUTS})

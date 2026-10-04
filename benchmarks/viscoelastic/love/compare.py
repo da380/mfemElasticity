@@ -8,6 +8,11 @@ writes, per results file,
   <stem>_errors.json   the same, for the campaign and other scripts
   <stem>_history.png   overlay: the reference histories and the FE ones
   <stem>_error.png     the error against time
+  <stem>_series.png    the histories on a linear time axis, when the run
+                       has 20 or more output times
+
+into --out (default: beside the results file); --no-plots skips the
+figures.
 
 The metric is the stepper survey's HISTORY metric carried over: the
 worst error over every output time (not the final one alone), relative

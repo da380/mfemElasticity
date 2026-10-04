@@ -32,7 +32,8 @@
 //   h'_l = -(2l+1)/3 / (1 + mu_l)          k'_l = -1 / (1 + mu_l)
 // which the run compares against when the bulk modulus is large compared
 // with the shear modulus (-kappa). Degree 1 load Love numbers depend on the
-// rigid gauge (here u orthogonal to the rigid modes) and are flagged.
+// rigid gauge (here the default: u orthogonal to the rigid modes in the
+// true-dof inner product) and are flagged.
 //
 // The largest coefficient of the solution at any other (l', m') is printed
 // as a measure of the mesh's departure from spherical symmetry.
@@ -47,7 +48,7 @@
 // love_numbers.csv); with -vis, the displacement and the potential
 // perturbation of the load solve at degree -vl in GLVis.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./love_numbers -o 2 -lmax 6
 //    ./love_numbers -m ../data/coupled_poisson.msh -o 2 -lmax 4 -kappa 100
 // ============================================================================

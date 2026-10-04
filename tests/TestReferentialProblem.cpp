@@ -3,21 +3,36 @@
 
 /*
   Tests for LinearQuasiStaticReferentialSelfGravitatingProblem, the general linearised
-  referential problem (doc/gravitating_elasticity.md), on the canned
-  uniform-body meshes.
+  referential problem (doc/gravitating_elasticity.md, §3.1 "The linearised
+  referential system"), on the canned uniform-body and two-layer meshes.
 
   - Translation null pairs (t, 0) are EXACT discrete null vectors of the
     full block operator (every term vanishes pointwise for Du = 0), for a
     non-trivial equilibrium mapping and arbitrary S_e; the rotation pairs
     (W phi_e, 0) are near-null for a consistent hydrostatic background,
     with residuals decreasing with order.
-  - Hydrostatic cross-check (tier i of the plan): at phi_e = id on the
-    uniform disc, with S_e = -p0(r) 1 and the bare moduli from
-    BareElasticTensorCoefficient(p0), the solution must map onto the
-    Eulerian class's under the change of variables: u agrees directly
-    (same space, same rigid gauge), and zeta1 = phi1 + u.grad(Phi0) on the
-    body — to the two discretisations' common accuracy, improving with
-    order.
+  - Hydrostatic cross-check: at phi_e = id on the uniform disc, with
+    S_e = -p0(r) 1 and the bare moduli from BareElasticTensorCoefficient(p0),
+    the solution must map onto the mixed class's
+    (LinearQuasiStaticMixedSelfGravitatingProblem) under the change of
+    variables: u agrees directly (same space, same rigid gauge), and
+    zeta1 = phi1 + u.grad(Phi0) on the body — to the two discretisations'
+    common accuracy, improving with order. Two different prescribed vacuum
+    extensions agree in the body observables (the extension is gauge).
+  - The ball-wide vacuum extension (SetVacuumExtension) characterised in
+    its biased O(eps) regime.
+  - Unit checks of the relabelling transformation coefficients
+    (CongruenceMatrix, PullbackStressCoefficient).
+  - Fluid relabelling: a divergence-free azimuthal relabelling inside a
+    fluid core is a (near-)null direction only with the bare-moduli
+    conversion (mu_b = p0 in the fluid).
+  - The gauged fluid in the referential class against the mixed class in
+    gauged mode, on a two-layer disc.
+  - Pre-stress in loading: the minimum-deviatoric equilibrium stress of an
+    elliptical body against its quasi-hydrostatic truncation.
+  - Relabelled equilibrium: the same hydrostatic physics described from an
+    interior-relabelled reference reproduces the phi_e = id solution under
+    composition.
 */
 
 namespace {
@@ -166,8 +181,8 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
   for (int order : {1, 2}) {
     Setting s(dim, order);
 
-    // Eulerian reference (the frozen hydrostatic class): PREM-convention
-    // moduli go in directly.
+    // Reference solution from the mixed class (Eulerian potential):
+    // PREM-convention moduli go in directly.
     ConstantCoefficient kappa(kKappa), mu(kMu), rho(kRho);
     IsotropicElasticRheology e_rheology(dim, kappa, mu);
     FunctionCoefficient sigma(SurfaceLoad);
@@ -264,7 +279,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheck2D) {
                        std::max(1e-30, L2Norm(referential.PotentialOnBody())));
     }
   }
-  // With the prescribed vacuum extension the tier-(i) cross-check holds:
+  // With the prescribed vacuum extension the cross-check holds:
   // agreement at the discretisation level, improving with order.
   EXPECT_LT(u_diff[1], 5e-2);
   EXPECT_LT(u_diff[1], 0.6 * u_diff[0]);
@@ -297,10 +312,12 @@ class BodyOnlyTensor : public MatrixCoefficient {
 
 // Ball-wide mode (option (a) of doc/gravitating_elasticity.md §3.1): the
 // displacement carries the gauge vacuum extension through the buffer under
-// a small harmonic stiffness, the gravity terms extend to the DtN sphere,
-// and the tier-(i) cross-check passes: u and zeta1 map onto the Eulerian
-// solution, improving with order; and the observables are independent of
-// the vacuum epsilon (a pure gauge-invariance check).
+// a small harmonic stiffness (no refinement sweeps), and the gravity terms
+// extend to the DtN sphere. The mode is accurate only in its biased O(eps)
+// regime, so the test bounds the error against the mixed-class solution
+// and checks that the bias is present and depends on the vacuum epsilon
+// (the body displacement at two epsilons, eps_gauge_diff; see the comment
+// at the end).
 TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
   const int dim = 2;
   std::vector<double> u_diff, z_diff;
@@ -371,7 +388,7 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
     if (order == 2) {
       GridFunction u2(&fes_u2), z2(&fes_zeta2);
       solve_ball(6e-1, u2, z2);
-      // Observables on the body are independent of the vacuum epsilon.
+      // Body displacement at a second vacuum epsilon.
       GridFunction du(u_ball);
       du -= u2;
       GridFunction du_body(s.fes_u.get());
@@ -401,19 +418,24 @@ TEST(ReferentialProblem, HydrostaticCrossCheckBallWide2D) {
       z_diff.push_back(L2Norm(z_body) / std::max(1e-30, L2Norm(z)));
     }
   }
-  // FINDING (doc/gravitating_elasticity.md §3.1): the ball-wide vacuum
-  // extension works only in the biased O(eps) regime. Iterated Tikhonov
+  // The ball-wide vacuum extension works only in the biased O(eps) regime
+  // (doc/gravitating_elasticity.md §3.1; doc/gauge_penalty_iteration.tex,
+  // "When it must fail: the spectral condition"). Iterated Tikhonov
   // cannot remove the bias here: the physical operator has no buffer
   // stiffness to compare with (only the zeroth-order gravity terms),
   // while the harmonic penalty scales like 1/h^2, so the contraction
   // factor eps * ||A_S^{-1} Q|| grows with refinement of mesh or order
-  // (observed as divergence at order 2). Contrast the gauged fluid, where
+  // (the refinement diverges at order 2). Contrast the gauged fluid, where
   // penalty and physical stiffness share the h-scaling. The assertions
-  // below characterise the biased regime at eps = 3e-2..1e-1; the
+  // below characterise the biased regime at eps = 2e-1; the
   // prescribed-extension route (option (b)) is the accurate one.
   EXPECT_LT(z_diff[1], 0.25);
   EXPECT_LT(u_diff[1], 1.0);
   EXPECT_GT(u_diff[1] + z_diff[1], 5e-2);  // the bias is present
+  // The bias depends on the vacuum epsilon: the body displacement moves
+  // by a few per cent between eps = 2e-1 and 6e-1 (about 5e-2 measured).
+  EXPECT_GT(eps_gauge_diff, 1e-2);
+  EXPECT_LT(eps_gauge_diff, 0.2);
 }
 
 namespace {
@@ -533,7 +555,7 @@ TEST(ReferentialProblem, TransformationLawCoefficients) {
   }
 }
 
-// WP5a, the fluid dictionary test: on a two-layer disc with a uniform
+// The fluid dictionary test: on a two-layer disc with a uniform
 // fluid core, a linearised relabelling supported inside the core (w =
 // curl psi, div w = 0 exactly) is a null pair (w, 0) of the full block
 // operator -- but only JOINTLY: the material term (whose bare shear
@@ -676,10 +698,10 @@ TEST(ReferentialProblem, FluidRelabellingNullPair) {
   }
 }
 
-// WP5a, the gauged fluid in the general class: the same two-layer
-// physical problem through the general referential class (base-class
-// SetGaugedFluid, prescribed vacuum extension) and through the Eulerian
-// self-gravitating class in gauged mode. Solid displacement agrees
+// The gauged fluid in the general class: the same two-layer physical
+// problem through the general referential class (base-class
+// SetGaugedFluid, prescribed vacuum extension) and through the mixed
+// self-gravitating class (Eulerian potential) in gauged mode. Solid displacement agrees
 // directly; the potential through the change of variables
 // zeta1 = phi1 + u.grad Phi0 (modulo the 2-D constant).
 TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
@@ -713,7 +735,8 @@ TEST(ReferentialProblem, GaugedFluidCrossCheck2D) {
     return 0.02 * (1.0 + (2.0 * c * c - 1.0));
   });
 
-  // Eulerian, gauged mode: seismological moduli, fluid = kappa + no shear.
+  // Mixed class, gauged mode: seismological moduli, fluid = kappa + no
+  // shear.
   FunctionCoefficient kappa_c([](const Vector&) { return kKappa; });
   FunctionCoefficient mu_c([r_cmb](const Vector& x) {
     return x.Norml2() < r_cmb ? 0.0 : kMu;
@@ -917,16 +940,15 @@ TEST(ReferentialProblem, EllipticalPrestressLoading) {
   EXPECT_GT(du_rel[1], 1.5 * du_rel[0]);
 }
 
-// Tier (ii): the same spherical hydrostatic physics described from a
-// relabelled reference (interior-only relabelling: identity on the
-// surface and the buffer). The transformed coefficients (C~, S~, rho~)
-// with phi_e = xi must reproduce the phi_e = id solution under
-// composition, u~(x) = u(xi(x)), zeta~ = zeta o xi (modulo the 2-D
-// constant), at the discretisation level and improving with order.
-// Both legs run on the background-state module (background.hpp): the
-// generators own the moduli conversion and the transformation laws that
-// this test originally hand-rolled (the coefficient-level agreement with
-// the hand-rolled chains is TestBackground).
+// The same spherical hydrostatic physics described from a relabelled
+// reference (interior-only relabelling: identity on the surface and the
+// buffer). The transformed coefficients (C~, S~, rho~) with phi_e = xi
+// must reproduce the phi_e = id solution under composition,
+// u~(x) = u(xi(x)), zeta~ = zeta o xi (modulo the 2-D constant), at the
+// level of the mesh's geometric-interpolation floor (see the comment at
+// the end). Both legs run on the background-state module (background.hpp),
+// whose generators supply the moduli conversion and the transformation
+// laws (their coefficient-level checks are in TestBackground).
 TEST(ReferentialProblem, RelabelledEquilibrium2D) {
   const int dim = 2;
   std::vector<double> u_err, z_err;
@@ -1022,7 +1044,8 @@ TEST(ReferentialProblem, RelabelledEquilibrium2D) {
   // not fall with the FIELD order because the mesh geometry is fixed at
   // order 2 and the exact analytic map carries the geometric
   // interpolation error (the exact-F-versus-interpolated-F effect of
-  // doc/mappings.md): the floor is the mesh's, not the fields'.
+  // doc/mappings.md, "The discrete change-of-variables identity"): the
+  // floor is the mesh's, not the fields'.
   EXPECT_LT(u_err[0], 1.5e-2);
   EXPECT_LT(u_err[1], 1.5e-2);
   EXPECT_LT(z_err[0], 1.5e-2);

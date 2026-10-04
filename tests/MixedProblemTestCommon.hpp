@@ -1,8 +1,8 @@
 #pragma once
 
 /*
-  Helpers shared by the self-gravitating tests (serial gtest and the MPI
-  program): the canned two-layer meshes in ../data, the attribute
+  Helpers shared by the self-gravitating tests (serial gtests and MPI
+  programs): the canned two-layer meshes in ../data, the attribute
   conventions of those meshes, and a degree-2 surface load.
 
   Both meshes come from the scripts in meshes/: domain attribute 1 is the
@@ -92,7 +92,8 @@ inline double L2Norm(const GridFunction& u) {
 // Non-dimensional densities: inner core 1.3, fluid from 1.2 (ICB) to 1.1
 // (CMB), mantle 1.0; with G = 0.05 the fluid mass term is comfortably
 // inside the positivity margin of the potential block (k R_CMB ~ 0.7
-// against pi/2; see doc/self_gravitation.md).
+// against pi/2; see doc/self_gravitation.md, "Solvers", the paragraph
+// "Definiteness of the potential block").
 
 constexpr double kRIcb = 0.1931;
 constexpr double kRCmb = 0.5467;

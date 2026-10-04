@@ -2,7 +2,7 @@
   Parallel tests for the gauged-fluid mode of
   LinearQuasiStaticMixedSelfGravitatingProblem (see TestMixedProblemGauged.cpp
   for the serial suite and the model). Run with 1, 2 and 4 ranks; a
-  standalone MPI program returning the number of failed checks.
+  standalone MPI program returning 0 if every check passes, 1 otherwise.
 
   Every rank also solves the serial problem on the full mesh; the two solve
   the same discrete system in the same gauge to the solver tolerance, so
@@ -128,5 +128,5 @@ int main(int argc, char* argv[]) {
                 << Mpi::WorldSize() << " ranks.\n";
     }
   }
-  return num_fails;
+  return num_fails == 0 ? 0 : 1;  // an exit status is taken modulo 256
 }

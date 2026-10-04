@@ -12,20 +12,24 @@
 //     ψ2 = 0 on ∂Ω2
 //
 // Notes:
-// - The system is solved in the block manner, with the cross terms
-//   assembled by (Par)SubMeshMixedBilinearForm.
+// - The system is solved as one block system (CG with a block-diagonal
+//   preconditioner), with the cross terms assembled by
+//   (Par)SubMeshMixedBilinearForm.
 // - Mesh: ../data/coupled_poisson.msh, made by meshes/ball_with_buffer.py.
 //   The mesh is deliberately coarse (relative L2 errors of order 0.2 to 0.5)
 //   so that it builds and runs quickly; halve the sizes in that script for a
 //   converged run.
-// - One source serves the serial and the parallel build (formerly the
-//   pair coupled_poisson / coupled_poisson_p). The genuine differences,
-//   marked below: the parallel mesh, the Par forms and hypre matrices,
-//   AMG in place of diagonal smoothing, the global coefficient norms,
-//   and the GLVis stream headers.
+// - One source serves the serial and the parallel build. The genuine
+//   differences, marked below: the parallel mesh, the Par forms and hypre
+//   matrices, AMG in place of diagonal smoothing, the global coefficient
+//   norms, and the GLVis stream headers.
+// - The exact solution is known in closed form (psi1Exact, psi2Exact
+//   below, with f1, f2 made from them); the program prints the relative
+//   L2 errors of ψ1, of ψ2 and of ψ2 restricted to the submesh. With
+//   -vis, ψ1 and ψ2 are shown on the submesh beside their exact values.
 //
 // Sample runs:  ./coupled_poisson -o 2
-//               mpirun -np 4 ./coupled_poisson -o 2   (parallel build)
+//               mpiexec -np 4 ./coupled_poisson -o 2 -vis   (parallel build)
 // -----------------------------------------------------------------------------
 #include <cmath>
 

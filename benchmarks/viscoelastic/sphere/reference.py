@@ -23,7 +23,9 @@ By the correspondence principle (mu -> mu(s), lambda = kappa - 2 mu(s)/d
 in every Maxwell layer) the transfer functions U(a; s), V(a; s) are
 rational in s, and the modes, checks and modal histories are those of the
 box slabs (box/reference.py: AAA poles and residues, fixed-Talbot check of
-the Heaviside response, exact convolutions with the load history).
+the Heaviside response, exact convolutions with the load history). The
+checks are stored and printed only: unlike the box slabs, there is no
+fallback to the Talbot inversion when they fail.
 
 Radial models only; a laterally varying one has no reference here (the
 studies compare it with a much smaller step on the same mesh).

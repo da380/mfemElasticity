@@ -1,11 +1,13 @@
 /******************************************************************************
 ## Poisson Solver for Whole-Space Problems
 
-Solves the Poisson equation (∇²ϕ = -4πGρ, with G=1) on a whole space
-by using a finite computational domain with transparent boundary conditions.
+Solves the Poisson equation for the gravitational potential (∇²ϕ = 4πGρ,
+with G=1) on the whole space by using a finite computational domain with
+transparent boundary conditions, and compares the result with the exact
+potential of a uniform disk or ball (uniform_sphere.hpp).
 
-One source serves the serial and the parallel build (formerly the pair
-poisson_dtn / poisson_dtn_p). The genuine differences, marked below:
+One source serves the serial and the parallel build. The genuine
+differences, marked below:
 the parallel mesh (with optional refinements after partitioning, -pr),
 the comm-constructed DtN and multipole operators (the parallel DtN is
 applied through its RAP), the AMG preconditioner in place of
@@ -51,6 +53,17 @@ Gauss-Seidel, the comm-aware OrthoSolver, and per-rank output files.
 [-mth, --method]:   Solution method: 0=Neumann, 1=DtN, 2=Multipole.
                     Default is 0.
 [-lin, --linearised]: Problem type: 0=Reference, 1=Linearised. Default is 0.
+
+---
+### Sample runs
+
+    ./poisson_dtn -o 2
+    ./poisson_dtn -o 2 -mth 1 -res 1     (DtN, error against the exact solution)
+    mpiexec -np 4 ./poisson_dtn -o 2 -mth 2 -lin 1   (parallel build)
+
+The solution (or, with -res 1, the error) is written to refined.mesh and
+sol.gf (one file per rank in parallel) and sent to GLVis if a server is
+running.
 
 *******************************************************************************/
 
@@ -136,11 +149,12 @@ int main(int argc, char *argv[]) {
                  "number of mesh refinements (before partitioning)");
   args.AddOption(&parallel_refinement, "-pr", "--parallel_refinement",
                  "number of parallel mesh refinements (parallel build only)");
-  args.AddOption(&degree, "-deg", "--degree", "Order for Fourier exapansion");
+  args.AddOption(&degree, "-deg", "--degree",
+                 "Truncation degree of the DtN / multipole expansion.");
   args.AddOption(&residual, "-res", "--residual",
                  "Output the residual from reference solution");
   args.AddOption(&method, "-mth", "--method",
-                 "Solution method: 0 = Neuman, 1 = DtN, 2 = multipole.");
+                 "Solution method: 0 = Neumann, 1 = DtN, 2 = multipole.");
   args.AddOption(&linearised, "-lin", "--linearised",
                  "Solve reference (0) or linearised (1) problem.");
 
@@ -214,18 +228,18 @@ int main(int argc, char *argv[]) {
     dfes = std::make_unique<SpaceType>(&mesh, &L2);
   }
 
-  // For the linearised problem, we need a discontinous vector L2 space.
+  // For the linearised problem, we need a discontinuous vector L2 space.
   std::unique_ptr<SpaceType> vfes;
   if (linearised == 1) {
     vfes = std::make_unique<SpaceType>(&mesh, &L2, dim);
   }
 
-  // Assemble the binlinear form for Poisson's equation.
+  // Assemble the bilinear form for Poisson's equation.
   auto a = FormType(&fes);
   a.AddDomainIntegrator(new DiffusionIntegrator());
   a.Assemble();
 
-  // Assemble mass-shifted binlinear form for preconditioning.
+  // Assemble mass-shifted bilinear form for preconditioning.
   auto eps = ConstantCoefficient(0.01);
   auto as = FormType(&fes);
   as.AddDomainIntegrator(new DiffusionIntegrator());
@@ -262,7 +276,7 @@ int main(int argc, char *argv[]) {
     b.AddDomainIntegrator(new DomainLFIntegrator(rho_coeff));
     b.Assemble();
 
-    // For the DtN method in 2D add the additoinal term to the rhs.
+    // For the DtN method in 2D add the additional term to the rhs.
     if (method == 1 and dim == 2) {
       x = 1.0;
       auto mass = b(x);

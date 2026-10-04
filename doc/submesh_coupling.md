@@ -21,6 +21,7 @@ boundary (the fluid–solid interface terms). Nothing else is custom.
 | Layer | Object | Responsibility |
 |---|---|---|
 | A | `SubMeshDofInjection` | the signed vdof map shadow → parent; vector transfer; row and column re-indexing of sparse matrices; the true-dof matrix Π in parallel |
+| A′ | `NewSubMeshPairingMatrix`, `NewSubMeshPairingTrueDofMatrix` | the signed pairing of two sibling submesh spaces through their injections into one parent |
 | B | `SubMeshMixedBilinearForm`, `ParSubMeshMixedBilinearForm` | a `MixedBilinearForm` whose two spaces live on a mesh and its SubMesh; `Assemble()` is a helper form on the submesh followed by the re-indexing; everything else is inherited |
 
 ## The injection
@@ -47,7 +48,7 @@ preserve the sparsity pattern; no sparse product is formed.
 Block operators and Schur complements act on true dofs, so the parallel path
 needs Π : sub true dofs → parent true dofs as a `HypreParMatrix`.
 
-The tempting construction `Π = R_parent · P_loc · P_sub` is **wrong**. A
+The product `Π = R_parent · P_loc · P_sub` is **wrong**. A
 shared parent dof on the submesh boundary may be owned by a rank whose local
 elements there all lie outside the submesh. `R_parent` selects only owned
 parent dofs, and on the owning rank the corresponding row of `P_loc` is
@@ -72,6 +73,34 @@ for each sub ldof l with local true dof lt >= 0:
 Π is a boolean injection, so Πᵀ is at once the exact primal restriction and
 the correct dual prolongation; the two uses never need separate operators.
 
+## Pairing two sibling submeshes
+
+Where the two sides of an interface carry *separate* spaces, each on its own
+SubMesh of one parent, the two sides must be identified on the shared
+interface. Two injections into the same parent space give that pairing
+directly:
+
+```
+J = P_aᵀ P_b        (serial, vdofs:      NewSubMeshPairingMatrix(a, b))
+J = Π_aᵀ Π_b        (parallel, true dofs: NewSubMeshPairingTrueDofMatrix(a, b))
+```
+
+`J_ij = s_i s_j` when the i-th dof of `a` and the j-th dof of `b` map to the
+same parent dof (signs from the two injections), and zero otherwise. For two
+domain SubMeshes meeting along an interface the shared parent dofs are
+exactly the interface dofs, so `J` identifies the two traces nodally: for
+fields of equal trace, `(J u_b)_i = (u_a)_i` on the interface dofs of `a`.
+The pairing is one-to-one, so `J Jᵀ` is the identity on the shared dofs of
+`a`. Both injections must target the same parent space (checked by
+`MFEM_VERIFY`). In parallel the product is formed by hypre from the two
+`NewTrueDofMatrix()` operators, so the two sides of a shared parent dof may
+live on different ranks.
+
+Its use is that an interface form need be assembled only once: with `B` an
+interface bilinear form assembled on `a`'s boundary elements, the same form
+on `b`'s trace is `Jᵀ B J` and the cross terms are `B J`, and the orientation
+bookkeeping is the injections'.
+
 ## The form
 
 `Assemble()` builds a helper `MixedBilinearForm` between the shadow and the
@@ -85,6 +114,9 @@ The parallel class uses the same serial helper on the `ParFiniteElementSpace`s
 (assembly is element-local); the inherited `ParallelAssemble()` then forms
 `P_testᵀ · mat · P_trial` with each real space's own prolongation. Ranks
 without submesh elements contribute an empty local matrix of the right size.
+The two classes share the shadow space and injection
+(`detail::SubMeshFormSetup`, built from the trial/test pair) and the
+assembly routine (`detail::AssembleOnSubMesh`).
 
 Things to know when using it:
 
@@ -113,13 +145,28 @@ Things to know when using it:
 | Coupling | Spaces | How |
 |---|---|---|
 | ∫_M ρ ∇φ·v | u on the solid submesh, φ on the parent | domain integrator, shadow of φ |
-| fluid–solid interface −∫_Σ ρ_F φ (m·v) | the same; Σ part of the submesh boundary | boundary integrator with an interface marker |
-| loads and fields on a surface | a `CreateFromBoundary` submesh | domain integrator on the surface mesh; the shadow is the trace space |
+| fluid–solid interface −∫_Σ ρ_F φ (m·v) | the same; Σ part of the submesh boundary | boundary integrator (`BoundaryNormalScalarIntegrator`) with an interface marker |
+| loads and fields on a surface | a `CreateFromBoundary` submesh | domain integrator on the surface mesh; the shadow is the trace space (supported and tested; no library class uses it) |
 
-Sibling submeshes (two displacement regions sharing an interface) never need
-coupling to each other: a `SubMesh` may be disconnected, so one displacement
-space covers every solid region (see `self_gravitation.md`).
+Welded solid regions need no coupling to each other: a `SubMesh` may be
+disconnected, so one displacement space covers every solid region (see
+`self_gravitation.md`, section "Discretisation"). Separate spaces, and with
+them the pairing, are needed where the two sides of an interface are
+distinct unknowns or where one space is extended into another:
 
-`examples/submesh_injection(_p).cpp` tours the injection, and
-`examples/coupled_poisson(_p).cpp` solves a coupled pair of Poisson problems
-monolithically with the form.
+| Pairing | Spaces | Used by |
+|---|---|---|
+| solid × fluid displacement on the slipping interface Σ | solid and fluid SubMeshes | `LinearQuasiStaticReferentialSelfGravitatingSlipProblem` (the broken pair `(u_s, u_f)`; see `slip_interface.tex`) and `examples/sliding_fluid_ellipse.cpp` |
+| buffer × body displacement on ∂B | buffer shell and body SubMeshes | `NewRadialVacuumExtension` (trace rows of the vacuum extension, `referential_problem.hpp`) |
+| fluid × solid displacement on Σ | fluid and solid SubMeshes | `NewRadialFluidExtension` (trace rows of the fluid extension) |
+| potential shadows on the solid × outer/fluid regions | shadows of the ζ space | `EnableBrokenZeta` of the slip problem |
+
+The forms themselves couple the potential on the ball to the displacement on
+the solid in `LinearQuasiStaticMixedSelfGravitatingProblem` (the ∫ρ∇φ·v
+block) and `LinearQuasiStaticReferentialSelfGravitatingProblem` and its slip
+variant (the ζ–displacement coupling, and the buffer and fluid couplings).
+
+`examples/submesh_injection.cpp` tours the injection, and
+`examples/coupled_poisson.cpp` solves a coupled pair of Poisson problems
+monolithically with the form; each is one source for the serial and parallel
+builds.

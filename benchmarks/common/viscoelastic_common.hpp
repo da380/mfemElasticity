@@ -33,6 +33,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "mfemElasticity.hpp"
@@ -83,6 +84,10 @@ class LoadHistory {
     real_t time;
     bool jump;
   };
+
+  /// A constant load: no pieces and no breakpoints (the history is then
+  /// only consulted for its breakpoints, of which there are none).
+  LoadHistory() = default;
 
   explicit LoadHistory(const Json& h) {
     for (const Json& p : Member(h, "pieces").array) {
@@ -283,7 +288,9 @@ struct Counters {
 // dt), a step ending at a jump sees the load's left limit and the next
 // starts from the right limit. At each output time observe(m, t, k) is
 // called with the displacement consistent with (m, t); k counts the
-// outputs from 0. The elastic t = 0+ observation is k = -1.
+// outputs from 0. The elastic t = 0+ observation is k = -1. An observer
+// taking a fourth argument, const OutputCost&, also receives the stepping
+// cost and wall time up to that output (zero at k = -1).
 
 struct StepOptions {
   std::string scheme = "exptrap";  // exptrap sdirk23 be etd1 rk4 adaptive
@@ -365,8 +372,18 @@ EvolveResult Evolve(LinearQuasiStaticProblemBase& problem,
   MPI_Barrier(MPI_COMM_WORLD);
   const auto start = Clock::now();
   const Counters c0 = Counters::Of(problem);
+  // Call the observer with or without the cost, as it accepts.
+  auto call = [&observe](const Vector& mm, real_t tt, int kk,
+                         const OutputCost& oc) {
+    if constexpr (std::is_invocable_v<Observe&, const Vector&, real_t, int,
+                                      const OutputCost&>) {
+      observe(mm, tt, kk, oc);
+    } else {
+      observe(mm, tt, kk);
+    }
+  };
   r.ok = visco.SolveElastic(m, t) && r.ok;
-  observe(m, real_t(0), -1);
+  call(m, real_t(0), -1, OutputCost{});
   Counters observed = Counters::Of(problem) - c0;
   real_t dt_adaptive = opt.dt, h_last = -1.0;
   int k = 0;
@@ -397,7 +414,7 @@ EvolveResult Evolve(LinearQuasiStaticProblemBase& problem,
       oc.cost = (Counters::Of(problem) - c0) - observed;
       oc.seconds = std::chrono::duration<double>(Clock::now() - start).count();
       r.outputs.push_back(oc);
-      observe(m, mark.time, k++);
+      call(m, mark.time, k++, oc);
     }
     if (mark.jump) {
       history.ClearLeftLimit();

@@ -3,8 +3,8 @@
   (NewSubMeshPairingTrueDofMatrix): the identification of the solid and
   fluid interface dofs must hold across partition boundaries, where the two
   sides of a parent interface dof live on different ranks. Run with 1, 2
-  and 4 ranks; a standalone MPI program returning the number of failed
-  checks.
+  and 4 ranks; a standalone MPI program returning 0 if every check
+  passes, 1 otherwise.
 
   A smooth field interpolated on both SubMeshes has equal traces, so
   J x_f must equal J J^T x_s (the paired part of x_s) to round-off; the
@@ -128,5 +128,5 @@ int main(int argc, char* argv[]) {
                 << Mpi::WorldSize() << " ranks.\n";
     }
   }
-  return num_fails;
+  return num_fails == 0 ? 0 : 1;  // an exit status is taken modulo 256
 }

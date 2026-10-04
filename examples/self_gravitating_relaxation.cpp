@@ -4,10 +4,11 @@
 // Viscoelastic relaxation of a self-gravitating layered Earth model with a
 // fluid outer core: the layered models of layered_model.hpp (two- or
 // three-layer meshes, see elastogravity_layered.cpp), a Maxwell mantle with
-// a given viscosity, an elastic inner core (a CompositeRheology: the inner
-// core carries an elastic rheology, the mantle a Maxwell one), and a surface
-// mass load switched on at t = 0 (a Heaviside load: the elastic response is
-// followed by the viscous relaxation towards isostasy). ViscoelasticOperator
+// a given viscosity, in the three-layer model an elastic inner core (a
+// CompositeRheology: the inner core carries an elastic rheology, the mantle
+// a Maxwell one), and a surface mass load switched on at t = 0 (a Heaviside
+// load: the elastic response is followed by the viscous relaxation towards
+// isostasy). ViscoelasticOperator
 // runs on LinearQuasiStaticMixedSelfGravitatingProblem unchanged; the potential
 // and the fluid core come along for free.
 //
@@ -25,7 +26,7 @@
 // differences are the mesh partitioning and the pole observation point,
 // which in parallel lives on one rank and is reduced globally.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./self_gravitating_relaxation -o 2 -n 20 -tf 5
 //    ./self_gravitating_relaxation -m ../data/elastogravity_three_layer_2d.msh
 //    -o 2
@@ -139,9 +140,10 @@ int main(int argc, char* argv[]) {
   H1_FECollection fec(order, dim);
   SpaceType fes_u(&solid, &fec, dim), fes_phi(&parent, &fec);
 
-  // Material. The Maxwell time of the mantle from its mean shear modulus
-  // (the moduli vary with radius, so tau varies too; the reported time unit
-  // uses the mean). With an inner core the rheology is a composite: elastic
+  // Material. The Maxwell time of the mantle from its mean shear modulus,
+  // applied uniformly: tau is constant, so the implied viscosity mu tau
+  // varies with radius as the shear modulus does and equals eta only at the
+  // mean modulus. With an inner core the rheology is a composite: elastic
   // in the inner core, Maxwell in the mantle (the same kappa and mu
   // coefficients serve both; each region reads its own radii).
   const real_t tau_dim = eta_dim / MantleMeanShearModulusDim();

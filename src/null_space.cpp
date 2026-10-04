@@ -1,3 +1,10 @@
+/**
+ * @file null_space.cpp
+ * @brief Implementation of the rigid-mode coefficients, NullSpaceProjector,
+ * AddRigidModes(), MakeRigidModeProjector(), ProjectedOperator and
+ * ProjectedSolver.
+ */
+
 #include "mfemElasticity/null_space.hpp"
 
 #include <cmath>

@@ -4,6 +4,8 @@
 // Load and tidal Love numbers of a spherically layered body, for comparison
 // with a radial reference solution. The body is a case written by
 // make_case.py (benchmark_case.hpp); nothing about the model is set here.
+// The formulation is chosen by -method (benchmark_case.hpp lists them;
+// doc/benchmarks.tex, "The Love-number family", compares them).
 //
 // For each degree l (order 0) the surface load is set to sigma = Y_l0 and,
 // separately for l >= 2, the tidal potential to psi = (r/a)^l Y_l0, with a
@@ -30,8 +32,10 @@
 // The results are written as JSON, with the coefficients on every interface
 // per unit forcing, the radial functions U, V and phi of each solution in
 // every layer (the polynomial in the radius that, times the harmonic, is
-// closest to the solution there), the sizes of the problem, the iteration
-// counts and the times.
+// closest to the solution there; -no-radial leaves them out), the sizes of
+// the problem, the iteration counts and the times. The referential methods
+// (referential, slip, slip_broken) solve the load problems only and write
+// no radial functions.
 //
 // With -combined the problem, being linear, is solved twice in all: once
 // for the sum of the unit loads of every degree from lmin to lmax and once
@@ -150,8 +154,9 @@ int main(int argc, char* argv[]) {
   args.AddOption(&lmin, "-lmin", "--min-degree", "Lowest harmonic degree.");
   args.AddOption(&tide, "-tide", "--tide", "-no-tide", "--no-tide",
                  "Solve the tidal problems as well as the load problems.");
-  args.AddOption(&profiles, "-profiles", "--profiles", "-no-profiles",
-                 "--no-profiles",
+  // (-profiles is taken by the shared case options: a profiles file.)
+  args.AddOption(&profiles, "-radial", "--radial", "-no-radial",
+                 "--no-radial",
                  "Write the radial functions of each solution by layer.");
   args.AddOption(&combined, "-combined", "--combined", "-per-degree",
                  "--per-degree",

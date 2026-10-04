@@ -1,12 +1,13 @@
 /*
   Parallel tests for CompositeRheology on ParFiniteElementSpaces. Run with
-  1, 2 and 4 ranks; a standalone MPI program returning the number of failed
-  checks.
+  1, 2 and 4 ranks; a standalone MPI program that exits with status 1 if
+  any check fails.
 
-  The bar is split into two attribute regions (x < 0.4 and x > 0.4) before
-  partitioning, so that a region may be absent from a rank.
-  - A Maxwell bar split into two regions with the same rheology equals the
-    unsplit bar (exponential trapezoid; displacement and internal
+  The unit square/cube of the quasi-static tests is split into two
+  attribute regions (x < 0.4 and x > 0.4) and partitioned into slabs along
+  x, so that a region may be absent from a rank.
+  - A Maxwell body split into two regions with the same rheology equals the
+    unsplit body (exponential trapezoid; displacement and internal
     variables).
   - An elastic region beside a Maxwell region equals the global Maxwell
     body with a piecewise branch modulus.

@@ -1,16 +1,22 @@
 # Equilibrium states by constrained optimisation
 
-Method note for the planned equilibrium-state (and, in its
+**Status: formulation agreed, not implemented.** The building blocks it
+uses exist (`MinimumDeviatoricEquilibriumStress`, the Poisson
+machinery, the mapping layer, the interface-shift perturbation
+benchmark); the functional, the adjoints, the Riesz solve and the outer
+loop do not.
+
+Formulation of a planned equilibrium-state (and, in its
 generalisation, hydrostatic-figure) solver: given a model geometry and
-constitution, find a referential density — and later also an
+constitution, find a referential density — and in stage 2 also an
 equilibrium mapping — for which a valid static state exists, by
 minimising the deviatoric stress that the fluid regions would otherwise
-be forced to carry. Formulation agreed 1 Oct 2026; nothing implemented
-yet. Companions: `doc/gravitating_elasticity.md` §6 (the equilibrium
-background generators this note builds on), `doc/slip_interface.tex`
-(what the slip machinery is *for* — the dynamics about the state, not
-the state itself), `benchmarks/perturbation/README.md` (the certified
-interface-shift derivatives that serve as stage 2's gradient check).
+be forced to carry. Companions: `doc/gravitating_elasticity.md` §6 (the
+equilibrium background generators this formulation builds on) and §1
+(continuity of the equilibrium mapping), `doc/slip_interface.tex` (the
+slip machinery describes the dynamics about the state, not the state
+itself), `benchmarks/perturbation/README.md` (the interface-shift
+derivatives that serve as stage 2's gradient check).
 
 ## 1. The equilibrium equations and the role of the mapping
 
@@ -27,7 +33,7 @@ with the shape of the body an implicit parameter. To *parameterise* the
 shape, pull the state back to a fixed reference through an equilibrium
 mapping φ_e; the stress becomes its Piola–Kirchhoff form and the
 equations take the referential shapes of Al-Attar & Woodhouse (2010)
-or Maitra & Al-Attar (their eq. 205, with the caveat below it) — but
+or Maitra & Al-Attar (2024, eq. 205, with the caveat below it) — but
 nothing more.
 
 **The mapping may be taken continuous without loss of generality.** The
@@ -37,7 +43,9 @@ map; the tangential-slip freedom in the labelling of a *static* state
 is pure gauge and can be absorbed by relabelling the fluid side. The
 fluid-slip terms of the referential formulations are therefore not
 needed for describing or parameterising the figure — they are physics
-of the *perturbations about* it, and reappear only in that layer. One
+of the *perturbations about* it (where, with the data fixed on the
+reference, tangential slip is in general not removable by relabelling;
+`doc/gravitating_elasticity.md` §5), and reappear only in that layer. One
 scope condition makes this exact: the constitutive data (Ĉ, S_e) must
 be understood as transported with the chosen map (the construction
 above guarantees this — the data are *defined* at the natural reference
@@ -103,11 +111,11 @@ and obtain the gradient g from the derivative by one elliptic solve
 ⟨g, v⟩ = J′(ρ)[v] for all v — a Helmholtz-type problem the existing
 Poisson machinery covers. The smoothing length √(β/α) is a principled
 knob: it filters the mesh-scale components of the raw derivative into
-smooth descent directions. Experience (and the analysis): the
-ill-posedness of the underlying problem does not disappear, but the
-updates are not appreciably polluted by it — the high-frequency null-
-and near-null content that would otherwise accumulate over iterations
-is suppressed at source. The mass constraint is enforced by projection
+smooth descent directions. Expected behaviour (from the analysis; not
+yet measured in this library): the ill-posedness of the underlying
+problem does not disappear, but the updates are not appreciably
+polluted by it — the high-frequency null- and near-null content that
+would otherwise accumulate over iterations is suppressed at source. The mass constraint is enforced by projection
 *in this metric* (one scalar correction per step); the PREM prior adds
 its term to the derivative before the Riesz solve.
 
@@ -140,8 +148,10 @@ fractional metrics recur for every parameter field.
 ## 5. Stage 2: letting the shape vary
 
 Generalisation to hydrostatic figures: admit φ_e among the controls.
-Two structural points, both informed by measured experience in this
-code base:
+Two structural points, both grounded in measurements documented
+elsewhere (gauge semi-convergence: `doc/gauge_penalty_iteration.tex`,
+"Semi-convergence and the operating point"; side selection of
+shift-type maps: `benchmarks/perturbation/README.md`):
 
 - **Gauge.** (ρ, φ_e) carries the relabelling gauge (ρ̃ = J ρ∘ξ with
   φ_e∘ξ describing the same model). J is gauge-invariant, so its
@@ -177,8 +187,8 @@ pre-built.
    evaluate J.
 2. **Adjoints**: transpose saddle solve and Poisson adjoint; assemble
    J′(ρ); finite-difference checks of J′ against directional
-   differences (the standard kernel-vs-FD validation, serving as the
-   project's first genuine adjoint computation).
+   differences (the standard kernel-vs-FD validation; this would be the
+   library's first adjoint computation).
 3. **Sobolev gradient**: the Riesz elliptic solve, mass projection,
    PREM prior; a smoothing-length study on the first test case.
 4. **Milestone 1 — fixed-shape density restoration**: on fluid_core,
@@ -188,8 +198,8 @@ pre-built.
 5. **Stage 2**: interface-shape parameters, the moving-domain terms,
    gradient checks against the shift-derivative benchmark; then
    equilibrium *figures* proper once rotation (centrifugal potential)
-   is added to the background — the Part III programme, with the
-   thin-lithosphere limit as a special case.
+   is added to the background (equilibrium figures with rotation), with
+   the thin-lithosphere limit as a special case.
 6. **Hessian actions** (second-order adjoints) once gradient descent
    is validated, for Newton–Krylov in the tail; the Krylov iterations
    inherit the gauge-orthogonality discussion of §5.

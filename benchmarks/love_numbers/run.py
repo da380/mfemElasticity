@@ -1,16 +1,23 @@
 """Run the Love-number benchmark over element sizes and orders.
 
 For each model named (`all` for every one), each element size `--h` is a case (made with make_case.py
-if its directory does not hold one) and each order `--order` a run of
+if its directory does not hold one) and each order `--order`, method
+`--method`, Eulerian solver `--solver` and CMB treatment `--cmb` a run of
 love_benchmark on it under MPI, and with `--field` a run of field_benchmark
-as well, which compares the response to a cap load as fields:
+as well (Eulerian methods only), which compares the response to a cap load
+as fields:
 
   <out>/<model>/h<h>/                 the case: mesh, fields, reference
-  <out>/<model>/h<h>/results_o<p>.json
-  <out>/<model>/h<h>/log_o<p>.txt
-  <out>/<model>/h<h>/field_o<p>.json      with --field
-  <out>/<model>/h<h>/paraview_o<p>/       with --field --paraview
+  <out>/<model>/h<h>/results_o<p><s>.json
+  <out>/<model>/h<h>/log_o<p><s>.txt
+  <out>/<model>/h<h>/field_o<p><s>.json   with --field
+  <out>/<model>/h<h>/paraview_o<p><s>/    with --field --paraview
   <out>/<model>/h<h>/parts_<np>/          with --partition
+
+The suffix <s> is empty for the Dahlen method with the full CMB
+treatment and block MINRES; otherwise it names the method, the CMB
+treatment, the map amplitude (_map<A>), the Schur solver (_schur) and,
+for the Love-number results, --combined, in that order.
 
 A run whose results file exists is skipped unless `--force` is given, and a
 case that exists is kept unless `--remake` is, so a sweep can be extended or
@@ -87,7 +94,8 @@ def main() -> None:
                    help="amplitude of the interior relabelling: the 3-D "
                         "relabelled benchmark (relabelling.hpp) — the same "
                         "spherical physics described from laterally mapped "
-                        "coordinates, referential methods only; results "
+                        "coordinates, methods referential and slip_broken "
+                        "only; results "
                         "carry a _map<A> suffix")
     p.add_argument("--cmb", nargs="+",
                    choices=("full", "nomass", "uniform", "winkler"),

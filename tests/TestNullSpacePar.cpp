@@ -1,14 +1,15 @@
 /*
   Parallel tests for the rigid-mode null-space handling in null_space.hpp.
-  Run with 1, 2 and 4 ranks; a standalone MPI program returning the number
-  of failed checks.
+  Run with 1, 2 and 4 ranks; a standalone MPI program returning 1 if any
+  check fails, 0 otherwise.
 
   - MakeRigidModeProjector() on a ParFiniteElementSpace: d(d+1)/2 globally
     orthonormal true-dof vectors, exact null vectors of the free stiffness.
   - ProjectedSolver + CG with a projected BoomerAMG preconditioner converges
-    on a free bar under a load with net force and torque; the solution is
-    orthogonal to the rigid modes, satisfies the projected equations, and its
-    L2 norm equals the serial solve on the full mesh (partition-independent).
+    on a free unit square (cube), partitioned in slabs along x, under a
+    load with net force and torque; the solution is orthogonal to the rigid
+    modes, satisfies the projected equations, and its L2 norm equals the
+    serial solve on the full mesh (partition-independent).
   - A warm start carrying a rigid component gives the same solution.
   - ProjectedSolver::SetGauge() with a mass matrix gives zero net momentum
     and angular momentum, and differs from the Euclidean-gauge solution by a
@@ -58,7 +59,7 @@ double L2Norm(const GridFunction& u) {
   return u.ComputeL2Error(z);  // global for ParGridFunction
 }
 
-// Serial reference: the free bar solved on the full mesh with the same
+// Serial reference: the free body solved on the full mesh with the same
 // projected CG (Gauss-Seidel preconditioner); returns the L2 norm.
 double SerialNorm(Mesh& mesh, FiniteElementCollection& fec, int dim,
                   Coefficient& lambda, Coefficient& mu,

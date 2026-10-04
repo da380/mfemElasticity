@@ -1,13 +1,12 @@
 // -----------------------------------------------------------------------------
 // A tour of SubMeshDofInjection. One source serves the serial and the
-// parallel build (formerly the pair submesh_injection /
-// submesh_injection_p); the #ifdef blocks below are the tour's actual
-// content — they mark exactly what changes in parallel.
+// parallel build; the #ifdef blocks below are the tour's actual content —
+// they mark exactly what changes in parallel.
 //
-// Mesh: data/circular_offset.msh (meshes/offset_disc.py) — a disk M
-// (attribute 1) inside a larger offset disk Ω (attribute 2 is the surrounding
-// region). Boundary attribute
-// 1 is the internal circle ∂M, attribute 2 the outer circle ∂Ω.
+// Mesh: ../data/circular_offset.msh (meshes/offset_disc.py) — an off-centre
+// disk M (attribute 1) inside a larger disk Ω centred on the origin
+// (attribute 2 is the surrounding region). Boundary attribute 1 is the
+// internal circle ∂M, attribute 2 the outer circle ∂Ω.
 //
 // Part A. Moving fields between the parent mesh and the submesh.
 //
@@ -55,8 +54,12 @@
 //      mesh with an attribute-restricted MassIntegrator and the two
 //      solutions must agree to solver tolerance.
 //
-// Sample runs:  ./submesh_injection -o 2
-//               mpirun -np 4 ./submesh_injection -o 2   (parallel build)
+// Output: the two transfer errors of Part A and, for Part B, the MINRES
+// iteration count and the two check errors, all of which should be at
+// round-off or solver tolerance; with -vis, φ and u are sent to GLVis.
+//
+// Sample runs:  ./submesh_injection -o 2 -vis
+//               mpiexec -np 4 ./submesh_injection -o 2   (parallel build)
 // -----------------------------------------------------------------------------
 
 #include <cmath>

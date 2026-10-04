@@ -3,7 +3,8 @@
  * @brief General-purpose coefficients: the unit radial vector and, for the
  * self-gravitating fluid–solid problems, the normal component of a vector
  * coefficient on boundary elements and the barotropic density gradient
- * @f$d\rho/d\Phi_0@f$ of a fluid.
+ * @f$d\rho/d\Phi_0@f$ of a fluid; and a matrix-valued delta function for
+ * moment-tensor point sources.
  *
  * Coefficients tied to one subsystem live with it: the elasticity tensors in
  * elastic_tensor.hpp, harmonic expansions in spherical_harmonics.hpp, the
@@ -48,7 +49,7 @@ class RadialUnitVectorCoefficient : public mfem::VectorCoefficient {
  * mfem::GradientGridFunctionCoefficient (MFEM evaluates the gradient in the
  * adjacent element) and for coefficients of position.
  *
- * With @f$\mathbf{V} = \nabla\Phi_0@f$ this gives @f$\mathbf{m}\cdot
+ * With @f$\mathbf{V} = \nabla\Phi_0@f$ this gives @f$\mathbf{n}\cdot
  * \nabla\Phi_0 = \pm g@f$ on a fluid–solid interface, the sign selecting
  * between a fluid below and a fluid above the solid.
  */

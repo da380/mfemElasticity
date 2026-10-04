@@ -61,7 +61,8 @@ inline std::unique_ptr<mfem::LinearForm> MakeLinearForm(
 }
 
 /// A bilinear form on @p fes, borrowing the integrators of @p borrow_from
-/// when given (the returned form does not own them).
+/// when given (the returned form does not own them). When @p fes is parallel,
+/// @p borrow_from must be a ParBilinearForm (it is static_cast).
 inline std::unique_ptr<mfem::BilinearForm> MakeBilinearForm(
     mfem::FiniteElementSpace* fes, mfem::BilinearForm* borrow_from = nullptr) {
 #ifdef MFEM_USE_MPI

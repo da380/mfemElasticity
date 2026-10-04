@@ -3,6 +3,9 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int (q . v) div u for q = x, v = x and u = |x| x, against
+// DomainDivVectorScalarIntegrator applied to the L2 interpolant of q . v:
+// the vector coefficient must enter only through its product with v.
 TEST_P(BilinearFormIntegratorTests, DomainVectorDivVectorIntegrator) {
   const auto& current_tuple = GetParam();
 

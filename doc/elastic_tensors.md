@@ -1,8 +1,10 @@
-# Elastic tensors: convention, coefficients and integrator
+# Elastic tensors: convention, coefficients and integrators
 
-Notes for `elastic_tensor.hpp` and the `ElasticTensorIntegrator` of
-`bilininteg.hpp`. MFEM's `ElasticityIntegrator` is isotropic (two scalar
-coefficients) and nothing in MFEM handles a fourth-order stiffness tensor.
+Notes for `elastic_tensor.hpp` and the `ElasticTensorIntegrator` (with its
+total-Lagrangian companions `MaterialStiffnessIntegrator` and
+`GeometricStiffnessIntegrator`) of `bilininteg.hpp`. MFEM's
+`ElasticityIntegrator` is isotropic (two scalar coefficients) and nothing
+in MFEM handles a fourth-order stiffness tensor.
 The library adds one integrator that takes the tensor as a matrix
 coefficient, and a family of coefficients that produce that matrix in one
 fixed convention.
@@ -49,11 +51,25 @@ so Voigt is an **input** convention with explicit conversions
 full C_ijkl). Mandel in library order is the **internal** convention that
 every coefficient emits and the integrator consumes.
 
+`SymmetricTensorBasis` collects the helpers of this convention:
+
+| Helper | What it does |
+|---|---|
+| `Size(d)`, `Index(d, j, k)`, `Component(d, s, j, k)`, `Scale(j, k)` | n_s, the reduced index of (j, k) in either order, its inverse, and the Mandel scale a_s |
+| `VoigtIndex`, `FromVoigt`, `ToVoigt` | Voigt numbering and the Voigt ↔ Mandel-in-library-order conversions |
+| `Pack`, `Unpack` | Mandel matrix ↔ full C_ijkl (stored with index ((i d + j) d + k) d + l) |
+| `Apply(Ĉ, ε, σ)` | σ_jk = C_jklm ε_lm for *unscaled* tensor-component vectors in library order |
+| `VolumetricProjector`, `DeviatoricProjector` | P_vol = 1̂1̂ᵀ/d and P_dev = I − P_vol |
+| `RotationMatrix(d, R, Q)` | the orthogonal Mandel matrix of ε ↦ R ε Rᵀ |
+| `CongruenceMatrix(d, F, Q)` | the Mandel matrix of ε ↦ Fᵀ ε F for a general invertible F (`RotationMatrix` is the orthogonal case R = Fᵀ); used by the relabelled tensor below |
+
 ## Coefficients
 
-All derive from `mfem::MatrixCoefficient` (n_s × n_s), so they compose with
-MFEM's algebra: `MatrixSumCoefficient`, `ScalarMatrixProductCoefficient`,
-`PWMatrixCoefficient`.
+All derive from `ElasticTensorCoefficient`, an `mfem::MatrixCoefficient` of
+size n_s × n_s whose `Eval` returns a Mandel matrix in library order and
+which records the space dimension (`SpaceDim()`). They therefore compose
+with MFEM's algebra: `MatrixSumCoefficient`,
+`ScalarMatrixProductCoefficient`, `PWMatrixCoefficient`.
 
 - **`IsotropicElasticTensorCoefficient`**: from (λ, μ) or (κ, μ). It provides
   the isotropic limit for tests and lets the anisotropic path serve
@@ -84,7 +100,45 @@ MFEM's algebra: `MatrixSumCoefficient`, `ScalarMatrixProductCoefficient`,
   the two ready-made choices of "the part that relaxes" for an anisotropic
   Maxwell body (`viscoelasticity.md`).
 
-## The integrator
+Two further coefficients serve the referential (general initial-stress)
+formulation; the physics is in `gravitating_elasticity.md` (section "The
+linearised quasi-static problem", subsection "The elastic tensor
+dictionary") and `mappings.md`:
+
+- **`BareElasticTensorCoefficient`**: the bare (strain-energy) tensor from
+  the seismological effective one under hydrostatic pre-stress p⁰,
+
+  ```
+  C_ijkl = C^eff_ijkl − p⁰ (δ_ij δ_kl − δ_il δ_jk − δ_ik δ_jl),
+  Ĉ = Ĉ^eff − p⁰ 1̂1̂ᵀ + 2 p⁰ I        (Mandel),
+  ```
+
+  the inverse of Woodhouse & Deuss (2007, eq. 61). Tabulated (PREM) moduli
+  are components of C^eff, while the referential form assembles the bare C;
+  the decorator keeps model data seismological and makes the conversion
+  impossible to forget. Isotropically λ = λ^eff − p⁰, μ = μ^eff + p⁰,
+  κ = κ^eff − p⁰/3, so a fluid has bare shear modulus p⁰. The conversion is
+  three-dimensional physics; in 2-D the same Mandel formula is applied
+  formally.
+- **`RelabelledElasticTensorCoefficient`**: the transformation of the
+  second elastic tensor under a relabelling ξ (Al-Attar et al. 2018,
+  eq. 136),
+
+  ```
+  Ĉ~(x~) = J_ξ Q_ξ⁻ᵀ Ĉ(ξ(x~)) Q_ξ⁻¹,
+  ```
+
+  with Q_ξ the Mandel congruence by F_ξ (`CongruenceMatrix`). The inner
+  coefficient must already be the referential expression Ĉ∘ξ (composed
+  analytic data, or a constant); the class supplies only the algebra. This
+  is the tensor `MaterialStiffnessIntegrator` expects when a relabelling has
+  been composed into the equilibrium mapping.
+
+`examples/referential_elastogravity.cpp` uses the bare tensor, and
+`benchmarks/relabelling/aspherical_reference.cpp` chains the two (bare,
+then relabelled).
+
+## The integrators
 
 `ElasticTensorIntegrator(MatrixCoefficient& C)` assembles ∫ ε(v) : C : ε(u)
 on a vector H1 space in byNODES layout. It accepts any `MatrixCoefficient`
@@ -103,6 +157,57 @@ so that `ε̂ = B u` by construction. The default quadrature is MFEM's
 `2·OrderGrad(el)`; a rapidly varying `C` may want more through the usual
 `IntRule`.
 
+### The pull-back constructor
+
+`ElasticTensorIntegrator(MatrixCoefficient& C, Diffeomorphism& map)`
+assembles the pull-back of the same form through a mapping (`mappings.md`):
+the shape gradients become derivatives with respect to the mapped
+coordinates (`gshape → gshape F⁻¹`), the weight gains the Jacobian
+(`w → J w`), and the assembly is otherwise unchanged. The coefficient stays
+the *referential* tensor (21 components in 3-D); the pulled-back tensor
+`c'_iAkB = J c_ijkl F⁻¹_Aj F⁻¹_Bl`, which has only the major symmetry, is
+never formed. With the mapping interpolated on the mesh's geometric space
+and one integration rule on both sides, this equals the plain integrator on
+the mapped mesh: that is the discrete change-of-variables identity
+described in `mappings.md`.
+
+### Material and geometric stiffness
+
+For the total-Lagrangian split about an equilibrium mapping φ_e
+(`gravitating_elasticity.md`, section "The linearised quasi-static
+problem"):
+
+- `MaterialStiffnessIntegrator(C, φ_e)` assembles
+  ∫_B ⟨Ĉ sym(F_eᵀ Du)^, sym(F_eᵀ Dv)^⟩ dV, the second elastic tensor acting
+  on the linearised Green strain, with no Jacobian factor (the strain
+  energy is per referential volume). With the identity mapping it is
+  `ElasticTensorIntegrator`. Its `Diffeomorphism` is the *equilibrium
+  mapping*, not a relabelling pull-back: a relabelling composes into the
+  mapping and transforms the coefficients (Al-Attar et al. 2018,
+  eqs. 134–136), so the tensor passed must already be the relabelled one.
+- `GeometricStiffnessIntegrator(S [, map])` assembles
+  ∫_B S_AB ∂_A u_k ∂_B v_k dV with S the second Piola–Kirchhoff equilibrium
+  stress (S = T⁰ at a natural reference). Its optional mapping is the
+  relabelling pull-back, as for `ElasticTensorIntegrator`.
+
+The two mapped constructors are therefore not interchangeable. The
+covariant gauge penalty of a gauged fluid
+(`LinearQuasiStaticProblemBase::SetGaugedFluid` with a non-identity map,
+and the fluid penalty of the slip problem) is assembled with
+`ElasticTensorIntegrator(C_dev, map)`, where `C_dev` is the isotropic
+deviatoric tensor of the penalty (λ = −2εμ_g/d, μ = εμ_g): this form is the
+exact pull-back of the unmapped penalty, so a relabelled problem's gauge is
+the pull-back of the unmapped one. `MaterialStiffnessIntegrator` would be
+wrong here because it expects a relabelled tensor and carries no Jacobian.
+The distinction matters because the gauge subspace has stiffness O(ε): an
+O(εA) difference in the penalty between a problem and its relabelling of
+amplitude A moves the gauge representative by O(A), not by the
+discretisation error. Where both sides of an identity assemble the
+same term, both use the same integrator class (the identity map included),
+so the quadrature defaults coincide.
+
+### Internal-variable coupling
+
 The internal-variable coupling ∫ (C_k m) : ε(v) does not go through this
 integrator. It uses the unit-coefficient strain integrators with `C_k`
 applied pointwise at the internal-variable nodes, which is why the
@@ -117,4 +222,22 @@ and rotating mesh and axis together rotates the element matrix. A linear
 displacement field gives the exact energy `|Ω| ½ ε̂ᵀ Ĉ ε̂`. Rigid modes lie in
 the null space for a radially anisotropic material, on isoparametric
 geometry (`null_space.md` explains why). A plane-strain sheet matches an
-extruded slab with u_z = 0.
+extruded slab with u_z = 0 (`tests/TestElasticTensor.cpp`,
+`tests/TestElasticTensorIntegrator.cpp`). The mapped integrator on the
+reference mesh equals the plain integrator on the mapped mesh, for a
+spatially varying isotropic and a constant TI tensor, in 2-D and 3-D at
+orders 1–3 (`ElasticTensorIntegratorMapped.MatchesMappedMesh`).
+`tests/TestGeneralisedStiffness.cpp` checks the bare-tensor isotropic
+conversion, that the material stiffness with the identity map equals
+`ElasticTensorIntegrator`, an affine energy patch test for it, and the
+geometric stiffness (equal to `VectorDiffusionIntegrator` for isotropic S,
+energy patch, pull-back against the mapped mesh).
+
+## References
+
+- Al-Attar, D., Crawford, O., Valentine, A. P. and Trampert, J. (2018).
+  Hamilton's principle and normal mode coupling in an aspherical planet with
+  a fluid core. *Geophysical Journal International*, 214(1), 485–507.
+- Woodhouse, J. H. and Deuss, A. (2007). Theory and observations — Earth's
+  free oscillations. In *Treatise on Geophysics*, vol. 1 (Seismology and
+  Structure of the Earth), ed. G. Schubert, pp. 31–65. Elsevier.

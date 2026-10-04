@@ -6,6 +6,8 @@
   is known independently: a static, gravity-free fluid supports a uniform
   pressure, so its entire response condenses onto the solid as the rank-one
   cavity term (1/K_V) b(u) b(v), b(v) = int_Sigma v.m dS, K_V = V/kappa_f.
+  The method is described in doc/gauged_fluid.md ("Gauge fixing: penalty
+  plus iterated refinement", "Verification").
 
   Meshes: the canned two-layer disc (attribute 1 fluid core, 2 mantle) and
   the three-layer ball with the inner and outer core merged into one fluid
@@ -14,7 +16,8 @@
 
   - Uniform external pressure against the exact Lame solution with a fluid
     core (the fluid's own displacement is gamma x: conformal, so it is also
-    the Q-minimal gauge and can be compared).
+    the Q-minimal gauge and can be compared). The mass-weighted rigid
+    gauge is used, since the exact solution has zero net momentum.
   - A degree-2 pressure against the condensed rank-one problem on the
     solid-only SubMesh (Sherman-Morrison with two projected solves),
     modulo the two problems' different rigid gauges.

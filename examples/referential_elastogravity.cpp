@@ -6,11 +6,12 @@
 // beside the traditional Eulerian one
 // (LinearQuasiStaticMixedSelfGravitatingProblem, doc/self_gravitation.md), on a
 // uniform self-gravitating body under a degree-2 surface mass load: two
-// mathematically equivalent formalisms solving one physical problem — the
-// self-benchmarking principle in one program.
+// mathematically equivalent formalisms solving one physical problem, so
+// their agreement checks both.
 //
-// The referential side is assembled from the ingredients the notes
-// describe:
+// The referential side is assembled from the ingredients described in
+// doc/gravitating_elasticity.md ("2. The linearised quasi-static problem"
+// and "3.1 The linearised referential system"):
 //   - the BARE moduli, converted from the seismological ones with the
 //     hydrostatic pressure (BareElasticTensorCoefficient; the moduli in
 //     Earth models are NOT the strain-energy moduli — the conversion is
@@ -25,7 +26,7 @@
 //     decreasing with order — printed for inspection);
 //   - the vacuum extension: the buffer's gravity terms folded through a
 //     prescribed radial extension E (NewRadialVacuumExtension) — a gauge
-//     choice, so two different tapers must agree, also printed.
+//     choice, so any other smooth taper must give the same observables.
 //
 // The two solutions are compared through the change of variables
 // zeta1 = phi1 + u . grad(Phi0) (modulo the constant in 2-D): agreement is
@@ -39,7 +40,12 @@
 // (a plain GridFunction on a parallel space would compute rank-local
 // norms), and the 2-D constant gauge is removed with a global mean.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Output: the rigid pair residuals, the relative differences of the
+// displacements and of the potentials, the iteration counts, and with -vis
+// (on by default) both displacements and the referential potential in
+// GLVis.
+//
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./referential_elastogravity
 //    ./referential_elastogravity -o 3
 //    ./referential_elastogravity -m ../data/coupled_poisson.msh -o 2
@@ -262,7 +268,8 @@ int main(int argc, char* argv[]) {
   // --- The comparison. ------------------------------------------------------
   std::cout << std::setprecision(3);
 
-  // Rigid null pairs: translations are exact, rotations near-null.
+  // Rigid null pairs: near-null under the tapered extension, which does
+  // not preserve the translations.
   const auto rigid = referential.RigidPairResiduals();
   if (Root()) {
     std::cout << "\nrigid pair residuals (translations then rotations;\n  near-null under the tapered extension, decreasing with order):\n  ";

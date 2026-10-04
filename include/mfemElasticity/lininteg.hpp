@@ -32,8 +32,8 @@ namespace mfemElasticity {
  * It is also assumed that the matrix coefficient \f$\bvec{m}\f$ is square with
  * its dimension equal to the spatial dimension of the finite-element space.
  *
- * Its uses include the relaxation force of the viscoelastic layer and a
- * stress-glut source. Given a MatrixDeltaCoefficient it follows MFEM's
+ * A typical use is a prescribed-stress (stress-glut) source. Given a
+ * MatrixDeltaCoefficient it follows MFEM's
  * delta-function machinery instead (mfem::DeltaLFIntegrator): the linear
  * form assembles the point source
  * \f$\bvec{u} \mapsto s\, m_{ij}\, \partial_j u_i(\bvec{x}_c)\f$
@@ -65,10 +65,10 @@ class DomainLFDeformationGradientIntegrator : public mfem::DeltaLFIntegrator {
  public:
   /**
    * @brief Constructs a DomainLFDeformationGradientIntegrator.
-   * @param M The matrix coefficient \f$\bvec{M}\f$ used in the integral; a
+   * @param M The matrix coefficient \f$\bvec{m}\f$ used in the integral; a
    * MatrixDeltaCoefficient selects the point-source (delta) path.
-   * @param ir An optional integration rule. If `nullptr`, a default rule
-   * will be chosen based on the element type and order.
+   * @param ir An optional integration rule. If `nullptr`, a rule of order
+   * 2 el.GetOrder() + Trans.OrderW() is used.
    */
   DomainLFDeformationGradientIntegrator(
       mfem::MatrixCoefficient& M, const mfem::IntegrationRule* ir = nullptr);
@@ -83,8 +83,8 @@ class DomainLFDeformationGradientIntegrator : public mfem::DeltaLFIntegrator {
    * @param el The finite element for which to assemble the element vector.
    * @param Trans The element transformation mapping reference coordinates to
    * physical coordinates.
-   * @param elvect The output element vector to which the contribution is added.
-   * Its size must be `el.GetDof()`.
+   * @param elvect The output element vector, overwritten and resized to
+   * `d*el.GetDof()` (\f$d\f$ the space dimension, byNODES ordering).
    */
   void AssembleRHSElementVect(const mfem::FiniteElement& el,
                               mfem::ElementTransformation& Trans,
@@ -95,6 +95,9 @@ class DomainLFDeformationGradientIntegrator : public mfem::DeltaLFIntegrator {
    * MatrixDeltaCoefficient): \f$\mathrm{elvect} = s\, m_{ij}\,\partial_j
    * \phi_a(\bvec{x}_c)\f$ with the integration point of @p Trans set to
    * the center by the linear form's delta machinery.
+   * @param fe The finite element containing the center.
+   * @param Trans The element transformation.
+   * @param elvect The output element vector, resized to `d*fe.GetDof()`.
    */
   void AssembleDeltaElementVect(const mfem::FiniteElement& fe,
                                 mfem::ElementTransformation& Trans,

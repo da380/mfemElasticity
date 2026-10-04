@@ -2,8 +2,9 @@
 // relabelled_identity.cpp
 //
 // The discrete change-of-variables identity at the level of the FULL
-// self-gravitating SOLVE (variant 2a of the aspherical verification
-// plan; doc/mappings.md §5): the same problem class solves
+// self-gravitating SOLVE (leg B of the relabelling family,
+// doc/benchmarks.tex; doc/mappings.md, "The discrete change-of-variables
+// identity"): the same problem class solves
 //
 //   side A  the REFERENCE mesh, phi_e = the nodal interpolant of the
 //           interior relabelling (relabelling.hpp), the constitutive
@@ -45,15 +46,16 @@
 //    plain pull-back — so the two sides gauge-fix identically and
 //    every WELDED case is STRICT, the gauged fluid included
 //    (u 1.6e-7 at A = 0.02, h = 0.3, the DtN-centring floor).
-//    Through the SLIPPING interface the run stays informational
-//    (u 1.2e-2, zeta 8e-3 at A = 0.02, h = 0.3 on fluid_core): some
-//    term of the broken-zeta organisation is not covariant, and it is
-//    not yet localised — the per-attribute breakdown and the
-//    operator-action probes below cover the welded organisation only,
-//    and extending them to the broken blocks is the follow-up. (The
-//    single-valued slip organisation assembles its gravity MISMATCH
-//    pieces at phi_e = id and refuses maps outright; that documented
-//    limitation is a separate matter.)
+//    Through the SLIPPING interface the run is informational (u 1.2e-2,
+//    zeta 8e-3 at A = 0.02, h = 0.3 on fluid_core): the identity does
+//    not hold there, and the slipping-interface forms are not certified
+//    covariant. For the welded organisation the driver prints the
+//    operator-action probes and the per-attribute breakdown; for
+//    slip_broken it prints, after the solves, the sixteen broken blocks
+//    and the stored constraint kernels of both sides, which locate the
+//    differing terms (doc/benchmarks.tex, leg B, gives the measured
+//    pattern). (The single-valued slip organisation refuses non-identity
+//    maps outright, so it cannot be run here.)
 //
 // Both parallel meshes are built from the same serial partition, so the
 // true-dof numbering coincides and the solutions compare entrywise.
@@ -629,11 +631,10 @@ int main(int argc, char* argv[]) {
   }
 
   // Strict wherever every assembled term is covariant: all welded
-  // cases, the gauged fluid included now that the gauge penalty is
+  // cases, the gauged fluid included, since the gauge penalty is
   // assembled as the exact pull-back (ElasticTensorIntegrator with the
-  // pulled-back deviatoric tensor). The slipping interface remains
-  // informational until its non-covariant term is localised and mapped
-  // (the probes above do not yet cover the broken-zeta blocks).
+  // pulled-back deviatoric tensor and the map). The slipping interface
+  // is informational: its forms are not certified covariant.
   const bool strict = !slip;
   const bool pass = okA && okB && (!strict || (du < 1e-5 && dz < 1e-5));
   if (root) {
@@ -660,7 +661,7 @@ int main(int argc, char* argv[]) {
                          : "  MISMATCH: an unmapped assembly term\n");
     } else {
       std::cout << "  informational: the slip interface forms are not "
-                   "yet certified covariant (the welded runs, gauged "
+                   "certified covariant (the welded runs, gauged "
                    "included, are strict)\n";
     }
   }

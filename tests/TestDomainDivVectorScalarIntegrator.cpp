@@ -3,6 +3,9 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int q (div v) u for v = x (div v = dim) and u the L2 interpolant of |x|,
+// against MFEM's DomainLFIntegrator with weight q dim acting on u: the
+// two routes integrate the same polynomial-times-coefficient integrand.
 TEST_P(BilinearFormIntegratorTests, DomainDivVectorScalarIntegrator) {
   const auto& current_tuple = GetParam();
 

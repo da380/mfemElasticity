@@ -37,7 +37,7 @@
 // One source serves the serial and the parallel build, as in
 // gauged_fluid_cavity.cpp.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./equilibrium_stress
 //    ./equilibrium_stress -e 0
 //    ./equilibrium_stress -e 0.4 -o 4

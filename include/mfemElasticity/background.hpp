@@ -2,7 +2,9 @@
  * @file background.hpp
  * @brief The background-state module: generation of the equilibrium
  * fields @f$(\rho, \hat C, \mathbf{S}_e, \varphi_e)@f$ that the
- * referential problem consumes (doc/gravitating_elasticity.md §6–7).
+ * referential problem consumes (doc/gravitating_elasticity.md §1,
+ * "Notation and kinematics", §2, "The elastic tensor dictionary", and §6,
+ * "Equilibrium stress in general models").
  * The moduli conversion and the relabelling transformation laws live
  * here; drivers never hand-roll them.
  */
@@ -130,9 +132,10 @@ class RadialHydrostaticBackground {
  *   \qquad \varphi_e = \xi,
  * @f]
  * (doc/gravitating_elasticity.md §1, doc/mappings.md). The solution must
- * reproduce the base solution under composition — the tier-(ii)
- * self-benchmark. Base and @f$\boldsymbol{\xi}@f$ are not owned and must
- * outlive this object. Non-copyable.
+ * reproduce the base solution under composition, which makes the pair a
+ * self-benchmark of the mapped assembly (RelabelledEquilibrium2D in
+ * TestReferentialProblem). Base and @f$\boldsymbol{\xi}@f$ are not owned
+ * and must outlive this object. Non-copyable.
  */
 class RelabelledBackground {
  public:
@@ -200,8 +203,8 @@ class RelabelledBackground {
  * Eval() returns the **second Piola–Kirchhoff pullback**
  * @f$\mathbf{S} = J F^{-1} (\mathbf{T}\circ\varphi) F^{-T}@f$ — exactly
  * the @f$\mathbf{S}_e@f$ the referential problem consumes. With
- * @f$F@f$ explicit in every form, shape derivatives are analytic: the
- * generator is ready for referential shape optimisation.
+ * @f$F@f$ explicit in every form, derivatives with respect to the
+ * mapping can be formed analytically.
  */
 class MinimumNormEquilibriumStress : public mfem::MatrixCoefficient {
  public:
@@ -275,9 +278,7 @@ class MinimumNormEquilibriumStress : public mfem::MatrixCoefficient {
  * Piola–Kirchhoff pullback @f$J F^{-1}(-p\mathbf{1} +
  * 2\mu\,\mathrm{sym}(\nabla u F^{-1})) F^{-T}@f$. Taylor–Hood
  * stability survives the (bi-Lipschitz) relabelling, with the inf–sup
- * constant degrading with the map's condition number. With @f$F@f$
- * explicit in the forms, the generator is ready for referential shape
- * optimisation.
+ * constant degrading with the map's condition number.
  */
 class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
  public:
@@ -318,13 +319,15 @@ class MinimumDeviatoricEquilibriumStress : public mfem::MatrixCoefficient {
 /**
  * @brief The elliptic buffer-taper rule: extend an equilibrium mapping,
  * given (at least) on the body, to the whole ball by a one-off harmonic
- * solve in the buffer (doc/gravitating_elasticity.md §3.1; the
+ * solve in the buffer (doc/gravitating_elasticity.md §3, "Gravity: three
+ * formulations"; the
  * alternative to the analytic TaperedDiffeomorphism when the mapping is
  * only known on the body, e.g.\ discrete or planetmodel-supplied).
  *
  * The displacement @f$\mathbf{h} = \boldsymbol{\xi} - \mathrm{id}@f$ is
- * interpolated on the body (nodal, at @p order — the interpolated-F
- * mode of doc/mappings.md), extended into the buffer by the vector
+ * interpolated on the body (nodal, at @p order — the interpolated mode
+ * of doc/mappings.md, "The discrete change-of-variables identity"),
+ * extended into the buffer by the vector
  * Laplace equation with Dirichlet data @f$\mathbf{h}@f$ on the shared
  * body surface and @f$\mathbf{0}@f$ on the outer (DtN) sphere, and
  * returned as an owning GridFunctionDiffeomorphism on the parent mesh.

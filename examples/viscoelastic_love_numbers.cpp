@@ -43,7 +43,7 @@
 //   - a uniform compressible sphere is unstably stratified, so once relaxed
 //     it carries slowly GROWING buoyancy modes, weak at large kappa: keep
 //     t_final to a few tau_l.
-// The solver tolerance is looser than the library's usual 1e-10: the
+// The solver tolerance is looser than the library's default 1e-12: the
 // comparison does not need more, and the solves (near-incompressible,
 // order 3) are the cost: about a minute on 8 ranks at the defaults.
 //
@@ -55,7 +55,7 @@
 // One source serves the serial and the parallel build; the genuine
 // differences are the mesh partitioning and the reductions of the mass.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./viscoelastic_love_numbers
 //    ./viscoelastic_love_numbers -kappa 100        (compressibility shows)
 //    ./viscoelastic_love_numbers -o 2              (the relaxed state drifts)

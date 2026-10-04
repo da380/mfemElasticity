@@ -142,7 +142,8 @@ TEST_P(SubMeshDofInjectionTest, DomainSubMesh) {
 
 TEST_P(SubMeshDofInjectionTest, BoundarySubMesh) {
   // Trace shadows are only supported for H1 here (the L2 path requires
-  // trace-element machinery restricted to GaussLobatto; not our use case).
+  // trace-element machinery restricted to GaussLobatto, which the library
+  // does not use).
   auto [dim_, elementType, order, useL2, vector, byVDIM] = GetParam();
   if (useL2) {
     GTEST_SKIP();

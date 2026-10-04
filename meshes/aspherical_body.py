@@ -21,12 +21,30 @@ kinked, and a kink is allowed only on a boundary the mesh honours.
 Domain attribute 1 is the body (and 2 the buffer); boundary attribute 1
 is the body's surface (and 2 the outer sphere). Order-2 elements, coarse
 enough to build in seconds. Files: aspherical_{2d,3d}.mesh and
-aspherical_buffer_{2d,3d}.mesh; `--all` builds the four.
+aspherical_buffer_{2d,3d}.mesh.
+
+With --fluid-core the body has two layers, a core below the radius r_c
+(--rc, default 3483/6371, the Earth's core-mantle boundary) and a mantle
+above it, always with the buffer. The shape stretches both, so the core
+boundary is aspherical too and stays on element faces. Domain attributes
+1 core, 2 mantle, 3 buffer; boundary attributes 1 core boundary, 2
+surface, 3 outer sphere, as in layered_earth.py. The manifest's meta
+records eps, beta, buffer and r_c, and marks the core fluid through
+"fluid_layers": [1] (planetmodel reads a layer's fluidity from a material
+model, which a bare geometry has not got; MeshManifest marks every layer
+the meta list names fluid, in addition to those its layers[].fluid
+does). Files: aspherical_fluid_core_buffer_{2d,3d}.mesh, and with
+--spherical the same meshes unstretched (eps = 0, identical topology),
+spherical_fluid_core_buffer_{2d,3d}.mesh.
+
+`--all` builds all eight: the four single-layer meshes and the four
+fluid-core ones.
 
 Try them with the examples, e.g. from a build's examples/:
     ./anisotropic_elasticity -m ../data/aspherical_3d.mesh -o 1
     ./poisson_dtn -m ../data/aspherical_buffer_2d.mesh -o 2 -mth 1
     ./elastogravity_layered -m ../data/aspherical_buffer_2d.mesh -o 2 -s 2
+    ./slipping_interface -m ../data/aspherical_fluid_core_buffer_2d.mesh
 (love_numbers is not among them: it reads harmonics off the body's surface,
 which must be a sphere, and says so.)
 """
@@ -41,8 +59,12 @@ from common import parser, report
 EPS = 0.05     # amplitude of the shape, relative to the radius
 BETA = 0.5     # elliptical part relative to the oblate part
 BUFFER = 0.2   # thickness of the buffer shell relative to the body's radius
+RC = 3483.0 / 6371.0  # radius of the fluid core (--fluid-core)
 
 SIZING = {2: (0.1, 0.2, 1.0), 3: (0.25, 0.5, 2.5)}
+# The two-layer body: in 3D a tenth finer, which keeps gmsh's slivers
+# between the core boundary and the surface out (minSICN 0.34 against 0.26).
+SIZING_FLUID_CORE = {2: (0.1, 0.2, 1.0), 3: (0.225, 0.45, 2.25)}
 
 
 def shape(r, theta, phi, eps=None, beta=None):
@@ -101,14 +123,60 @@ def build(dim: int, buffer: bool, args) -> None:
         p.unlink()
 
 
+def build_fluid_core(dim: int, spherical: bool, args) -> None:
+    """The two-layer body (fluid core, mantle) with its buffer: stretched
+    by the shape, or with --spherical left spherical (eps = 0)."""
+    eps = 0.0 if spherical else args.eps
+    beta = args.beta
+    rc = args.rc
+    sizing = UniformInterfaces(*(args.scale * v
+                                 for v in SIZING_FLUID_CORE[dim]))
+
+    def my_tapered(r, theta, phi):
+        return tapered_shape(r, theta, phi, eps, beta)
+
+    body = Geometry(Skeleton([0.0, rc, 1.0]),
+                    layer_names=["core", "mantle"],
+                    interface_names=["core_boundary", "surface"])
+    if not spherical:
+        body = body.stretched(
+            CallableDisplacement(my_tapered, knots=[1.0],
+                                 name="tapered shape"))
+    spec = MeshSpec(body, sizing, dimension=dim, order=2,
+                    shells=[Shell(ratio=BUFFER, name="buffer")],
+                    outer_boundary="spherical",
+                    meta={"eps": eps, "beta": beta, "buffer": BUFFER,
+                          "r_c": rc, "fluid_layers": [1]})
+    kind = "spherical" if spherical else "aspherical"
+    name = f"{kind}_fluid_core_buffer_{dim}d{args.name}"
+
+    reference = build_layered_mesh(spec, args.out / f"{name}_reference",
+                                   verbose=args.verbose)
+    exported = export_mfem_mesh(reference, args.out / name, delivery="physical")
+    report(reference)
+    what = "nodes as meshed (eps = 0)" if spherical else "nodes moved by the shape"
+    print(f"{exported.mesh_path.name}: {what}; smallest Jacobian ratio "
+          f"{exported.quality.get('min_ratio', float('nan')):.3f}")
+    print(f"  manifest: {exported.manifest_path}")
+    for p in (reference.msh_path, reference.manifest_path):
+        p.unlink()
+
+
 def main() -> None:
     p = parser(__doc__)
     p.add_argument("--dim", type=int, default=2, choices=(2, 3),
                    help="2 for a disc, 3 for a ball")
     p.add_argument("--buffer", action="store_true",
                    help="add a buffer shell, with the shape tapered off across it")
+    p.add_argument("--fluid-core", action="store_true",
+                   help="two layers, fluid core and mantle, with the buffer")
+    p.add_argument("--spherical", action="store_true",
+                   help="with --fluid-core: leave the body spherical "
+                        "(eps = 0), the counterpart of the aspherical mesh")
+    p.add_argument("--rc", type=float, default=RC,
+                   help="core radius with --fluid-core (default %(default).6f)")
     p.add_argument("--all", action="store_true",
-                   help="build all four meshes")
+                   help="build all eight meshes")
     p.add_argument("--eps", type=float, default=EPS,
                    help="amplitude of the shape (default %(default)s)")
     p.add_argument("--beta", type=float, default=BETA,
@@ -124,6 +192,10 @@ def main() -> None:
         for dim in (2, 3):
             for buffer in (False, True):
                 build(dim, buffer, args)
+            for spherical in (False, True):
+                build_fluid_core(dim, spherical, args)
+    elif args.fluid_core:
+        build_fluid_core(args.dim, args.spherical, args)
     else:
         build(args.dim, args.buffer, args)
 

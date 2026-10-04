@@ -7,8 +7,9 @@ meshed aspherical body), the perturbation family (the degree-0
 interface-shift check) and a weak-scaling study — behind two profiles:
 
   --profile local    a rehearsal on this machine: small meshes, few
-                     degrees, 8 ranks; runs end to end in around an
-                     hour and exercises every stage.
+                     degrees, 8 ranks; the default stages run end to
+                     end in around an hour (no scaling rungs; the
+                     viscoelastic stages are opt-in, below).
   --profile server   the production shape: the full model set, an
                      h-ladder at orders 2 and 3, higher degrees, 100
                      ranks on a 128-core shared-memory machine, plus
@@ -66,9 +67,10 @@ viscoelastic_sphere, those of viscoelastic/sphere/study.py.
 
 Method-model compatibility is encoded here: the slipping methods take a
 single fluid core, the mapped stages the referential family, and the
-solver-level identity the gauge-free solid models, where it is strict.
-Mind doc/gauged_fluid.md when reading converged cross-method ladders on
-models whose core is not neutrally stratified.
+solver-level identity the solid models and the gauged fluid core, where
+it is strict. Mind doc/gauged_fluid.md, "Equivalence and the
+Adams–Williamson condition", when reading converged cross-method
+ladders on models whose core is not neutrally stratified.
 """
 from __future__ import annotations
 
@@ -92,14 +94,14 @@ REFERENTIAL_MODELS = ("homogeneous", "two_solid", "linear_solid",
 SLIP_MODELS = ("fluid_core",)
 SOLID_MODELS = ("homogeneous", "two_solid", "linear_solid")
 MAPPED_MODELS = ("homogeneous", "two_solid", "linear_solid", "fluid_core")
-# Strict for every welded case since the covariant gauge penalty:
-# solids and the gauged fluid core alike.
+# Strict for every welded case, solids and the gauged fluid core alike
+# (the gauge penalty is covariant).
 IDENTITY_MODELS = ("homogeneous", "two_solid", "linear_solid",
                    "fluid_core")
 ASPHERICAL_MODELS = ("homogeneous", "linear_solid")
-# slip_broken rejoined the shift legs 1 Oct 2026: the outward-shift
-# pathology was a map-evaluation defect, cured by the forced
-# interpolated-F shift maps (perturbation/README.md).
+# slip_broken runs the shift legs: the driver forces interpolated-F
+# shift maps, which keep its one-sided interface terms side-consistent
+# (perturbation/README.md).
 PERTURBATION = {"fluid_core": ("referential", "slip_broken"),
                 "two_solid": ("referential",)}
 
@@ -243,8 +245,9 @@ def main() -> None:
                 "love_numbers", "run", model, *common,
                 "--cmb", *prof["cmb"], *combined))
 
-    # 3. The field benchmark (Eulerian pair); off in the local profile
-    # unless asked for by name.
+    # 3. The field benchmark (Eulerian pair); runs when the profile's
+    # field flag is set (both profiles set it) or the stage is named
+    # in --stages.
     if "field" in stages and (prof["field"] or args.stages):
         for model in prof["models"]:
             stage(f"field:{model}", run_py(
@@ -265,7 +268,7 @@ def main() -> None:
                 "--method", *methods, "--map", prof["map_amplitude"]))
 
     # 5. The solver-level change-of-variables identity, strict on the
-    # gauge-free solid models.
+    # welded models (solids and the gauged fluid core).
     if "identity" in stages:
         for model in prof["models"]:
             if model not in IDENTITY_MODELS:

@@ -102,8 +102,8 @@ def model(name: str, dim: int, contrast: float = 100.0):
         # that relaxes fully, the elastic core of this free, non-gravitating
         # body has nothing to hold it, its motion relative to the lid is a
         # zero-stiffness mode the whole-body rigid projection does not
-        # remove, and the odd lateral variation forces it (the response
-        # diverged at C = 1e4).
+        # remove, and the odd lateral variation forces it (at C = 1e4 the
+        # response diverges).
         mu_inf = 0.0 if name == "lateral" else 0.1
         return [0.0, 0.4, 0.8, 1.0], [
             elastic("core"),

@@ -1,7 +1,9 @@
 /**
  * @file referential_problem.cpp
- * @brief Implementation of ReferentialElasticRheology and
- * LinearQuasiStaticReferentialSelfGravitatingProblem.
+ * @brief Implementation of the radial vacuum and fluid extensions, the
+ * slip-interface block builders, ReferentialElasticRheology,
+ * LinearQuasiStaticReferentialSelfGravitatingProblem and
+ * LinearQuasiStaticReferentialSelfGravitatingSlipProblem.
  */
 
 #include "mfemElasticity/referential_problem.hpp"
@@ -49,8 +51,6 @@ class ReferentialStiffness : public ElasticStiffness {
   MatrixCoefficient* S_;
   Diffeomorphism* map_;
 };
-
-// (MappedRotation now lives in null_space.hpp.)
 
 }  // namespace
 
@@ -1335,8 +1335,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::SetupPotentialOperators
   k_shift_form_->Assemble();
   k_shift_form_->FormSystemMatrix(empty, K_shift_);
   {
-    // Scale K_shift by 1/4piG through the operator: assemble unscaled and
-    // wrap; AMG wants the matrix, so scale the matrix itself instead.
+    // Scale the assembled matrix itself by 1/4piG: AMG needs the matrix,
+    // not a scaled operator wrapper.
 #ifdef MFEM_USE_MPI
     if (pfes_zeta_) {
       *K_shift_.As<HypreParMatrix>() *= c;
@@ -1886,8 +1886,8 @@ void LinearQuasiStaticReferentialSelfGravitatingProblem::ApplyBlockOperator(
 }
 
 std::vector<real_t> LinearQuasiStaticReferentialSelfGravitatingProblem::RigidPairResiduals() {
-  // The projector's basis is orthonormal, so the general diagnostic's
-  // norm factor is one and the historic semantics are unchanged.
+  // The projector's basis is orthonormal, so NullPairResidual's norm
+  // factor is one.
   EnsureOperator();
   std::vector<real_t> out;
   for (int i = 0; i < projector_u_->Size(); i++) {
@@ -1904,7 +1904,8 @@ namespace {
 /// rho * sym(D g0_h): the discrete grad-grad-zeta0 matrix coefficient of
 /// the mismatch mass term, from the *projected* g0 field so that no
 /// density or second potential derivatives are ever taken
-/// (doc/slip_interface.tex, discrete realisation). Symmetrised pointwise
+/// (doc/slip_interface.tex, "The gravity Hessian of the broken motion,
+/// explicitly", discrete realisation). Symmetrised pointwise
 /// so the assembled mass matrix is exactly symmetric.
 class RhoSymJacobianCoefficient : public MatrixCoefficient {
  public:
@@ -2404,8 +2405,8 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleBrokenBlock
   c_f.Assemble();
   c_f.Finalize();
 
-  // Interface forms: B_Sigma unchanged, and the broken-zeta gravity
-  // form G_Sigma with the vz couplings.
+  // Interface forms: B_Sigma as in the single-valued organisation, and
+  // the broken-zeta gravity form G_Sigma with the vz couplings.
   auto B = NewSlipInterfaceMatrix(*fes_, *J_, interface_marker_, *pi_, map);
   auto GS = NewSlipGravityInterfaceMatrix(*fes_, *fes_zs_solid_, *J_, *Jzsf_,
                                           interface_marker_,
@@ -3135,9 +3136,10 @@ void LinearQuasiStaticReferentialSelfGravitatingSlipProblem::AssembleSlipBlocks(
   c_f.Assemble();
   std::unique_ptr<SparseMatrix> EtCf(mfem::Mult(*Eft, c_f.SpMat()));
 
-  // The mismatch pieces (doc/slip_interface.tex, discrete realisation;
-  // phi_e = id for now — the mapped variants are deferred with the
-  // mapped discrete-gravity unit). K_c = int_Bf rho w . grad zeta1:
+  // The mismatch pieces (doc/slip_interface.tex, "The gravity Hessian of
+  // the broken motion, explicitly", discrete realisation), assembled at
+  // phi_e = id: hence the IsIdentity guard above. K_c = int_Bf rho w .
+  // grad zeta1:
   SubMeshMixedBilinearForm kc(fes_zeta_, fes_f_);
   kc.AddDomainIntegrator(new DomainVectorGradScalarIntegrator(*rho_));
   kc.Assemble();
@@ -3576,25 +3578,27 @@ bool LinearQuasiStaticReferentialSelfGravitatingSlipProblem::SolveLinearSystem(
     return true;
   }
   // Augmented-Lagrangian iterations for the normal-jump constraint,
-  // interleaved with the Tikhonov refinement of the fluid gauge (the
-  // sliding-interface scheme of doc/gauge_penalty_iteration.tex §4):
+  // interleaved with the Tikhonov refinement of the fluid gauge
+  // (doc/slip_interface.tex, "Constraint enforcement", "Penalty and
+  // augmented Lagrangian, interleaved with the gauge refinement"):
   //   S U_{k+1} = F - w_k + eps Q u_{f,k},   w_{k+1} = w_k + theta P U.
   //
-  // Inexact sweeps: an early sweep need only be solved roughly (the
-  // next multiplier update perturbs the right-hand side anyway), so the
-  // inner tolerance tightens geometrically from kLooseRel to the full
-  // rel_tol_ across the sweeps, and the final sweep always runs at the
-  // full tolerance. Warm-started sweeps use an ABSOLUTE target anchored
-  // to the first sweep's initial residual in the solver's own norm (a
-  // relative one would chase each sweep's shrinking initial residual).
-  // Every requested sweep runs: an early-exit heuristic on the measured
-  // jump proved unreliable (the loose sweeps' own solver error pollutes
-  // the contraction measurement), and each sweep is a multiplier update
-  // the AL contraction needs.
+  // Inexact sweeps (doc/slip_interface.tex, "The sweep schedule"): an
+  // early sweep need only be solved roughly (the next multiplier update
+  // perturbs the right-hand side anyway), so the inner tolerance
+  // tightens geometrically from `loose` to the full rel_tol_ across the
+  // sweeps, and the final sweep always runs at the full tolerance.
+  // Warm-started sweeps use an ABSOLUTE target anchored to the first
+  // sweep's initial residual in the solver's own norm (a relative one
+  // would chase each sweep's shrinking initial residual). Every
+  // requested sweep runs: there is no early exit on the measured jump
+  // (the loose sweeps' own solver error pollutes the contraction
+  // measurement, and each sweep is a multiplier update the AL
+  // contraction needs).
   // Inexact mode (SetSweepTolerance): loose <= rel_tol_ means every
   // sweep runs at the full tolerance (the default).
   const real_t loose = std::max(sweep_loose_rel_, rel_tol_);
-  // Geometric tightening from kLooseRel to rel_tol_ across the sweeps:
+  // Geometric tightening from `loose` to rel_tol_ across the sweeps:
   // the inner tolerance must NOT follow the measured jump (the measured
   // jump cannot fall below the solver-error floor the loose tolerance
   // itself sets - a deadlock), and the late accurate sweeps let the AL

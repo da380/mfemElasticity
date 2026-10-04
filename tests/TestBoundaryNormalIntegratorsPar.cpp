@@ -318,5 +318,5 @@ int main(int argc, char* argv[]) {
               << "): " << num_checks - num_fails << " / " << num_checks
               << " checks passed\n";
   }
-  return num_fails;
+  return num_fails == 0 ? 0 : 1;  // an exit status is taken modulo 256
 }

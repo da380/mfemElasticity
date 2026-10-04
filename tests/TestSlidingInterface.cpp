@@ -2,7 +2,8 @@
 
 /*
   Tests for the sliding fluid-solid interface built from the SubMesh dof
-  pairing J = Pi_s^T Pi_f (NewSubMeshPairingMatrix; doc/gauged_fluid.md §5):
+  pairing J = Pi_s^T Pi_f (NewSubMeshPairingMatrix; doc/slip_interface.tex,
+  "Discretisation of the slipping interface"):
   two displacement fields on the solid and fluid SubMeshes of one parent,
   coupled by a penalty on the normal jump assembled from ONE
   BoundaryNormalNormalIntegrator matrix B on the solid side,
@@ -16,8 +17,8 @@
   On the two-layer disc (fluid core, solid mantle), gravity-free:
 
   - Pairing identities: J maps the fluid trace to the solid trace nodally
-    (machine precision for a common interpolated field) and J^T J is the
-    identity on the paired fluid dofs.
+    (machine precision for a common interpolated field) and J J^T is the
+    identity on the paired solid dofs (the pairing is one-to-one).
   - The sliding solution matches the condensed rank-one cavity reference on
     the solid, modulo the rigid modes (in the barotropic/neutral setting
     the sliding interface, the continuous-space gauge of TestFluidGauge and

@@ -1,19 +1,20 @@
-# 3-D GIA modelling codes: status survey
+# 3-D GIA modelling codes: a survey
 
 A survey of the numerical codes for 3-D glacial isostatic adjustment and
-self-gravitating (visco)elastic loading, drawn from the papers in this
-folder plus a web check of current availability (29 September 2026).
-Written as background for the 3-D verification campaign: what each code
-does, what it assumes, what it cannot do, and where mfemElasticity's
-careful treatments (full gravity, meshed and possibly stratified fluid
-cores, exact DtN, aspherical boundaries by relabelling) sit relative to
-the field. `ggw032.pdf` in this folder is Al-Attar & Crawford (2016), the
-theoretical basis of the relabelling benchmarks — it is not a GIA code
-paper and is not surveyed here.
+self-gravitating (visco)elastic loading, drawn from the published papers
+listed under Sources and from the codes' public repositories. It is
+background research for the library's verification benchmarks: what each
+code does, what it assumes, what it cannot do, and where mfemElasticity's
+treatments (full gravity, meshed and possibly stratified fluid cores, exact
+DtN, aspherical boundaries by relabelling) sit relative to the field. The
+availability statements record the public state of each code when the
+survey was compiled and will age. Al-Attar & Crawford
+(2016), the theoretical basis of the relabelling benchmarks, is not a GIA
+code paper and is not surveyed.
 
 ## The published benchmarks (both 1-D)
 
-**Spada et al. 2011** (GJI 185, 106; `185-1-106.pdf`). Eight codes —
+**Spada et al. 2011** (GJI 185, 106–132). Eight codes —
 normal-mode (TABOO, FastLove-HiDeg, MHPLove, VEENT), Post–Widder Laplace
 inversion (ALMA), spectral–finite-element (VILMA), ABAQUS FE (flat and
 spherical) — on a 3-layer incompressible Maxwell model with elastic
@@ -24,11 +25,10 @@ CMB conditions, degree-1 Love numbers in the CM frame (k₁ᴸ = −1),
 hydrostatic initial rotational state. Deliberately excludes
 compressibility (dense normal-mode spectra) and the sea-level equation.
 Its Tables 3–14 remain the standard reference numbers for validating a
-new code on spherical models — the natural targets when we reproduce
-figures, with the caveat that the viscoelastic content is normal-mode
-based while our comparisons would be time-domain.
+new code on spherical models; their viscoelastic content is normal-mode
+based (Laplace domain).
 
-**Martinec et al. 2018** (GJI 215, 389; `ggy280.pdf`). Ten codes on the
+**Martinec et al. 2018** (GJI 215, 389–414). Ten codes on the
 sea-level equation: five synthetic cases from no-SLE through fixed
 coastlines to fully moving coastlines with floating ice, on the same
 incompressible non-rotating 1-D model. Agreement ~1.5% max in U and N;
@@ -39,9 +39,8 @@ Also 1-D only; 3-D structure explicitly deferred.
 **A 3-D benchmark does not exist in print.** The initiative is EGU
 abstract EGU22-1447 (Klemann and 16 co-authors, out of the 2021
 PALSEA-SERCE workshop) proposing a catalogue of synthetic experiments;
-no paper or preprint has followed as of September 2026 (the June 2025
-GIA workshop in Sidney BC held a benchmarking breakout, with no published
-outcome). Every 3-D code below is verified only against 1-D
+no paper or preprint has followed it (a 2025 GIA workshop held a
+benchmarking breakout, without a published outcome). Every 3-D code below is verified only against 1-D
 semi-analytic references. This is the gap the relabelled-benchmark
 methodology addresses: exact aspherical reference solutions without
 needing a second 3-D code.
@@ -49,7 +48,7 @@ needing a second 3-D code.
 ## The 3-D codes
 
 ### Martinec spectral–finite-element lineage (VILMA, VEGA)
-- Theory: Martinec 1999 (GJI 137, 469; `137-2-469.pdf`) — tensor
+- Theory: Martinec 1999 (GJI 137, 469–488) — tensor
   spherical harmonics in angle, FE in radius, explicit time stepping
   with a viscous "memory" term; lateral viscosity couples degrees/orders
   through Clebsch–Gordan machinery. Implemented as Martinec (2000) and
@@ -60,14 +59,14 @@ needing a second 3-D code.
   compressible prototype exists), Maxwell, explicit Euler (Δt limited by
   the minimum Maxwell time), practical lateral resolution ~degree 50–128.
 - Fluid core: free-slip CMB conditions on an unmeshed core.
-- Status: Martinec's own implementation and GFZ's VILMA are not
-  distributed ("open source in preparation" per natESM documentation). A
-  "VILMA v2" rewrite appeared on GitHub (github.com/fesmc/vilma) in
-  September 2026 — created days ago, no license, "not yet ready for
-  scientific production use". Worth watching.
+- Availability: Martinec's own implementation and GFZ's VILMA are not
+  distributed ("open source in preparation" per the natESM
+  documentation). A "VILMA v2" rewrite is public at
+  github.com/fesmc/vilma, without a licence and described by its authors
+  as not yet ready for scientific production use.
 
 ### Latychev finite-volume code (Seakon)
-- Latychev et al. 2005 (GJI 161, 421; `161-2-421.pdf`): node-centred
+- Latychev et al. 2005 (GJI 161, 421–444): node-centred
   finite volumes on an unstructured tetrahedral grid, all four unknowns
   (u, φ₁) in one monolithic system, GMRES+ILU, MPI. Full first-order
   gravity; elastically compressible but incompressible in the fluid
@@ -77,20 +76,20 @@ needing a second 3-D code.
   discontinuities — no boundary topography. Core unmeshed: uniform
   incompressible inviscid fluid via CMB condition. No SLE in the 2005
   paper (added later via the Mitrovica–Milne theory); rotation added
-  later; recently extended to transient rheology (Lau et al. 2026,
-  JGR — search-snippet level only). Modern versions are understood to
-  use Bailey's exponential explicit time-stepper in place of forward
-  Euler, easing the Δt ≤ Maxwell-time constraint (D. Al-Attar, private
-  communication from J. Mitrovica; not in the 2005 paper).
-- Status: after two decades of collaboration-only access, the code was
-  deposited publicly in May 2026 at the Brown Digital Repository
-  (doi 10.26300/y2ct-jp25, CC BY-NC): a ~100 GB snapshot configured for
-  192 CPUs accompanying one paper, via Globus. Effectively an archival
-  release, not a maintained distribution; no public documentation (a
-  draft user guide at Memorial University is an unfinished skeleton).
+  later; extended to transient rheology (Lau et al. 2026, JGR; not
+  checked against the paper). Later versions are reported to use an
+  exponential (Bailey-type) explicit time-stepper in place of forward
+  Euler, easing the Δt ≤ Maxwell-time constraint; this is unpublished and
+  not in the 2005 paper.
+- Availability: the code was long available to collaborators only. A
+  snapshot is deposited at the Brown Digital Repository
+  (doi 10.26300/y2ct-jp25, CC BY-NC): about 100 GB, configured for 192
+  CPUs, accompanying one paper and distributed via Globus. It is an
+  archival release rather than a maintained distribution, without public
+  documentation.
 
 ### Zhong / A / Yuan finite-element lineage (→ CitcomSVE-3.0)
-- A, Wahr & Zhong 2013 (GJI 192, 557; `ggs030.pdf`): compressible 3-D FE
+- A, Wahr & Zhong 2013 (GJI 192, 557–572): compressible 3-D FE
   (CitcomS heritage), trapezoid-rule Maxwell stepping, full first-order
   gravity — but the Poisson equation is *not* solved by FE: φ comes from
   spherical-harmonic Green's-function integrals, which **requires the
@@ -99,7 +98,7 @@ needing a second 3-D code.
   wander feedback; SLE with partial ocean-function time dependence.
   Degree-dependent errors ~1% (low degrees) to ~3–5% (short wavelengths,
   point GPS rates).
-- CitcomSVE-3.0 (GMD 18, 1445, 2025; `gmd-18-1445-2025.pdf`): the
+- CitcomSVE-3.0 (Yuan, Zhong & A 2025, GMD 18, 1445–1461): the
   packaged, parallel (multigrid, >75% efficiency to 6144 cores), open
   release. Compressible since 3.0; fully 3-D viscosity (linear or
   nonlinear) and elastic moduli; full Kendall et al. (2005) SLE with
@@ -112,12 +111,12 @@ needing a second 3-D code.
   second-order convergence; benchmark errors <0.1% to degree 4, <2% to
   degree 16 at ~50 km resolution, degree (2,1)/polar-wander term the
   least accurate (1.4–17.5%).
-- Status: genuinely open — github.com/shjzhong/CitcomSVE (LGPL-3.0) and
-  Zenodo (10.5281/zenodo.13932410), maintained (pushes through
-  Aug 2025), with a manual. The reference open 3-D GIA code at present.
+- Availability: open — github.com/shjzhong/CitcomSVE (LGPL-3.0) and
+  Zenodo (10.5281/zenodo.13932410), maintained, with a manual; the most
+  complete openly available 3-D GIA code in this survey.
 
 ### ABAQUS lineage (Wu → van der Wal → FEMIBSF)
-- Huang et al. 2023 (GJI 235, 2231; `ggad354.pdf`): the current state —
+- Huang et al. 2023 (GJI 235, 2231–2256), the FEMIBSF approach:
   the commercial FE kernel solves ∇·σ = 0, and *all* gravity terms
   (pre-stress advection, perturbed potential, compressibility buoyancy)
   are applied as iteratively updated body/surface forces, with the
@@ -140,7 +139,7 @@ needing a second 3-D code.
   Antarctica models and van Calcar's coupled ice-sheet–GIA model.
 
 ### Cambridge adjoint spectral code (Lloyd et al. 2024)
-- `ggad455.pdf` (GJI 236, 1139): the group's own line — Al-Attar & Tromp
+- Lloyd et al. 2024 (GJI 236, 1139–1171): the Al-Attar & Tromp
   (2013) / Crawford et al. (2018) rate formulation, generalized
   spherical harmonics to degree 64 × radial spectral elements,
   pseudo-spectral lateral-viscosity terms, non-iterative SLE with
@@ -152,14 +151,12 @@ needing a second 3-D code.
   only), no rotation yet, Maxwell (transient implementable), explicit
   RK2 stepping with Δt ~ half the minimum Maxwell time — hence viscosity
   floored at 2×10¹⁹ Pa s, and ~TB-scale storage of forward fields for
-  kernels. The degree-64 truncation of the paper is not intrinsic:
-  forward runs go fine at degree ~256 on a decent server; 64 reflects
-  the adjoint runs' need to store forward fields for kernel
-  construction, where a better job could be done but has not been
-  (D. Al-Attar).
-- Status: revived in 2026 and public on David's GitHub as **sl3d** (two
-  versions, 1-D and 3-D); runs locally, needs a server for production
-  work. Crawford has left the field and the code had been dormant.
+  kernels. The degree-64 truncation of the paper is not intrinsic to
+  the method: forward runs are feasible at degree ~256 on a server, and
+  the truncation reflects the storage of forward fields for kernel
+  construction (unpublished).
+- Availability: public as **sl3d** (1-D and 3-D versions); it runs on a
+  workstation and needs a server for production work.
 
 ### SPECFEMX (Gharti; not a GIA code yet, but adjacent)
 - Spectral-infinite-element method: spectral elements on unstructured
@@ -169,20 +166,18 @@ needing a second 3-D code.
   Gharti & Tromp 2017 (SIEM Poisson), Gharti et al. 2018 (gravity
   anomalies), 2019a (coseismic + post-earthquake viscoelastic
   deformation), 2019b (earthquake-induced gravity perturbations), 2023
-  (self-gravitating rotating wave propagation). These are not in this
-  folder.
-- Status (github.com/homnath/SPECFEMX, GPL-3.0, verified): actively
-  developed — commits through July 2026 despite the quiet look of the
-  front page. Post-earthquake viscoelastic and gravity-perturbation
+  (self-gravitating rotating wave propagation).
+- Availability: github.com/homnath/SPECFEMX (GPL-3.0), actively
+  developed. Post-earthquake viscoelastic and gravity-perturbation
   capabilities are marked "experimental" in the manual. The README
   documents in-progress work on sea-level change via the Crawford et
   al. (2018) rate formulation, with open items (ice term missing from
   the weak form, load/BC questions, memory-integral time marching): a
-  quasi-static self-gravitating loading + SLE capability is being built
-  and is explicitly incomplete. No published GIA application.
+  quasi-static self-gravitating loading + SLE capability is in
+  development and explicitly incomplete. No published GIA application.
 
 ### Others, briefly
-- **G-ADOPT viscoelastic** (Scott et al., GMD 19, 2717, Apr 2026):
+- **G-ADOPT viscoelastic** (Scott et al. 2026, GMD 19, 2717):
   Firedrake-based FE with *automatically derived adjoints*, compressible,
   lateral and nonlinear/transient rheology — but **no self-gravity yet**.
   Open source; the closest thing to an adjoint-capable community
@@ -207,21 +202,23 @@ Setting mfemElasticity's design choices against the field:
    is exact but expensive (FEMIBSF, Seakon's boundary integrals), and
    genuine unbounded-domain discretisations (SPECFEMX's infinite
    elements). An FE Poisson solve on the same mesh with an exact DtN
-   closure — our arrangement — handles 3-D density at no structural
+   closure — the library's arrangement — handles 3-D density at no structural
    cost; in the survey only SPECFEMX is comparably general, and it has
    no working GIA capability yet.
 2. **Fluid cores.** Universally unmeshed: every GIA code reduces the
    core to a CMB boundary condition for a uniform (or neutrally
    stratified) incompressible inviscid fluid. None solves for the
    potential inside a stratified fluid core (the ρ′ term). The submesh
-   fluid machinery here has no counterpart in the field, and David's
-   reservations about the degree-0 fluid treatment (Dahlen's
-   formulation) touch physics none of these codes even represents. On
-   the campaign's list: implement the Latychev-style approximate CMB
-   condition here as an option and compare against the meshed core, to
-   quantify whether the universal approximation matters. [Done: the
-   published conditions, their (F1)–(F3) translation and the measured
-   cost are in `cmb_conditions.md`; benchmark option `-cmb`.]
+   fluid machinery of mfemElasticity has no counterpart in the field, and
+   the degree-0 limitation of the eliminated-fluid (Dahlen) treatment
+   (`doc/gauged_fluid.md`, section "Degree 0") concerns physics none of
+   these codes represents. The published approximate CMB conditions are
+   available in the Love-number benchmarks as option `-cmb`, for
+   comparison against the meshed core; the conditions and their translation
+   into the library's interface terms are in `doc/quasi_static_models.tex`
+   (section "Fluid regions and the ladder of CMB approximations"), their
+   measured cost and accuracy in `doc/benchmarks.tex` (section "The CMB
+   approximations: results").
 3. **Boundary and interface topography.** No surveyed code handles
    aspherical internal boundaries: grids and spectral expansions honour
    spherical PREM interfaces (Seakon's unstructured grid could in
@@ -233,29 +230,73 @@ Setting mfemElasticity's design choices against the field:
 4. **Verification.** Every 3-D code above is validated against 1-D
    semi-analytic references only, typically to ~1% at low degrees and
    several per cent at short wavelengths; a published 3-D benchmark does
-   not exist. Relabelled exact solutions would be the first aspherical
-   reference with machine-precision (variant 2a) and
-   convergence-certified (variant 2b) content.
+   not exist. Relabelling gives aspherical references of two kinds: a
+   discrete change-of-variables identity that holds to ~1e-6 for the
+   welded formulations, and an aspherical reference body checked by convergence
+   (`doc/benchmarks.tex`, section "The relabelling family").
 5. **Time stepping.** The explicit-Euler Δt ≤ Maxwell-time constraint
    recurs across the field (Martinec lineage, the published Seakon,
    Lloyd et al.) and is what forces viscosity floors; CitcomSVE and A13
    use slightly better trapezoid stepping, and modern Seakon reportedly
-   an exponential (Bailey-type) explicit integrator (see above).
-   Relevant when our viscoelastic layer meets 3-D models.
+   an exponential (Bailey-type) explicit integrator (see above). The
+   library's exponential trapezoid and adaptive steppers have no such
+   limit (`doc/viscoelasticity.md`, section "Time stepping").
 6. **Adjoints.** Only the Cambridge line has published GIA sensitivity
-   kernels; G-ADOPT has automatic adjoints without gravity. A
-   mapping-aware form with F explicit — analytic shape derivatives —
-   plus full gravity would be a combination nobody has.
+   kernels; G-ADOPT has automatic adjoints without gravity. mfemElasticity
+   implements no adjoint; its mapping-aware forms carry the deformation
+   gradient F explicitly (`doc/mappings.md`).
 
 ## Sources
 
-Folder PDFs: Martinec 1999 (`137-2-469`), Latychev et al. 2005
-(`161-2-421`), Spada et al. 2011 (`185-1-106`), A, Wahr & Zhong 2013
-(`ggs030`), Al-Attar & Crawford 2016 (`ggw032`, theory), Martinec et
-al. 2018 (`ggy280`), Huang et al. 2023 (`ggad354`), Lloyd et al. 2024
-(`ggad455`), Yuan, Zhong & A 2025 (`gmd-18-1445-2025`). Web status
-(verified 29 Sep 2026 unless noted): CitcomSVE GitHub/Zenodo; Seakon
-Brown deposit bdr:429nt562; natESM VILMA page; github.com/fesmc/vilma;
-github.com/homnath/SPECFEMX; GMD G-ADOPT paper; EGU22-1447. The Lau et
-al. (2026) Seakon transient-rheology extension and the 2025 workshop
-breakout details rest on search snippets only.
+Published papers (local PDF file names in brackets, as a convenience; the
+PDFs are not in the repository):
+
+- A, G., Wahr, J. and Zhong, S. (2013). Computations of the viscoelastic
+  response of a 3-D compressible Earth to surface loading: an application
+  to Glacial Isostatic Adjustment in Antarctica and Canada. *Geophys. J.
+  Int.*, 192, 557–572, doi:10.1093/gji/ggs030. [`ggs030.pdf`]
+- Al-Attar, D. and Crawford, O. (2016). Particle relabelling
+  transformations in elastodynamics. *Geophys. J. Int.*, 205, 575–593,
+  doi:10.1093/gji/ggw032. [`ggw032.pdf`]
+- Huang, P., Steffen, R., Steffen, H., Klemann, V., Wu, P., van der Wal,
+  W., Martinec, Z. and Tanaka, Y. (2023). A commercial finite element
+  approach to modelling Glacial Isostatic Adjustment on spherical
+  self-gravitating compressible earth models. *Geophys. J. Int.*, 235,
+  2231–2256, doi:10.1093/gji/ggad354. [`ggad354.pdf`]
+- Latychev, K., Mitrovica, J. X., Tromp, J., Tamisiea, M. E., Komatitsch,
+  D. and Christara, C. C. (2005). Glacial isostatic adjustment on 3-D
+  Earth models: a finite-volume formulation. *Geophys. J. Int.*, 161,
+  421–444, doi:10.1111/j.1365-246X.2005.02536.x. [`161-2-421.pdf`]
+- Lloyd, A. J., Crawford, O., Al-Attar, D., Austermann, J., Hoggard, M.
+  J., Richards, F. D. and Syvret, F. (2024). GIA imaging of 3-D mantle
+  viscosity based on palaeo sea level observations – Part I: Sensitivity
+  kernels for an Earth with laterally varying viscosity. *Geophys. J.
+  Int.*, 236, 1139–1171, doi:10.1093/gji/ggad455. [`ggad455.pdf`]
+- Martinec, Z. (1999). Spectral, initial value approach for viscoelastic
+  relaxation of a spherical earth with a three-dimensional viscosity — I.
+  Theory. *Geophys. J. Int.*, 137, 469–488. [`137-2-469.pdf`]
+- Martinec, Z., Klemann, V., van der Wal, W., Riva, R. E. M., Spada, G.,
+  Sun, Y., Melini, D., Kachuck, S. B., Barletta, V., Simon, K., A, G. and
+  James, T. S. (2018). A benchmark study of numerical implementations of
+  the sea level equation in GIA modelling. *Geophys. J. Int.*, 215,
+  389–414, doi:10.1093/gji/ggy280. [`ggy280.pdf`]
+- Spada, G. et al. (2011). A benchmark study for glacial isostatic
+  adjustment codes. *Geophys. J. Int.*, 185, 106–132,
+  doi:10.1111/j.1365-246X.2011.04952.x. [`185-1-106.pdf`]
+- Yuan, T., Zhong, S. and A, G. (2025). CitcomSVE-3.0: a
+  three-dimensional finite-element software package for modeling
+  load-induced deformation and glacial isostatic adjustment for an Earth
+  with a viscoelastic and compressible mantle. *Geosci. Model Dev.*, 18,
+  1445–1461, doi:10.5194/gmd-18-1445-2025. [`gmd-18-1445-2025.pdf`]
+
+Papers cited above by author and year but not read for this survey:
+Martinec (2000), Al-Attar & Tromp (2013), Crawford et al. (2018), Gharti &
+Tromp (2017), Gharti et al. (2018, 2019a, 2019b, 2023), Weerdesteijn et
+al. (2023), Scott et al. (2026, G-ADOPT), Lau et al. (2026), the EGU22-1447
+abstract, and the GMD (2024) FastIsostasy and machine-learning surrogate
+papers.
+
+Public repositories and pages consulted for availability: CitcomSVE
+(GitHub and Zenodo); the Seakon deposit at the Brown Digital Repository
+(bdr:429nt562); the natESM VILMA page; github.com/fesmc/vilma;
+github.com/homnath/SPECFEMX.

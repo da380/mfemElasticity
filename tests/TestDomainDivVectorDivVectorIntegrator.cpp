@@ -3,6 +3,10 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int q div u div v for u = x and v = (sin x_i), against MFEM's mass form
+// with weight q between the L2 interpolants of div u and div v: the
+// integrator must reproduce the form built from independently computed
+// divergences, up to interpolation error.
 TEST_P(BilinearFormIntegratorTests, DomainDivVectorDivVectorIntegrator) {
   const auto& current_tuple = GetParam();
 

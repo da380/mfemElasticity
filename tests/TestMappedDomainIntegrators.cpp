@@ -1,5 +1,5 @@
-// Pull-back identity tests (doc/mappings.md, Section 5) for the
-// generalised domain integrators of bilininteg.hpp: for a smooth
+// Pull-back identity tests (doc/mappings.md, "The discrete
+// change-of-variables identity") for the generalised domain integrators of bilininteg.hpp: for a smooth
 // non-polynomial mapping interpolated on the mesh's geometric space, with
 // referential coefficients (physical fields composed with the interpolated
 // mapping) and one integration rule on both sides, each mapped integrator

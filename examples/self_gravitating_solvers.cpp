@@ -1,16 +1,20 @@
 // ============================================================================
 // self_gravitating_solvers.cpp
 //
-// One physical problem, every linear-solver architecture in the library:
-// a two-layer self-gravitating body (fluid core, solid mantle) under a
-// degree-2 surface mass load, solved through
+// One physical problem, the main linear-solver architectures of the
+// library: a two-layer self-gravitating body (fluid core, solid mantle)
+// under a degree-2 surface mass load, solved through
 //
 //   1. dahlen / Schur CG        the Eulerian formulation with the fluid
-//                               eliminated (doc/self_gravitation.md): the
-//                               potential block is eliminated and CG runs
-//                               on the SPD Schur complement in the
-//                               displacement — few outer iterations, one
-//                               inner potential solve each;
+//                               eliminated (doc/self_gravitation.md;
+//                               doc/quasi_static_models.tex, "Fluid
+//                               regions and the ladder of CMB
+//                               approximations"): the potential block is
+//                               eliminated and CG runs on the symmetric
+//                               Schur complement in the displacement
+//                               (positive on the complement of the rigid
+//                               modes) — few outer iterations, one inner
+//                               potential solve each;
 //   2. dahlen / block MINRES    the same discrete system as one symmetric
 //                               indefinite block operator under MINRES
 //                               with a block-diagonal preconditioner — no
@@ -40,12 +44,22 @@
 //                               constraint joining the AL loop): the
 //                               four-block system, no fluid extension.
 //
+// Not included: the KKT multiplier enforcement of the slip constraint
+// (EnableKKT; see slipping_interface.cpp, -enforce kkt, and
+// doc/slip_interface.tex, "KKT enforcement" — a multiplier space one order
+// below the displacement can make the gauge refinements diverge in 2-D,
+// "The multiplier space"), and the exact-gauge KKT of the mixed problem
+// (EnableGaugeKKT), which is not competitive (doc/slip_interface.tex,
+// "Why the fluid gauge stays a penalty").
+//
 // All six must agree on the observables (the mantle displacement, modulo
 // rigid modes) at the level of the discretisations; the table prints the
 // unknowns, the outer iterations, the wall times and that agreement, so
 // the cost of each architecture can be read against what it buys:
-// robustness (MINRES), fluid physics beyond the barotropic gauge (slip),
-// mapped/aspherical generality (referential family).
+// robustness (MINRES), a tangential slip at the core boundary that the
+// welded space suppresses (slip; needed where the slip cannot be removed
+// by relabelling, e.g. on aspherical fluid regions), mapped/aspherical
+// generality (referential family).
 //
 // With -vis (the default) GLVis shows the mantle displacement of the first
 // architecture and, beside it, the DIFFERENCE field of the architecture
@@ -54,7 +68,7 @@
 //
 // One source serves the serial and the parallel build.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./self_gravitating_solvers
 //    ./self_gravitating_solvers -o 3
 //    ./self_gravitating_solvers -no-slip        (the Eulerian trio alone)
@@ -118,7 +132,8 @@ constexpr int kALIterations = 8;
 
 // PURE degree-2 surface mass load: no degree-0 part, where the Dahlen
 // fluid treatment differs from the compressible descriptions by design
-// (doc/gauged_fluid.md) and the architectures would rightly disagree.
+// (doc/gauged_fluid.md, "Degree 0") and the architectures would rightly
+// disagree.
 double SurfaceLoad(const Vector& x) {
   const double r = x.Norml2();
   const double c = x[x.Size() - 1] / r;
@@ -274,11 +289,19 @@ int main(int argc, char* argv[]) {
       reference = std::move(mantle);
       e.difference = 0.0;
     } else {
+      // The projector acts on true-dof vectors (in parallel the local
+      // vector is longer: it repeats the shared dofs).
+      auto remove_rigid = [&](FieldType& f) {
+        Vector t;
+        f.GetTrueDofs(t);
+        rigid_proj->Project(t);
+        f.SetFromTrueDofs(t);
+      };
       FieldType d(*mantle);
       d -= *reference;
-      rigid_proj->Project(d);
+      remove_rigid(d);
       FieldType ref(*reference);
-      rigid_proj->Project(ref);
+      remove_rigid(ref);
       e.difference = L2Norm(d) / L2Norm(ref);
       if (!worst || e.difference > worst_difference) {
         worst = std::make_unique<FieldType>(d);
@@ -399,8 +422,17 @@ int main(int argc, char* argv[]) {
       const double setup = Seconds(t0);
       t0 = Clock::now();
       slip.Solve();
-      const long long unknowns =
-          TrueSize(fes_s) + TrueSize(fes_f) + TrueSize(fes_zeta);
+      // Single-valued: u_s, u_f and zeta on the ball. Broken: u_s, u_f,
+      // zeta on the solid shell and buffer, zeta on the core (the four
+      // spaces of BrokenSpace()).
+      long long unknowns = 0;
+      if (broken) {
+        for (int i = 0; i < 4; i++) {
+          unknowns += TrueSize(static_cast<SpaceType&>(slip.BrokenSpace(i)));
+        }
+      } else {
+        unknowns = TrueSize(fes_s) + TrueSize(fes_f) + TrueSize(fes_zeta);
+      }
       record(broken ? "slip broken-zeta / AL + proj. MINRES"
                     : "slip / AL + projected MINRES",
              unknowns,

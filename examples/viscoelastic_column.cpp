@@ -47,7 +47,7 @@
 // One source serves the serial and the parallel build; the genuine
 // difference is the partitioning of the (periodic) mesh.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./viscoelastic_column
 //    ./viscoelastic_column -nz 16       (finer: the cut error shrinks ~1/nz)
 //    ./viscoelastic_column -o 3         (higher order does not cure a kink)
@@ -197,7 +197,8 @@ int main(int argc, char* argv[]) {
   const std::vector<real_t> heights{0.5 * H, 0.5 * H + 0.5 * dz};
   const std::vector<std::string> names{"on a face", "cutting an element"};
 
-  // Top observation: the largest z of the mesh's vertices (all at H).
+  // The results of each run, recorded at the common output times (four
+  // per unit time, and t_final).
   struct Run {
     std::vector<real_t> top;  // u_z at the top, per output time
     FieldType error;          // u_z - exact at the final time

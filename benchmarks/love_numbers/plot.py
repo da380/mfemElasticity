@@ -2,8 +2,8 @@
 
 Reads the tree run.py writes for one model, `<runs>/<model>/h*/`, or for
 all of them, prints a
-table of the relative errors of every run and writes figures beside the
-cases:
+table of the relative errors of every run and writes figures in each
+model's directory, beside its cases:
 
   love_numbers.png   h', l', k' (load) and h, l, k (tide) by degree: the reference
                      and the finest run of each order
@@ -13,6 +13,8 @@ cases:
                      with the observed rate fitted over the ladder
   field_convergence.png  the L2 errors of the cap-load fields against the
                      element size, likewise
+  timing.png         wall seconds and outer iterations of the load solve by
+                     degree, one series per run
   profiles.png       U, V and phi of the load problem by radius: the
                      reference, and the finest run of each order on the
                      interfaces of the solid and, dashed, within the layers
@@ -25,8 +27,9 @@ and the relative L2 errors of the fields, over the solid (u) and over the
 body and its buffer (phi).
 
 At degree one the numbers are those of the centre-of-mass frame, in which
-k' is minus one in both solutions and is not plotted; with a fluid layer
-degree zero is left out (see README.md).
+k' is minus one in both solutions and is not plotted. With a fluid layer
+Dahlen's degree-zero numbers differ from the reference by design (see
+doc/gauged_fluid.md, "Degree 0") and are plotted to show it.
 
     python plot.py runs/homogeneous
     python plot.py runs          every model, and the summary runs/summary.md
@@ -134,7 +137,7 @@ def style() -> None:
     })
 
 
-def read_run(path: Path, *, fluid: bool) -> Run:
+def read_run(path: Path) -> Run:
     r = json.loads(path.read_text())
     method = r.get("method",
                    "gauged" if r.get("fluid_treatment") == "gauged"
@@ -165,13 +168,10 @@ def read_run(path: Path, *, fluid: bool) -> Run:
             if forcing == "load" and l == 0 and name != "h":
                 # k' and l' vanish at degree zero: nothing to be relative to
                 continue
-            if (forcing == "load" and l == 0 and fluid
-                    and method == "dahlen"):
-                # Dahlen's fluid differs from the reference at degree zero
-                # by design (doc/gauged_fluid.md); the welded and slipping
-                # treatments describe the fluid compressibly and are
-                # comparable there.
-                continue
+            # Dahlen's fluid differs from the reference at degree zero by
+            # design (doc/gauged_fluid.md, "Degree 0"): its degree-zero point
+            # is kept, to show the difference; the welded and slipping
+            # treatments describe the fluid compressibly and agree there.
             if forcing == "load" and l == 1 and name == "k":
                 # minus one by the choice of frame
                 continue
@@ -708,7 +708,8 @@ def plot_field_maps(field: dict, title: str, out: Path) -> None:
 
 
 def field_method(field: dict) -> str:
-    """The formulation of a field run (older files name none: Dahlen)."""
+    """The formulation of a field run: its "method", else gauged when its
+    fluid_treatment says so, else Dahlen."""
     return field.get("method", "gauged" if field.get("fluid_treatment")
                      == "gauged" else "dahlen")
 
@@ -759,15 +760,11 @@ def plot_field_spectrum(fields: list[tuple[str, dict]], title: str,
 def plot_model(directory: Path) -> list[str]:
     """The table and the figures of one model; returns the lines of its
     summary, one per run."""
-    runs, ref, fluid = [], None, False
+    runs, ref = [], None
     results, fields = {}, []
     for case in sorted(directory.glob("h*")):
         if not (case / "reference.json").exists():
             continue
-        manifest = json.loads((case / "case.json").read_text())
-        # layers[].fluid since manifest schema 5; meta.fluid_layers before.
-        fluid = (any(layer.get("fluid") for layer in manifest["layers"])
-                 or bool(manifest.get("meta", {}).get("fluid_layers")))
         reference = json.loads((case / "reference.json").read_text())
         ref = reference_values(reference)
         title = reference["model"]
@@ -775,7 +772,7 @@ def plot_model(directory: Path) -> list[str]:
             if "_shift" in path.stem:
                 continue  # a perturbed MODEL, the perturbation
                 # family's business (perturbation/plot.py)
-            runs.append(read_run(path, fluid=fluid))
+            runs.append(read_run(path))
             results[runs[-1].label] = json.loads(path.read_text())
         for path in sorted(case.glob("field_o*.json")):
             field = json.loads(path.read_text())

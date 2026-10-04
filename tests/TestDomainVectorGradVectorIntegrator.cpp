@@ -3,6 +3,10 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int q v . grad(w . u) for q = |x|, w = x and u = x, so grad(w . u) =
+// 2 x, against MFEM's VectorMassIntegrator with weight q between v = x and
+// the interpolant of 2 x. The nodal interpolant of w . u = |x|^2 is exact
+// at order 2, so the two agree to quadrature.
 TEST_P(BilinearFormIntegratorTests, DomainVectorGradVectorIntegrator) {
   const auto& current_tuple = GetParam();
 

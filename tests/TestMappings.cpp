@@ -6,11 +6,13 @@
 //     gradient F^{-T} v) against closed forms.
 //  2. GridFunctionDiffeomorphism reproduces a polynomial map lying in its
 //     space to round-off.
-//  3. The discrete change-of-variables identity behind benchmark variant
-//     2a: for a smooth non-polynomial mapping, the element transformations
-//     of MappedMesh(mesh, xi) factor through the reference ones with the
-//     gradient of Interpolate(xi, mesh) — Jacobians and weights agree at
-//     every quadrature point to round-off, at every geometric order.
+//  3. The discrete change-of-variables identity (doc/mappings.md, "The
+//     discrete change-of-variables identity") on which the mapped
+//     integrator tests rest: for a smooth non-polynomial mapping, the
+//     element transformations of MappedMesh(mesh, xi) factor through the
+//     reference ones with the gradient of Interpolate(xi, mesh) —
+//     Jacobians and weights agree at every quadrature point to round-off,
+//     at every geometric order.
 //  4. MaxIdentityDeviation: zero for the identity and for mappings that are
 //     the identity on the boundary, |c| for a translation by c.
 #include <numbers>

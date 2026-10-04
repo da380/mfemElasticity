@@ -62,6 +62,7 @@
 #include <map>
 
 #include "benchmark_case.hpp"
+#include "viscoelastic_common.hpp"
 
 using namespace mfem;
 using namespace mfemElasticity;
@@ -88,22 +89,7 @@ std::vector<real_t> ParseList(const std::string& s) {
   return out;
 }
 
-struct Counters {
-  int solves = 0, assemblies = 0, setups = 0;
-  long its = 0;
-  static Counters Of(const LinearQuasiStaticProblemBase& p) {
-    return {p.NumSolves(), p.NumAssemblies(), p.NumPreconditionerSetups(),
-            p.TotalIterations()};
-  }
-  Counters operator-(const Counters& o) const {
-    return {solves - o.solves, assemblies - o.assemblies, setups - o.setups,
-            its - o.its};
-  }
-  Counters operator+(const Counters& o) const {
-    return {solves + o.solves, assemblies + o.assemblies, setups + o.setups,
-            its + o.its};
-  }
-};
+using vebench::Counters;
 
 // The Love numbers of one forcing at one time, per degree.
 struct Snapshot {
@@ -353,77 +339,50 @@ int main(int argc, char* argv[]) {
     c.psi->SetCoefficients(load ? zero : unit);
 
     ViscoelasticOperator visco(problem);
-    std::unique_ptr<ODESolver> ode;
-    AdaptiveExponentialTrapezoidSolver adaptive;
-    if (scheme_name == "sdirk23") {
-      ode = std::make_unique<SDIRK23Solver>(2);
-    } else if (scheme_name == "exptrap") {
-      ode = std::make_unique<ExponentialTrapezoidSolver>();
-    } else if (scheme_name == "be") {
-      ode = std::make_unique<BackwardEulerSolver>();
-    } else if (scheme_name == "etd1") {
-      ode = std::make_unique<ExponentialEulerSolver>();
-    } else {
-      adaptive.Init(visco);
-      adaptive.SetTolerances(rtol, atol);
-    }
-    if (ode) ode->Init(visco);
-
-    Vector m(visco.Height());
-    m = 0.0;
-    real_t t = 0.0;
-    MPI_Barrier(MPI_COMM_WORLD);
-    const auto start = Clock::now();
-    const Counters c0 = Counters::Of(problem);
-    // The elastic response at t = 0+ (an observation solve).
-    run.ok = visco.SolveElastic(m, t) && run.ok;
-    run.elastic = observe(load, 0.0);
-    Counters observed = Counters::Of(problem) - c0;
-    real_t dt_adaptive = 0.1 * times.front();
-    for (const real_t t_out : times) {
-      if (ode) {
-        const real_t span = t_out - t;
-        int n = std::max(1, steps);
-        if (dt_max > 0.0) {
-          n = std::max(n, static_cast<int>(
-                              std::ceil(span / (dt_max * tau_min) - 1e-9)));
-        }
-        const real_t dt_k = span / n;
-        for (int s = 0; s < n; s++) {
-          real_t dt = dt_k;
-          ode->Step(m, t, dt);
-        }
-        t = t_out;  // exact, whatever the rounding of the sum
-        run.steps += n;
-      } else {
-        adaptive.Integrate(m, t, t_out, dt_adaptive);
-      }
-      const Counters before = Counters::Of(problem);
-      run.ok = visco.SolveElastic(m, t) && run.ok;
-      observed = observed + (Counters::Of(problem) - before);
-      Snapshot s = observe(load, t);
-      s.solves = (Counters::Of(problem) - c0).solves - observed.solves;
-      s.seconds = Seconds(start);
-      run.history.push_back(std::move(s));
-      if (root) {
-        std::cout << std::setw(10) << std::setprecision(4) << t;
-        for (std::size_t j = 0; j < degrees.size(); j++) {
-          std::cout << std::setw(12) << std::setprecision(6)
-                    << run.history.back().h[j];
-        }
-        std::cout << std::setw(8) << run.history.back().solves
-                  << std::setw(9) << std::setprecision(3)
-                  << run.history.back().seconds << "\n";
-      }
-    }
-    if (!ode) {
-      run.steps = adaptive.NumAcceptedSteps();
-      run.rejected = adaptive.NumRejectedSteps();
-    }
-    run.seconds = Seconds(start);
-    run.total = Counters::Of(problem) - c0;
-    run.observation = observed;
-    run.stepping = run.total - observed;
+    // The shared evolution (viscoelastic_common.hpp): fixed-step schemes
+    // take, between consecutive output times, max(-steps, ceil(span / dt))
+    // equal steps with dt = -dt-max tau_min (no bound when -dt-max <= 0);
+    // the adaptive trapezoid starts from a tenth of the first output time.
+    // The load is a Heaviside one, so the history has no breakpoints.
+    vebench::StepOptions opt;
+    opt.scheme = scheme_name;
+    opt.min_steps = std::max(1, steps);
+    opt.dt = scheme_name == "adaptive"
+                 ? 0.1 * times.front()
+                 : (dt_max > 0.0 ? dt_max * tau_min
+                                 : std::numeric_limits<real_t>::infinity());
+    opt.rtol = rtol;
+    opt.atol = atol;
+    vebench::LoadHistory constant;
+    const vebench::EvolveResult r = vebench::Evolve(
+        problem, visco, constant, times, opt,
+        [&](const Vector&, real_t t, int k, const vebench::OutputCost& oc) {
+          if (k < 0) {
+            run.elastic = observe(load, 0.0);
+            return;
+          }
+          Snapshot s = observe(load, t);
+          s.solves = oc.cost.solves;
+          s.seconds = oc.seconds;
+          run.history.push_back(std::move(s));
+          if (root) {
+            std::cout << std::setw(10) << std::setprecision(4) << t;
+            for (std::size_t j = 0; j < degrees.size(); j++) {
+              std::cout << std::setw(12) << std::setprecision(6)
+                        << run.history.back().h[j];
+            }
+            std::cout << std::setw(8) << run.history.back().solves
+                      << std::setw(9) << std::setprecision(3)
+                      << run.history.back().seconds << "\n";
+          }
+        });
+    run.ok = r.ok;
+    run.steps = r.steps;
+    run.rejected = r.rejected;
+    run.seconds = r.seconds;
+    run.total = r.total;
+    run.observation = r.observation;
+    run.stepping = r.stepping;
     return run;
   };
 

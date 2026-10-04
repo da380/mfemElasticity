@@ -20,8 +20,9 @@
 //                                (1 + tanh(x / w)) / 2,
 //
 // fast on the east (x > 0), slow on the west. A Heaviside surface load
-// 2 cos(2 theta) about the y axis (positive at the poles, negative at the
-// east and west points) is switched on at t = 0 and held.
+// sigma0 2 cos(2 theta), theta measured from the y axis (positive at the
+// poles, negative at the east and west points), is switched on at t = 0
+// and held.
 //
 // The load is symmetric under x -> -x, and so are the elastic response at
 // t = 0+ (the moduli do not depend on x) and the fully relaxed one (nor
@@ -43,7 +44,7 @@
 // differences are the mesh partitioning and the observation points, each
 // on one rank and reduced globally.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./lateral_viscosity
 //    ./lateral_viscosity -tauf 1 -taus 1       (uniform: no asymmetry)
 //    ./lateral_viscosity -w 0.02 -o 3         (a sharper transition)

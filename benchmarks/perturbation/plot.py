@@ -10,10 +10,13 @@ case — and draws one figure per method into the results directory,
           eps: flat across the ladder means the mapped solve tracks the
           perturbed models as well as the unmapped solve tracks the
           base one;
-  right   the derivative check as an identity plot — the fixed-mesh
-          central difference of the 3-D runs against the same
-          difference of the 1-D references, one point per degree and
-          Love number, agreement meaning the point sits on the line.
+  middle  the derivative check as an identity plot, at the widest eps
+          of the ladder — the fixed-mesh central difference of the 3-D
+          runs against the same difference of the 1-D references, one
+          point per degree and Love number, agreement meaning the point
+          sits on the line;
+  right   the relative discrepancy of each of those derivatives, which
+          the identity plot cannot resolve for the small ones.
 
     python plot.py <case> --out <root> --method referential slip_broken
     python plot.py runs/fluid_core/h0.3     # results beside the case

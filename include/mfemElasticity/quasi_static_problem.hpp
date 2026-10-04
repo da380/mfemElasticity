@@ -205,6 +205,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
 
   // --- gauged fluid regions -------------------------------------------------
 
+  /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev shear)
+   * or Harmonic (a vacuum-extension field: full-gradient
+   * @f$\epsilon\mu_g\nabla u:\nabla v@f$). */
+  enum class GaugePenalty { Deviatoric, Harmonic };
+
   /**
    * @brief Treat the marked element attributes as an inviscid fluid in the
    * gauged (relabelling) formulation: the rheology supplies the fluid's
@@ -217,8 +222,11 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * the physical one, and the residual after an exact step is
    * @f$\epsilon Q\,\delta@f$ with @f$\delta@f$ the last increment, so the
    * error contracts by @f$O(\epsilon\,\mu_g/\mu_{\text{solid}})@f$ per
-   * step. The physical operator (SystemMatrix()) is unchanged. See
-   * doc/gauged_fluid.md for the formulation and its verification.
+   * step. The main solve is warm-started from the previous solution; the
+   * refinement solves are cold-started (they solve for the increment). The
+   * physical operator (SystemMatrix()) is unchanged. See
+   * doc/gauged_fluid.md, "Gauge fixing: penalty plus iterated refinement"
+   * and "Implementation", for the formulation and its verification.
    *
    * The fluid displacement is gauge-dependent (determined only up to a
    * linearised relabelling); the solid displacement and any field derived
@@ -226,25 +234,27 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * observables. Essential boundary conditions must not touch the marked
    * attributes (their elimination is not folded into the penalty).
    *
+   * With @p map non-null (the identity included) the Deviatoric penalty is
+   * assembled covariantly, as ElasticTensorIntegrator(C, map) with @f$C@f$
+   * the isotropic tensor of @f$\lambda = -2\epsilon\mu_g/d@f$,
+   * @f$\mu = \epsilon\mu_g@f$ pulled back through the map, so that a
+   * relabelled problem's penalty is the exact pull-back of the unmapped one
+   * and both sides of a change-of-variables identity use the same
+   * integrator class. The Harmonic form is vacuum-extension gauge data,
+   * shared rather than mapped, and refuses a non-identity map.
+   *
    * @param fluid_marker Element attributes of the fluid (sized to
    * attributes.Max(); copied).
    * @param mu_gauge Gauge shear scale @f$\mu_g@f$ (a natural choice is the
    * fluid's own bulk modulus); not owned, must outlive the problem.
-   * @param epsilon Penalty factor @f$\epsilon@f$ (typically 1e-2 to 1e-3).
+   * @param epsilon Penalty factor @f$\epsilon@f$ (typically about 1e-2,
+   * with 2-3 refinements).
    * @param refinements Tikhonov refinement steps per Solve() (each costs
    * one linear solve on top of the first).
+   * @param penalty Form of the penalty (Deviatoric for a fluid).
+   * @param map Optional mapping for the covariant Deviatoric penalty; not
+   * owned, must outlive the problem.
    */
-  /** @brief The gauge penalty's form: Deviatoric (a fluid: dev-dev shear)
-   * or Harmonic (a vacuum-extension field: full-gradient
-   * @f$\epsilon\mu_g\nabla u:\nabla v@f$). */
-  enum class GaugePenalty { Deviatoric, Harmonic };
-
-  /** With @p map non-null and not the identity, the Deviatoric penalty
-   * is assembled COVARIANTLY — through the mapped material stiffness
-   * with the pulled-back deviatoric tensor — so that a relabelled
-   * problem's penalty is the exact pull-back of the unmapped one (the
-   * Harmonic form is vacuum-extension gauge data, shared rather than
-   * mapped, and refuses a map). */
   virtual void SetGaugedFluid(const mfem::Array<int>& fluid_marker,
                               mfem::Coefficient& mu_gauge,
                               mfem::real_t epsilon, int refinements = 2,
@@ -263,13 +273,13 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
   void SetGaugeRefinements(int n) { gauge_refinements_ = n; }
   int GaugeRefinements() const { return gauge_refinements_; }
 
-  /** @brief Norms of the physical residual @f$\|\epsilon Q\,\delta\|@f$ at
-   * the start of each refinement step of the last Solve(); their decay is
-   * the observed contraction factor. */
   /** @brief Diagnostic: the assembled gauge penalty eps Q applied to a
    * displacement true-dof vector (zero without a gauged fluid). */
   void ApplyGaugePenalty(const mfem::Vector& u_true, mfem::Vector& r);
 
+  /** @brief Norms of the physical residual @f$\|\epsilon Q\,\delta\|@f$ at
+   * the start of each refinement step of the last Solve(); their decay is
+   * the observed contraction factor. */
   const std::vector<mfem::real_t>& GaugeResiduals() const {
     return gauge_residuals_;
   }
@@ -278,7 +288,9 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * (assembling if needed); equals SystemMatrix() without a gauged fluid. */
   const mfem::OperatorHandle& RegularizedMatrix();
 
-  /** @brief Relative tolerance of the linear solves (against the load). */
+  /** @brief Relative tolerance of the linear solves: each stops at
+   * rel_tol times the preconditioned norm of its right-hand side (see
+   * SetWarmStartTolerance()). */
   void SetRelTol(mfem::real_t rel_tol) { rel_tol_ = rel_tol; }
   mfem::real_t RelTol() const { return rel_tol_; }
 
@@ -440,8 +452,9 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
    * semi-convergence signature (epsilon too small for this mesh/model)
    * and a rate above 0.2 leaves a bias @f$\sim\mathrm{rate}^k@f$ beyond
    * the refinement budget (epsilon too large, or too few refinements).
-   * Warn only; thresholds from the 1 Oct 2026 epsilon sweep
-   * (doc/gauged_fluid.md). */
+   * Warn only; the thresholds and the epsilon window are discussed in
+   * doc/gauged_fluid.md, "Gauge fixing: penalty plus iterated
+   * refinement". */
   void WarnGaugeContraction() const;
 
   mfem::real_t t_ = 0.0;
@@ -479,6 +492,8 @@ class LinearQuasiStaticProblemBase : public LinearQuasiStaticProblem {
 class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
  public:
   /**
+   * @param fes Displacement space; serial or parallel; not owned.
+   * @param rheology The material; not owned, must outlive the problem.
    * @param traction Boundary traction; registered as time-dependent.
    * @param bdr_marker Boundary attributes it acts on (copied).
    */
@@ -544,6 +559,8 @@ class LinearQuasiStaticTractionProblem : public LinearQuasiStaticProblemBase {
 class LinearQuasiStaticClampedProblem : public LinearQuasiStaticProblemBase {
  public:
   /**
+   * @param fes Displacement space; serial or parallel; not owned.
+   * @param rheology The material; not owned, must outlive the problem.
    * @param ess_bdr Boundary attributes with prescribed displacement (copied).
    * @param traction Boundary traction; registered as time-dependent.
    * @param traction_marker Boundary attributes it acts on (copied).

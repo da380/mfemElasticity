@@ -11,13 +11,15 @@
   - GeometricStiffnessIntegrator: with S = s 1 it equals
     mfem::VectorDiffusionIntegrator on a curved mesh (shared quadrature);
     an energy patch test for constant symmetric S and linear fields,
-    u^T K v = |Omega| tr(A S B^T); and the relabelling pull-back 2a
+    u^T K v = |Omega| tr(A S B^T); and the pull-back (change-of-variables)
     identity against the mapped mesh (interpolated mapping, one rule).
   - MaterialStiffnessIntegrator: with the identity mapping it equals
     ElasticTensorIntegrator to round-off; for an affine equilibrium
     mapping the energy of linear fields is
-    |Omega| <C m(sym F0^T A), m(sym F0^T B)> with m the Mandel vector —
-    checked for isotropic and (3-D) transversely isotropic tensors.
+    |Omega| <C m(sym F0^T A), m(sym F0^T B)> with m the Mandel vector,
+    checked for an isotropic and (3-D) a transversely isotropic tensor.
+  - ReferentialGravityIntegrator and ReferentialGravityCouplingIntegrator:
+    against second differences of the exact gravitational functional.
 */
 
 namespace {
@@ -277,48 +279,67 @@ TEST_P(GeneralisedStiffnessTest, MaterialAffineEnergyPatch) {
       dim, [&F0](const Vector& x, Vector& y) { F0.Mult(x, y); },
       [&F0](const Vector& /*x*/, DenseMatrix& F) { F = F0; });
 
-  ConstantCoefficient lam(1.3), mu(0.7);
-  IsotropicElasticTensorCoefficient C(dim, lam, mu);
+  // The energy for one tensor C.
+  auto check = [&](MatrixCoefficient& C, const char* name) {
+    BilinearForm a(&fes);
+    a.AddDomainIntegrator(new MaterialStiffnessIntegrator(C, phi));
+    a.Assemble();
+    a.Finalize();
 
-  BilinearForm a(&fes);
-  a.AddDomainIntegrator(new MaterialStiffnessIntegrator(C, phi));
-  a.Assemble();
-  a.Finalize();
+    auto A = RandomMatrix(dim);
+    auto B = RandomMatrix(dim);
+    auto u = LinearField(fes, A);
+    auto v = LinearField(fes, B);
+    Vector Ku(fes.GetVSize());
+    a.SpMat().Mult(u, Ku);
+    const real_t energy = Ku * v;
 
-  auto A = RandomMatrix(dim);
-  auto B = RandomMatrix(dim);
-  auto u = LinearField(fes, A);
-  auto v = LinearField(fes, B);
-  Vector Ku(fes.GetVSize());
-  a.SpMat().Mult(u, Ku);
-  const real_t energy = Ku * v;
-
-  // |Omega| = 1: <C m(sym F0^T A), m(sym F0^T B)> with the Mandel matrix
-  // evaluated once (constant coefficient).
-  auto sym_pull = [&F0, dim](const DenseMatrix& G) {
-    DenseMatrix FtG(dim), E(dim);
-    MultAtB(F0, G, FtG);
-    E = FtG;
-    E.Symmetrize();
-    return E;
+    // |Omega| = 1: <C m(sym F0^T A), m(sym F0^T B)> with the Mandel
+    // matrix evaluated once (constant coefficient).
+    auto sym_pull = [&F0, dim](const DenseMatrix& G) {
+      DenseMatrix FtG(dim), E(dim);
+      MultAtB(F0, G, FtG);
+      E = FtG;
+      E.Symmetrize();
+      return E;
+    };
+    auto mA = MandelVector(sym_pull(A));
+    auto mB = MandelVector(sym_pull(B));
+    auto* T = mesh.GetElementTransformation(0);
+    const auto& ip = Geometries.GetCenter(mesh.GetElementGeometry(0));
+    T->SetIntPoint(&ip);
+    DenseMatrix Cm;
+    C.Eval(Cm, *T, ip);
+    Vector CmB(mB.Size());
+    Cm.Mult(mB, CmB);
+    const real_t expected = mA * CmB;
+    EXPECT_NEAR(energy, expected, 1e-12 * std::abs(expected)) << name;
   };
-  auto mA = MandelVector(sym_pull(A));
-  auto mB = MandelVector(sym_pull(B));
-  auto* T = mesh.GetElementTransformation(0);
-  const auto& ip = Geometries.GetCenter(mesh.GetElementGeometry(0));
-  T->SetIntPoint(&ip);
-  DenseMatrix Cm;
-  C.Eval(Cm, *T, ip);
-  Vector CmB(mB.Size());
-  Cm.Mult(mB, CmB);
-  const real_t expected = mA * CmB;
-  EXPECT_NEAR(energy, expected, 1e-12 * std::abs(expected));
+
+  ConstantCoefficient lam(1.3), mu(0.7);
+  IsotropicElasticTensorCoefficient iso(dim, lam, mu);
+  check(iso, "isotropic");
+
+  // Transversely isotropic (3-D: the class is plane strain in 2-D) with a
+  // constant axis tilted off the coordinate axes, so that every Mandel
+  // component of the tensor is exercised.
+  if (dim == 3) {
+    ConstantCoefficient Ac(3.1), Cc(2.6), Fc(1.0), Lc(0.7), Nc(0.9);
+    Vector n(3);
+    n(0) = 0.3;
+    n(1) = -0.4;
+    n(2) = 0.866;
+    VectorConstantCoefficient axis(n);
+    TransverselyIsotropicElasticTensorCoefficient ti(3, Ac, Cc, Fc, Lc, Nc,
+                                                     axis);
+    check(ti, "transversely isotropic");
+  }
 }
 
 
 // The referential gravity blocks against second differences of the exact
-// functional T = int <a(F) grad zeta, grad zeta> dV at the equilibrium
-// mapping: the assembled bilinear forms must reproduce the mixed partial
+// functional T = int <a(F) g, g> dV, a(F) = J F^{-1} F^{-T}, g = g0 + grad
+// zeta1, at the equilibrium mapping: the assembled bilinear forms must reproduce the mixed partial
 // derivatives of T in the FE directions to finite-difference accuracy.
 namespace {
 

@@ -8,12 +8,12 @@ panel), regenerated at will from the raw results:
   cmb.png         what the CMB approximations cost, loading vs tidal
                   (prem_4, h = 0.2, order 2), the rotational-feedback
                   column being the tidal one
-  identity.png    the relabelled change-of-variables identity: covariant
-                  terms certified to solver precision, the gauge penalty
-                  as the one known non-covariant piece
-  derivative.png  d(Love)/d(interface radius), 3-D against 1-D — the
-                  adjoint teaser (fluid_core, referential and
-                  slip_broken)
+  identity.png    the relabelled change-of-variables identity: every
+                  welded case certified to solver precision, the
+                  covariant gauge penalty included; the slipping
+                  interface informational
+  derivative.png  d(Love)/d(interface radius), 3-D against 1-D
+                  (fluid_core, referential and slip_broken)
   aspherical.png  field errors on the independently meshed aspherical
                   body against the shape amplitude: flat in the
                   amplitude, falling with refinement
@@ -199,9 +199,10 @@ def identity_figure(campaign: Path, out: Path) -> None:
         if path.exists():
             bars.append((label, measured(path), GOOD))
     # The slipping interface: read the campaign's slip identity log when
-    # it exists; the fallback constant is the 2 Oct 2026 measurement
-    # (fluid_core, A = 0.02, h = 0.3; the interface forms B_Sigma /
-    # G_Sigma are not yet certified covariant).
+    # it exists; the fallback constant is the measurement of
+    # doc/benchmarks.tex, "Leg B" (fluid_core, A = 0.02, h = 0.3). The
+    # slipping-interface forms are not certified covariant, so this bar
+    # is informational.
     slip_log = campaign / "identity_fluid_core_slip_h0.3.txt"
     bars.append(("fluid core (slip interface)",
                  measured(slip_log) if slip_log.exists() else 1.2e-2,
@@ -227,8 +228,8 @@ def identity_figure(campaign: Path, out: Path) -> None:
     fig.text(0.13, -0.04,
              "green: every mapped term certified at once — the gauge "
              "penalty included\n"
-             "amber: the slipping-interface forms (certification in "
-             "progress; the physics is benchmarked separately)",
+             "amber: the slipping-interface forms (not certified "
+             "covariant; the physics is benchmarked separately)",
              fontsize=12, color=MUTED, va="top")
     save(fig, out / "identity.png")
 
@@ -297,7 +298,8 @@ def aspherical_figure(results: Path, out: Path) -> None:
     for path in results.glob("aspherical_e*_o2.json"):
         r = json.loads(path.read_text())
         runs[float(r["eps"])] = {d["degree"]: d for d in r["degrees"]}
-    # the stock mesh (amplitude 0.05) and its refined twin
+    # the stock mesh (amplitude 0.05), when the sweep lacks it; the
+    # refined mesh (half-h) is drawn apart, below
     for name in ("aspherical_eps0.05_o2.json",):
         if (results / name).exists() and 0.05 not in runs:
             r = json.loads((results / name).read_text())
@@ -351,7 +353,7 @@ def ladder_figure(tree: Path, out: Path) -> None:
         for path in sorted(case.glob("results_o*.json")):
             if path.stem.count("_") > 1:
                 continue  # Dahlen, full CMB treatment only
-            run = love_plot.read_run(path, fluid=True)
+            run = love_plot.read_run(path)
             errs = [e for key, *_ in love_plot.QUANTITIES
                     for l, e in love_plot.relative_error(run, ref,
                                                          key).items()
@@ -399,9 +401,6 @@ def models_figure(tree: Path, out: Path, h: float = 0.2) -> None:
         case = model / f"h{h:g}"
         if not (case / "reference.json").exists():
             continue
-        manifest = json.loads((case / "case.json").read_text())
-        fluid = any(la.get("fluid") for la in manifest["layers"]) or bool(
-            manifest.get("meta", {}).get("fluid_layers"))
         ref = love_plot.reference_values(
             json.loads((case / "reference.json").read_text()))
         entry = {}
@@ -409,7 +408,7 @@ def models_figure(tree: Path, out: Path, h: float = 0.2) -> None:
             path = case / f"results_o{order}.json"
             if not path.exists():
                 continue
-            run = love_plot.read_run(path, fluid=fluid)
+            run = love_plot.read_run(path)
             errs = sorted(e for key, *_ in love_plot.QUANTITIES
                           for l, e in love_plot.relative_error(
                               run, ref, key).items() if 1 <= l <= 5)
@@ -541,10 +540,9 @@ def main() -> None:
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    # Defaults read the campaign tree (runs_campaign), regenerated on
-    # the current code 2 Oct 2026; the retired love_numbers/runs and
-    # runs_methods trees (28–30 Sep) predate the slip fix, the covariant
-    # gauge penalty and the AL tolerance change.
+    # Defaults read the campaign tree (runs_campaign, campaign.py) and
+    # the hand-made trees beside it (talk_data, viscoelastic_series,
+    # runs_campaign/ladder), relative to the working directory.
     base = Path("runs_campaign/love_numbers")
     p.add_argument("--out", type=Path, default=Path("talk"))
     p.add_argument("--methods-case", type=Path,
@@ -557,13 +555,11 @@ def main() -> None:
     p.add_argument("--derivative-case", type=Path,
                    default=Path("runs_campaign/perturbation/fluid_core"),
                    help="where perturbation_check wrote the shifted runs "
-                        "and references (the slip_broken shift runs "
-                        "before 1 Oct 2026 carry the outward-shift defect)")
+                        "and references")
     p.add_argument("--ladder", type=Path,
                    default=Path("runs_campaign/ladder/fluid_core"),
                    help="the UNCAPPED ladder (--angular 1.0: every rung "
-                        "refines the CMB; the capped rungs held it at "
-                        "0.165 for h >= 0.165)")
+                        "refines the CMB)")
     p.add_argument("--models", type=Path, default=base)
     p.add_argument("--viscoelastic", type=Path,
                    default=Path("viscoelastic_series"))

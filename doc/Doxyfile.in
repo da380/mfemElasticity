@@ -14,7 +14,9 @@ USE_MATHJAX            = YES
 MATHJAX_EXTENSIONS     = mathjax/extensions/TeX/AMSmath.js, mathjax/extensions/TeX/AMSsymbols.js
 MATHJAX_CODEFILE       = doc/mathjax_config.js
 MATHJAX_RELPATH        =
-FORMULA_MACROFILE      = macros.inc 
+# The formula macros (\dd, \bvec, \grad, \jump, ...) are defined for MathJax
+# in mathjax_config.js; doc/macros.inc defines the same macros for the LaTeX
+# notes. FORMULA_MACROFILE would only apply to LaTeX-rendered formulas.
 
 HAVE_MAINPAGE = YES
 

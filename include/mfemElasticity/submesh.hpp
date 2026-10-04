@@ -3,7 +3,7 @@
  * @brief Coupling between a mesh and its (Par)SubMesh: the signed dof
  * injection SubMeshDofInjection and the mixed bilinear forms
  * SubMeshMixedBilinearForm / ParSubMeshMixedBilinearForm whose trial and
- * test spaces live on the two meshes.
+ * test spaces live on the two meshes. Background: doc/submesh_coupling.md.
  */
 
 #pragma once
@@ -141,7 +141,8 @@ class SubMeshDofInjection : public mfem::Operator {
  * spaces' traces there nodally: for GridFunctions @f$u_a, u_b@f$ of equal
  * trace on the interface, @f$(J u_b)_i = (u_a)_i@f$ on the interface dofs
  * of @p a. This is the pairing a sliding fluid–solid interface is built
- * from (doc/gauged_fluid.md §5): with @f$B@f$ an interface bilinear form
+ * from (doc/slip_interface.tex, "Discretisation of the slipping
+ * interface"): with @f$B@f$ an interface bilinear form
  * assembled on @p a's boundary elements, the same form on @p b's trace is
  * @f$J^T\!B J@f$ and the cross terms are @f$B J@f$ — one assembly serves
  * all four blocks, and the orientation bookkeeping is the injections'.

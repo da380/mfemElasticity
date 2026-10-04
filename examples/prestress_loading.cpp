@@ -10,8 +10,11 @@
 //
 //   1. The equilibrium mapping phi_e carries the shape: the exact linear
 //      ellipse map on the body, blended to the identity at the DtN
-//      sphere (TaperedDiffeomorphism). The referential density is
-//      rho (the map is area-preserving on the body).
+//      sphere by tapering the ellipse parameter across the buffer
+//      (ParameterTaperedEllipseMap below), or, where that blend is not
+//      diffeomorphic, by the harmonic extension of the body's map
+//      (NewHarmonicExtensionMapping). The referential density is rho (the
+//      map is area-preserving on the body).
 //   2. A realistic equilibrium stress from the relabelled (mapped)
 //      minimum-deviatoric generator (AW10 Stokes problem pulled back to
 //      the reference body): S_e = J F^{-1}(-p 1 + 2 mu grad_s u) F^{-T},
@@ -37,7 +40,7 @@
 //
 // The table prints, per ellipticity: the deviatoric fraction of S_e,
 // the relative differences in displacement and potential between the
-// two runs, and solver iterations. Earth's non-hydrostatic geoid
+// two runs, the solver iterations and the taper rule used. Earth's non-hydrostatic geoid
 // argues e_effective is tiny; planetary applications (fossil figures,
 // fast rotators) reach e ~ 0.1 and beyond.
 //
@@ -45,12 +48,12 @@
 //
 // Outputs: the table on the screen; prestress_loading.csv, the three
 // relative measures against e (python3 plot_csv.py prestress_loading.csv);
-// with -vis (the default), for the largest ellipticity run, GLVis windows
-// of |dev S_e| (the deviatoric part the approximation drops) and of
+// with -vis (the default), for the largest ellipticity that ran, GLVis
+// windows of |dev S_e| (the deviatoric part the approximation drops) and of
 // u_full - u_hydro (what dropping it costs), drawn on the PHYSICAL
 // ellipse: a copy of the reference body moved by the ellipse map.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./prestress_loading
 //    ./prestress_loading -G 0.2 -o 3
 //    ./prestress_loading -e 0.3     (single ellipticity)

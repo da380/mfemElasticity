@@ -7,8 +7,10 @@
   mantle; one disconnected solid SubMesh) and the two-layer disc (fluid
   core, mantle).
 
-  - The Schur-complement CG and the block MINRES solvers agree to the level
-    of the rigid-mode residuals, as without fluids.
+  - The Schur-complement CG and the block MINRES solvers agree to solver
+    tolerance, as without fluids (both solve the same restricted system);
+    likewise on the two-layer disc, where the fluid is enclosed by the
+    solid only.
   - The global rigid modes remain near-null with the interface and fluid
     mass terms in place (a sign slip in any of them would make the residual
     O(1)); the residuals decrease with the order. The inner core's
@@ -20,11 +22,15 @@
     two solvers agree.
   - A supplied rho'_F (BarotropicDensityGradientCoefficient) reproduces the
     default one.
-  - The potential block is positive for the model; the diagnostic detects a
-    steep fluid density gradient.
+  - Potential-block diagnostic: the smallest Ritz value is positive for the
+    model, lies below that of the solid-only block (the fluid mass term
+    lowers the spectrum), and drops further for a steep fluid density
+    gradient.
   - The viscoelastic operator runs on the problem.
   - The load's own potential does not feel the fluid mass term: it is the
     same with rho'_F set to zero.
+  - The approximate CMB conditions ('uniform', 'winkler') keep the operator
+    symmetric and change the answer.
 */
 
 namespace {
@@ -366,9 +372,6 @@ TEST(MixedProblemFluidTwoLayer, SchurAndMinresAgree) {
 
 TEST_P(MixedProblemFluidTest, ViscoelasticCreep) {
   const auto [dim, order] = GetParam();
-  if (dim == 3) {
-    return;
-  }
   Case s(dim, order);
   ConstantCoefficient tau(1.0);
   IsotropicMaxwellRheology maxwell =
@@ -423,10 +426,13 @@ TEST_P(MixedProblemFluidTest, LoadPotentialIgnoresTheFluidMass) {
 }
 
 // The approximate CMB conditions of the GIA literature are degenerate
-// cases of the FluidRegion machinery (doc/self_gravitation.md): 'uniform'
-// = constant interface density with the fluid mass term dropped, 'winkler'
-// = uniform without the interface potential coupling (F3). Both stay
-// symmetric (the two solvers agree), and both move the answer.
+// cases of the FluidRegion machinery (doc/self_gravitation.md, "The CMB
+// approximations of the GIA literature"; the ladder is defined in
+// doc/quasi_static_models.tex, "Fluid regions and the ladder of CMB
+// approximations"): 'uniform' = constant interface density with the fluid
+// mass term dropped, 'winkler' = uniform without the interface potential
+// coupling (F3). Both stay symmetric (the two solvers agree), and both
+// move the answer.
 TEST(MixedProblemFluidCMB, ApproximateConditions) {
   Case c(2, 2);
   ConstantCoefficient zero(0.0);
@@ -463,8 +469,9 @@ TEST(MixedProblemFluidCMB, ApproximateConditions) {
     return L2Norm(d) / L2Norm(b);
   };
 
-  // A sign slip in dropping one half of F3 would break the symmetry the
-  // two solvers share; their agreement is the sharpest check.
+  // Dropping (F3) must remove both halves: dropping only one would break
+  // the symmetry the two solvers rely on, so their agreement is the
+  // sharpest check.
   winkler->SetSolverType(
       LinearQuasiStaticMixedSelfGravitatingProblem::SolverType::SchurCG);
   winkler->AssembleForce(0.0);

@@ -19,13 +19,14 @@ namespace mfemElasticity {
  * @brief Generates a marker array for the external boundary of a mesh.
  *
  * This function creates an `mfem::Array<int>` suitable for marking
- * all boundary elements that are part of the mesh's external boundary.
- * Boundary attributes are marked with \f$1\f$, non-boundary attributes with
- * \f$0\f$.
+ * all boundary elements that are part of the mesh's external boundary
+ * (mfem::Mesh::MarkExternalBoundaries): attributes carried by external
+ * boundary elements are marked with \f$1\f$, the others (interior
+ * interfaces) with \f$0\f$.
  *
  * @param mesh Pointer to the `mfem::Mesh` object.
  * @return An `mfem::Array<int>` where each entry corresponds to a
- * boundary attribute. The size of the array is `mesh->bdr_attributes.Size()`.
+ * boundary attribute. The size of the array is `mesh->bdr_attributes.Max()`.
  */
 mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh);
 
@@ -38,7 +39,7 @@ mfem::Array<int> ExternalBoundaryMarker(mfem::Mesh* mesh);
  *
  * @param mesh Pointer to the `mfem::Mesh` object.
  * @return An `mfem::Array<int>` where each entry corresponds to a
- * domain attribute. The size of the array is `mesh->attributes.Size()`.
+ * domain attribute. The size of the array is `mesh->attributes.Max()`.
  */
 mfem::Array<int> AllDomainsMarker(mfem::Mesh* mesh);
 
@@ -50,7 +51,7 @@ mfem::Array<int> AllDomainsMarker(mfem::Mesh* mesh);
  *
  * @param mesh Pointer to the `mfem::Mesh` object.
  * @return An `mfem::Array<int>` where each entry corresponds to a
- * boundary attribute. The size of the array is `mesh->bdr_attributes.Size()`.
+ * boundary attribute. The size of the array is `mesh->bdr_attributes.Max()`.
  */
 mfem::Array<int> AllBoundariesMarker(mfem::Mesh* mesh);
 
@@ -58,6 +59,9 @@ mfem::Array<int> AllBoundariesMarker(mfem::Mesh* mesh);
  * @brief Determines if an indicated boundary is spherical and returns its
  * radius.
  *
+ * The test is on the vertices of the marked boundary elements (local to
+ * this rank for a ParMesh passed as a Mesh): all must lie at the distance
+ * of the first one from @p x0, to a relative tolerance of 1e-6.
  *
  * @param mesh Pointer to the `mfem::Mesh` object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
@@ -67,8 +71,8 @@ mfem::Array<int> AllBoundariesMarker(mfem::Mesh* mesh);
  * - `int`: Equal to 1 if the boundary is non-empty, 0 otherwise.
  * - `int`: Equal to 1 if the radii of all boundary points are (approximately)
  * equal.
- * - `mfem::real_t`: The radius found. Meaningful only if the first two
- *    return values equal 1.
+ * - `mfem::real_t`: The radius found (-1 if the boundary is empty).
+ *    Meaningful only if the first two return values equal 1.
  */
 std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     mfem::Mesh* mesh, const mfem::Array<int>& bdr_marker,
@@ -137,8 +141,11 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(mfem::Mesh* mesh);
  * radius for a parallel mesh.
  *
  * This function is the parallel counterpart of the serial
- * `SphericalBoundaryRadius` function. It considers the maximum radius across
- * all processors.
+ * `SphericalBoundaryRadius` function, collective on the mesh's communicator.
+ * Each rank tests its own boundary elements; the radius returned is that of
+ * the lowest rank holding part of the boundary (-1 if none does), and the
+ * second return value is 1 only if every rank holding part of it found its
+ * part spherical, all with the same radius to a relative tolerance of 1e-6.
  *
  * @param mesh Pointer to the mfem::ParMesh object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
@@ -216,14 +223,15 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(mfem::ParMesh* mesh);
  * attributes.
  *
  * The centroid is computed by integrating the position vector over the
- * specified domain(s) and dividing by the total volume. The integration is
- * performed using a specified polynomial order for the quadrature rule.
+ * specified domain(s) and dividing by the total volume. The integrals are
+ * taken as linear forms on an auxiliary L2 space of the given order, which
+ * sets the quadrature degree.
  *
  * @param mesh Pointer to the mfem::Mesh object.
  * @param dom_marker An `mfem::Array<int>` marking which domain attributes
  * (1 for inclusion, 0 for exclusion) to consider.
- * @param order The polynomial order used for the quadrature rule during
- * integration.
+ * @param order The order of the auxiliary L2 space (sets the quadrature
+ * degree).
  * @return An `mfem::Vector` representing the coordinates of the computed
  * centroid.
  */
@@ -236,8 +244,8 @@ mfem::Vector MeshCentroid(mfem::Mesh* mesh, const mfem::Array<int>& dom_marker,
  * This overload computes the centroid considering all domain attributes.
  *
  * @param mesh Pointer to the mfem::Mesh object.
- * @param order The polynomial order used for the quadrature rule during
- * integration.
+ * @param order The order of the auxiliary L2 space (sets the quadrature
+ * degree).
  * @return An `mfem::Vector` representing the coordinates of the computed
  * centroid.
  */
@@ -254,8 +262,8 @@ mfem::Vector MeshCentroid(mfem::Mesh* mesh, int order = 1);
  * @param mesh Pointer to the mfem::ParMesh object.
  * @param dom_marker An `mfem::Array<int>` marking which domain attributes
  * (1 for inclusion, 0 for exclusion) to consider.
- * @param order The polynomial order used for the quadrature rule during
- * integration.
+ * @param order The order of the auxiliary L2 space (sets the quadrature
+ * degree).
  * @return An `mfem::Vector` representing the global coordinates of the computed
  * centroid.
  */
@@ -269,8 +277,8 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh,
  * attributes across all processors.
  *
  * @param mesh Pointer to the mfem::ParMesh object.
- * @param order The polynomial order used for the quadrature rule during
- * integration.
+ * @param order The order of the auxiliary L2 space (sets the quadrature
+ * degree).
  * @return An `mfem::Vector` representing the global coordinates of the computed
  * centroid.
  */
@@ -283,11 +291,14 @@ mfem::Vector MeshCentroid(mfem::ParMesh* mesh, int order = 1);
  *
  * This helper struct encapsulates properties and methods relevant to meshes
  * that are known to have an external boundary that lies on a spherical surface.
+ * The centre is taken as the centroid of the whole mesh, and the external
+ * boundary must be a sphere about it; this is checked by an assert, so only
+ * in builds without NDEBUG.
  */
 struct SphericalMeshHelper {
   /** @brief The radius of the spherical external boundary. */
   mfem::real_t bdr_radius_;
-  /** @brief The center coordinates of the spherical boundary. */
+  /** @brief The centre of the spherical boundary: the mesh centroid. */
   mfem::Vector x0_;
   /** @brief Marker array identifying the external boundary attributes. */
   mfem::Array<int> bdr_marker_;
@@ -329,6 +340,9 @@ struct SphericalMeshHelper {
  * @param mesh Pointer to the mfem::ParMesh object.
  * @param bdr_marker An `mfem::Array<int>` marking which boundary attributes
  * (1 for inclusion, 0 for exclusion) to consider.
+ * Collective on the mesh's communicator; the caller owns the new
+ * communicator.
+ *
  * @return A `std::tuple` containing:
  * - `MPI_Comm`: The new communicator. Ranks not owning the boundary will
  * receive `MPI_COMM_NULL`.

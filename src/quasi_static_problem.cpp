@@ -217,9 +217,9 @@ void LinearQuasiStaticProblemBase::SetGaugedFluid(
               "attributes.Max().");
   MFEM_VERIFY(epsilon > 0.0, "SetGaugedFluid: epsilon must be positive.");
   // A supplied map — the identity included — switches the Deviatoric
-  // branch to the mapped material-stiffness integrator, so that the two
-  // sides of a change-of-variables identity assemble with the SAME
-  // integrator class and quadrature rule.
+  // branch to ElasticTensorIntegrator(C, map), so that the two sides of a
+  // change-of-variables identity assemble with the SAME integrator class
+  // and quadrature rule. Only a non-identity map is refused for Harmonic.
   const bool mapped = map != nullptr;
   MFEM_VERIFY(!(mapped && !map->IsIdentity()) ||
                   penalty == GaugePenalty::Deviatoric,
@@ -233,10 +233,10 @@ void LinearQuasiStaticProblemBase::SetGaugedFluid(
   gauge_integrators_ = detail::MakeBilinearForm(fes_);
   BilinearFormIntegrator* integ;
   if (mapped && penalty == GaugePenalty::Deviatoric) {
-    // The covariant form of the Deviatoric branch: the pulled-back
-    // deviatoric tensor through the mapped material stiffness, so the
-    // penalty of a relabelled problem is the exact pull-back of the
-    // unmapped one.
+    // The covariant form of the Deviatoric branch: the isotropic tensor
+    // of lambda = -2 eps mu_g / d, mu = eps mu_g, pulled back through the
+    // map by ElasticTensorIntegrator, so the penalty of a relabelled
+    // problem is the exact pull-back of the unmapped one.
     gauge_lambda_eps_ =
         std::make_unique<ProductCoefficient>(-2.0 / dim, *gauge_mu_eps_);
     gauge_Cdev_ = std::make_unique<IsotropicElasticTensorCoefficient>(
@@ -300,7 +300,8 @@ bool LinearQuasiStaticProblemBase::GaugeRefine(Vector& X) {
   for (int k = 0; k < gauge_refinements_; ++k) {
     // After an exact regularised solve the physical residual is
     // f - A U = eps Q delta, with delta the last increment (the first
-    // "increment" being the solution itself).
+    // "increment" being the solution itself). Each increment is solved
+    // cold from zero.
     Q_.Ptr()->Mult(k == 0 ? X : prev, r);
     if (ess_tdof_list_.Size() > 0) {
       r.SetSubVector(ess_tdof_list_, 0.0);

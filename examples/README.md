@@ -7,7 +7,7 @@ run them and look at the results, and then what each one does.
 
 ## Running them
 
-The examples are built with the library (`BUILD_EXAMPLES`, on by default)
+The examples are built with the library when configured with `-DBUILD_EXAMPLES=ON` (off by default)
 and are run from the build tree, never from this source directory:
 
 ```
@@ -85,12 +85,14 @@ a parallel build. Each source file starts with a longer description.
 domain truncated by a homogeneous Neumann condition, the exact
 Dirichlet-to-Neumann operator or a multipole expansion, for a uniform
 sphere and for a rigidly translated one (the linearised problem), against
-the exact solution. Shows: the potential. `./poisson_dtn -o 2`
+the exact solution. Shows: the potential (always sent to GLVis; there is
+no `-vis` option). `./poisson_dtn -o 2`
 
 **`transformed_diffusion`**: the Laplace equation on a twisted domain solved
 on the undeformed reference mesh with `TransformedDiffusionIntegrator`
 (the pull-back approach of the referential problems). Shows: the solution
-on the reference mesh, the pulled-back one, and that one pushed forward.
+on the reference mesh, the pulled-back one, and that one pushed forward
+(always sent to GLVis; there is no `-vis` option).
 
 **`submesh_injection`**: a tour of `SubMeshDofInjection`: moving fields
 between a mesh and a submesh and assembling coupling blocks, serially by
@@ -111,11 +113,13 @@ Schur-CG and block-MINRES solvers compared, rigid-mode diagnostics. Shows
 
 **`referential_elastogravity`**: the general referential formulation
 beside the Eulerian one on the same problem: two formalisms, one answer,
-compared field by field. Shows: both displacements.
+compared field by field. Shows: both displacements and the referential
+potential perturbation.
 
 **`self_gravitating_solvers`**: one problem (a fluid core under a mantle,
-degree-2 load), every linear-solver architecture of the library, with a
-table of cost and agreement. Shows: the solution, and the difference field
+degree-2 load), the main linear-solver architectures of the library, with a
+table of cost and agreement (the KKT enforcement of the slipping interface
+is exercised by `slipping_interface -enforce kkt`). Shows: the solution, and the difference field
 of the architecture that agrees least (rigid modes removed). Add `-no-slip`
 for a quicker run without the slipping-interface solvers.
 
@@ -141,14 +145,37 @@ Tikhonov refinement. Shows: the displacement, and the fluid pressure,
 which must be uniform (the fluid displacement itself is gauge).
 
 **`sliding_fluid_ellipse`**: a fluid core that slips along its boundary
-inside an elliptical shell, where the slip is genuinely needed. Shows: the
-solid and fluid displacements and the fluid pressure. Compare `-e 0`.
+inside an elliptical shell, where the interface is not a level surface and
+the slip generally cannot be removed by relabelling; a demonstration without
+gravity or pre-stress. Shows: the solid and fluid displacements and the
+fluid pressure. Compare `-e 0`.
+
+**`slipping_interface`**: a self-gravitating body whose fluid core slips
+along the core boundary (`LinearQuasiStaticReferentialSelfGravitatingSlipProblem`)
+under a surface load of one degree, with every option of the class: the
+single-valued or broken potential (`-zeta`), penalty and augmented
+Lagrangian or a KKT multiplier (`-enforce`), the penalty, the sweeps, the
+gauge. The default mesh is an aspherical reference body: the mesh has a
+different shape, and the exact inverse stretch maps it onto the
+spherical physical body, so every result must be that of the spherical
+model. Prints the constraint history, the slip null-pair residuals and the
+load Love numbers h′, l′, k′ read off the physical surface, with the
+response at other degrees ("spurious"), which shows any departure from
+spherical symmetry. With `-compare`, the welded gauged referential problem
+on the same mesh and Dahlen's problem on the spherical counterpart are
+solved too and tabulated beside it. Shows (on the physical body): the
+mantle and core displacements, the core pressure, the tangential slip
+and the potential; the CSV plots the constraint history.
+`./slipping_interface -compare`,
+`./slipping_interface -m ../data/spherical_fluid_core_buffer_2d.mesh -zeta single -enforce kkt`,
+`./slipping_interface -m ../data/aspherical_fluid_core_buffer_3d.mesh -o 1`
 
 ### Pre-stress
 
 **`equilibrium_stress`**: the minimum-norm and minimum-deviatoric
 equilibrium-stress generators on a homogeneous ellipse, which admits no
-hydrostatic equilibrium. Shows: the pressure and |dev T| of both. Compare
+hydrostatic equilibrium. Shows: the minimum-deviatoric pressure, and
+|dev T| of both. Compare
 `-e 0`.
 
 **`prestress_loading`**: does the deviatoric part of the pre-stress matter

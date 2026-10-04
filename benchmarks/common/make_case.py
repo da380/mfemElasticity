@@ -6,11 +6,16 @@ A case is a directory holding
   case.mesh          the MFEM mesh of the body and its buffer shell
   case.json          the manifest: layers (with their fluidity), interfaces
                      (with the one-sided field values), fields, scales and G
-  case.<name>.gf     rho, kappa and mu as L2 GridFunctions on the mesh
+  case.<name>.gf     rho, kappa, mu and the hydrostatic pressure p0 as L2
+                     GridFunctions on the mesh
+  mesh_summary.json  the mesh parameters and the mesher's summary
+  gmsh/              the mesher's own files
   reference.json     the Love numbers and radial solutions of pyslfp
   reference_fields.txt  the radial solutions of the load problem on
                      Chebyshev nodes of each layer, for the driver that
                      compares fields
+  radial_profiles.txt   the model's fields on Chebyshev nodes of each
+                     layer, for the relabelled (mapped) runs
 
 all from one planetmodel model in the benchmark's units (see models.py),
 so that the finite-element solver and the radial solver are given the

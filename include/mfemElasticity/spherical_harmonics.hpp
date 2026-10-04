@@ -128,15 +128,18 @@ class HarmonicExpansionCoefficient : public mfem::Coefficient {
  * field, so that @f$f|_S \approx \sum_i c_i Y_i@f$. For the tangential part
  * of a vector field the coefficients are those of its expansion in the
  * surface gradients, @f$u - (u\cdot\hat x)\hat x \approx \sum_i c_i
- * \nabla_1 Y_i@f$ plus a part without radial curl that is not analysed:
+ * \nabla_1 Y_i@f$ plus a surface-divergence-free (toroidal) part that is
+ * not analysed:
  * @f$c_i = R^{1-d}\int_S u\cdot\nabla_1 Y_i\,dS / \int |\nabla_1
  * Y_i|^2\,d\Omega@f$, the denominator being @f$l(l+1)@f$ (@f$l^2@f$ in
  * 2-D), and zero at degree zero. Serial or parallel
  * (the space's communicator; every boundary element is integrated once).
  *
- * The matrix @f$M_{ji} = R^{1-d}\int_S \varphi_j (\hat x_c) Y_i\,dS@f$ over
- * the (v)dofs of the marked boundary elements is assembled once; analysis
- * is @f$c = M^T f@f$. The transpose direction, LoadVector(), gives the dual
+ * The matrix @f$M_{ji} = R^{1-d}\int_S \varphi_j Y_i\,dS@f$ over the
+ * (v)dofs of the marked boundary elements (with the factor @f$\hat x_c@f$
+ * on the dofs of component @f$c@f$ for Radial, and @f$Y_i@f$ replaced by
+ * the normalised @f$(\nabla_1 Y_i)_c@f$ for Tangential) is assembled once;
+ * analysis is @f$c = M^T f@f$. The transpose direction, LoadVector(), gives the dual
  * vector @f$\int_S (\sum_i c_i Y_i)\,\varphi_j\,dS@f$, i.e. the load vector
  * of the surface field with those coefficients (a BoundaryLFIntegrator of
  * the corresponding HarmonicExpansionCoefficient does the same through the
@@ -155,10 +158,13 @@ class BoundaryHarmonicCoefficients {
    * @param bdr_marker Boundary attributes of the sphere (sized to the mesh's
    * bdr_attributes.Max(); copied).
    * @param max_degree Highest harmonic degree.
+   * @param component What is analysed: the scalar field, the radial
+   * component of a vector field, or its tangential part.
    * @param centre Centre of the sphere (empty: the origin).
    * @param radius_tolerance Largest relative spread of the radius over the
    * boundary quadrature points accepted (curved elements interpolate the
-   * sphere between their nodes; 1e-3 on a coarse order-2 mesh).
+   * sphere between their nodes; the spread is about 1e-3 on a coarse
+   * order-2 mesh).
    */
   BoundaryHarmonicCoefficients(mfem::FiniteElementSpace& fes,
                                const mfem::Array<int>& bdr_marker,

@@ -10,7 +10,9 @@
   never enter (doc/gauged_fluid.md).
 
   The reference is the Dahlen path of TestMixedProblemFluid. The two
-  formulations agree exactly when the fluid is materially barotropic, so
+  formulations describe the same physics when the fluid is materially
+  barotropic (doc/gauged_fluid.md, "Equivalence and the Adams-Williamson
+  condition"), so
   the fluid's bulk modulus is built from the Adams-Williamson condition
   kappa = rho^2 |grad Phi0| / |drho/dr| on the problem's own discrete
   background gravity (N^2 = 0); with the test's linear density profile the
@@ -27,8 +29,13 @@
   - The two solver types agree within the gauged problem.
   - The refinement residuals contract by O(eps mu_g / mu).
   - A uniform tidal gradient psi = a.x loads exactly a rigid mode of the
-    whole body, fluid included: the response stays at the rigid-residual
-    level, a sharp sign check on the fluid's gravity and coupling terms.
+    whole body, fluid included, so the response in the solid must stay
+    small: a sign check on the fluid's gravity and coupling terms. This is
+    the worst case for the gauged fluid (doc/gauged_fluid.md, "Gauge
+    fixing: penalty plus iterated refinement"): the leakage is ~3% of a
+    comparable surface-load response, bounded here by 5%, not the
+    rigid-residual level the Dahlen path reaches.
+  - The 3-D gauged problem solves and its refinement residuals contract.
 */
 
 namespace {

@@ -1,11 +1,15 @@
 // ============================================================================
 // sliding_fluid_ellipse.cpp
 //
-// The sliding fluid-solid interface (displacement discontinuity) on the
-// geometry where it is genuinely needed: an ELLIPTICAL body with a fluid
-// core, purely elastic, no gravity. Companion to gauged_fluid_cavity.cpp
-// (which welds the interface: the admissible gauge for a barotropic fluid)
-// and to doc/gauged_fluid.md §5 / doc/gauge_penalty_iteration.tex §4.
+// The sliding fluid-solid interface (a tangential displacement
+// discontinuity) on an ELLIPTICAL body with a fluid core. Purely elastic,
+// with no gravity and no pre-stress: a demonstration of the discretisation
+// and of the constraint enforcement, not a physical Earth model.
+// Companion to gauged_fluid_cavity.cpp, which welds the interface (one
+// continuous displacement space). The method is in doc/slip_interface.tex,
+// "Discretisation of the slipping interface" and "Constraint enforcement";
+// when the weld is admissible is discussed in doc/gauged_fluid.md,
+// "Tangential slip and the welded space".
 //
 // Two displacement fields live on the solid and fluid SubMeshes of one
 // parent; the pairing J = Pi_s^T Pi_f identifies the two interface traces
@@ -18,19 +22,23 @@
 // interleaved with the Tikhonov refinement of the fluid's gauge penalty.
 // The tangential jump stays free: the slip.
 //
-// Why the ellipse: on a circular interface a hydrostatic fluid can always
-// be relabelled so that the displacement is continuous (slip along the
-// interface is itself a relabelling), and under a uniform load the
-// response is conformal with no slip at all. Neither holds on an ellipse:
+// Why the ellipse: tangential slip is not gauge in general. A slip can be
+// removed by relabelling the fluid only where it extends into the fluid
+// as a relabelling field; on a circular interface the rigid rotation of
+// the fluid is such a field, and under a uniform load the response is
+// conformal with no slip at all. On an interface that is not a level
+// surface, such as the ellipse, the slip generally cannot be removed by
+// relabelling, and the welded space would suppress part of the response:
 //
-//   1. even the UNIFORM radial load drives a genuine tangential slip
-//      (run with -e 0 and again with the default to see the tangential
-//      jump appear at O(ellipticity));
+//   1. even the UNIFORM radial load drives a tangential slip (run with
+//      -e 0 and again with the default to see the tangential jump appear
+//      at O(ellipticity));
 //   2. the frictionless interface no longer decouples the rotations:
 //      a circular interface transmits no torque, so shell and core rotate
-//      independently (two extra null modes, projected when -e 0); an
-//      elliptical interface transmits torque through the normal forces
-//      alone, and the relative rotation becomes a stiff physical mode.
+//      independently (with -e 0 the two separate rotations replace the
+//      common one in the projected null space); an elliptical interface
+//      transmits torque through the normal forces alone, and the relative
+//      rotation becomes a stiff physical mode.
 //
 // The geometry is made by deforming the canned two-layer disc with the
 // area-preserving map (x, y) -> (a x, y / a), a = 1 + e: the interface
@@ -47,7 +55,7 @@
 // products for the penalty blocks) and the diagonal blocks are
 // preconditioned with AMG instead of Gauss-Seidel.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./sliding_fluid_ellipse
 //    ./sliding_fluid_ellipse -e 0
 //    ./sliding_fluid_ellipse -e 0.3 -P2 0.01
@@ -396,10 +404,12 @@ int main(int argc, char* argv[]) {
   solver.iterative_mode = true;
 
   // The augmented-Lagrangian loop, interleaved with the gauge source:
-  //   R U_{k+1} = f - w_k + eps Q u_f,k ;  w_{k+1} = w_k + theta P U_{k+1}.
-  // At the fixed point the normal jump vanishes at finite theta and the
-  // eps shear drops out of the observables
-  // (doc/gauge_penalty_iteration.tex §4.4).
+  //   R U_{k+1} = f - w_k + eps Q u_f,k ;  w_{k+1} = w_k + theta C U_{k+1},
+  // with R the regularised block operator and C = [B, -BJ; -J^T B, J^T B J]
+  // the unscaled penalty matrix. At the fixed point the normal jump
+  // vanishes at finite theta and the eps shear drops out of the
+  // observables (doc/slip_interface.tex, "Penalty and augmented Lagrangian,
+  // interleaved with the gauge refinement").
   BlockVector U(offsets), rhs(offsets), w(offsets), t(offsets);
   U = 0.0;
   w = 0.0;

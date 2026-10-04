@@ -1,7 +1,8 @@
 /**
  * @file json.hpp
- * @brief A small JSON reader: the whole of the language, without the
- * conversion of \\u escapes beyond ASCII.
+ * @brief A small JSON reader: the whole of the language, except that
+ * \\u escapes beyond ASCII become '?' and numbers are read by strtod (which
+ * also accepts some non-JSON forms, such as hexadecimal and inf/nan).
  *
  * Shared by MeshManifest and the benchmark drivers, which read case files
  * written by Python. Values are a plain tree (Json); errors abort with the

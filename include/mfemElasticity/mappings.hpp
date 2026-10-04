@@ -10,11 +10,13 @@
  * doc/mappings.md for the pulled-back forms and the assembly recipe, and
  * TransformedDiffusionIntegrator for the Poisson instance.
  *
- * Concrete mappings: CallableDiffeomorphism (analytic, exact gradient),
- * RadialDiffeomorphism (@f$\xi = f\,\mathbf{x}@f$ with exact gradient) and
+ * Concrete mappings: IdentityDiffeomorphism (exact identity),
+ * CallableDiffeomorphism (analytic, exact gradient), RadialDiffeomorphism
+ * (@f$\xi = f\,\mathbf{x}@f$ with exact gradient), TaperedDiffeomorphism
+ * (the radial blend of a mapping to the identity) and
  * GridFunctionDiffeomorphism (@f$\xi = \mathbf{x} + \mathbf{h}@f$ for a
- * displacement grid function: interpolated mappings, mappings supplied in
- * discretised form, and, later, a shape-inversion variable).
+ * displacement grid function: interpolated mappings and mappings supplied
+ * in discretised form).
  *
  * Free functions: Interpolate (the nodal interpolant of a mapping on a
  * mesh's geometric space), MappedMesh (the element-by-element image mesh;
@@ -168,9 +170,6 @@ class CallableDiffeomorphism : public Diffeomorphism {
  * are exact by design, and a caller with @f$f@f$ alone should go through
  * Interpolate() instead, which states honestly that the gradient is then a
  * discrete one.
- *
- * (Replaces the retired RadialDiffeomorphismCoefficient, which supplied
- * only @f$\boldsymbol{\xi}@f$.)
  */
 class RadialDiffeomorphism : public Diffeomorphism {
  public:
@@ -210,7 +209,9 @@ class RadialDiffeomorphism : public Diffeomorphism {
 /**
  * @brief The radial blend of a mapping to the identity: the buffer-taper
  * rule for an equilibrium mapping that is non-trivial on the physical
- * surface (doc/gravitating_elasticity.md §3.1 and §7).
+ * surface (doc/gravitating_elasticity.md §3, "Gravity: three
+ * formulations"; NewHarmonicExtensionMapping is the elliptic alternative
+ * for a mapping known only on the body).
  *
  * @f[
  *   \boldsymbol{\varphi}(\mathbf{x}) = \mathbf{x}
@@ -259,8 +260,8 @@ class TaperedDiffeomorphism : public Diffeomorphism {
  *
  * The discrete representative of the layer: the interpolated mode of the
  * change-of-variables identity (see Interpolate), mappings supplied in
- * discretised form (e.g. by planetmodel), and, later, the shape-inversion
- * variable.
+ * discretised form (e.g. by planetmodel), and the output of
+ * NewHarmonicExtensionMapping.
  */
 class GridFunctionDiffeomorphism : public Diffeomorphism {
  public:
@@ -506,7 +507,8 @@ class MappedBoundaryNormalDotCoefficient : public mfem::Coefficient {
  * integrators on `mesh` with the returned mapping reproduces, element
  * matrix by element matrix, the standard integrators on the mapped mesh,
  * provided the same integration rule is used on both. This is the discrete
- * change-of-variables identity (doc/mappings.md, Section 5).
+ * change-of-variables identity (doc/mappings.md, "The discrete
+ * change-of-variables identity").
  *
  * The mesh must outlive the returned object.
  */

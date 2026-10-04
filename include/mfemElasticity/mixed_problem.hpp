@@ -60,8 +60,10 @@ namespace mfemElasticity {
  *   the fluid presses on the solid through the buoyancy term (F2) alone
  *   (a "Winkler foundation"). With @p density_gradient zero and a constant
  *   @p interface_density this reproduces, in steps, the approximate CMB
- *   conditions of the GIA literature (see doc/self_gravitation.md §2 and
- *   the benchmark option `-cmb`).
+ *   conditions of the GIA literature (see doc/self_gravitation.md, "The
+ *   CMB approximations of the GIA literature", doc/quasi_static_models.tex,
+ *   "Fluid regions and the ladder of CMB approximations", and the
+ *   benchmark option `-cmb`).
  */
 struct FluidRegion {
   mfem::Array<int> attributes;
@@ -232,8 +234,22 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * @f$\ker A@f$, which MINRES on the consistent system tolerates.
    * Internally reuses SetGaugedFluid() at @f$\epsilon = 1@f$ (zero
    * refinements), whose @f$A+Q@f$ assembly doubles as the
-   * preconditioner of both displacement slots. BlockMINRES/BlockCG
-   * organisation only.
+   * preconditioner of both displacement slots (of the primal slot only
+   * when @p mgw_prec is set). The KKT solve is always MINRES; the call is
+   * refused under SchurCG. Not the production path: under the available
+   * block-diagonal preconditioners MINRES reaches mesh-level physics but
+   * does not converge algebraically at acceptable cost (see
+   * doc/quasi_static_models.tex, "The exact-gauge KKT alternative").
+   *
+   * @param fluid_marker Element attributes of the fluid (as for
+   * SetGaugedFluid()).
+   * @param mu_gauge Gauge shear scale @f$\mu_g@f$; not owned, must outlive
+   * the problem.
+   * @param mgw_prec Precondition the multiplier displacement slot by the
+   * Murphy-Golub-Wathen composite @f$P(A)\,(A+Q)\,P(A)@f$, with
+   * @f$P(A)@f$ a preconditioner of the physical @f$A_{uu}@f$, instead of
+   * the @f$A+Q@f$ preconditioner. Worthwhile only when @f$P(A)@f$ is of
+   * AMG quality; with a Gauss-Seidel smoother it degrades the solve.
    */
   void EnableGaugeKKT(const mfem::Array<int>& fluid_marker,
                       mfem::Coefficient& mu_gauge, bool mgw_prec = false);
@@ -424,7 +440,8 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
   void RegisterFields(mfem::DataCollection& dc) override;
 
   /** @brief Gauged-fluid mode: requires an empty FluidRegion list (the
-   * fluid lives inside the displacement SubMesh; see the class notes). */
+   * fluid lives inside the displacement SubMesh; see the class notes).
+   * Arguments as LinearQuasiStaticProblemBase::SetGaugedFluid(). */
   void SetGaugedFluid(
       const mfem::Array<int>& fluid_marker, mfem::Coefficient& mu_gauge,
       mfem::real_t epsilon, int refinements = 2,
@@ -437,8 +454,9 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
 
   /** @brief Tikhonov refinement on the coupled system: each step solves the
    * regularised block system for @f$[\epsilon Q\,\delta_u; 0]@f$ (zero
-   * potential load, no tidal term) and accumulates the potential alongside
-   * the displacement. */
+   * potential load, no tidal term), cold-started, and accumulates the
+   * potential alongside the displacement; the accumulated pair is left as
+   * the next Solve()'s warm start. */
   bool GaugeRefine(mfem::Vector& X) override;
 
  private:
@@ -485,7 +503,7 @@ class LinearQuasiStaticMixedSelfGravitatingProblem
    * its loads C Psi and M_F Psi on true dofs. */
   void AssembleTidalLoad();
 
-  /** @brief @f$\rho_F@f$ on the interfaces of region @p i (its
+  /** @brief @f$\rho_F@f$ on the interfaces of region @p f (its
    * interface_density or density). */
   mfem::Coefficient& InterfaceDensity(const FluidRegion& f) const {
     return f.interface_density ? *f.interface_density : *f.density;

@@ -17,9 +17,11 @@ question for a GIA code:
 
 For each sweep point the example finds, per scheme, the coarsest step
 (or loosest adaptive tolerance) that reaches the target relative error
-of the final displacement, and its cost in elastic solves — the cost
-unit that transfers to the real 3-D problems, where one solve is one
-self-gravitating quasi-static system. Figures:
+of the displacement history — the worst over the final time and four
+interior checkpoints, against RK4 at a small step — and its cost in
+elastic solves, the cost unit that transfers to the real 3-D problems,
+where one solve is one self-gravitating quasi-static system. Figures,
+at the smallest of --targets:
 
   ve_stiffness.png   solves to reach the target vs the contrast
   ve_regimes.png     solves to reach the target vs the load period

@@ -17,7 +17,9 @@ domain attributes. Order-2 elements.
 Files: elastogravity_two_layer_2d.msh, elastogravity_three_layer_2d.msh,
 elastogravity_three_layer_3d.msh; `--all` builds the three of them.
 
-Used by: elastogravity_layered, self_gravitating_relaxation, the tests.
+Used by: elastogravity_layered, gauged_fluid_cavity,
+self_gravitating_relaxation, self_gravitating_solvers,
+sliding_fluid_ellipse, the tests.
 """
 from planetmodel import Geometry, Skeleton
 from planetmodel.mesh3d import (MeshSpec, Shell, UniformInterfaces,

@@ -358,7 +358,7 @@ ViscoelasticOperator::ViscoelasticOperator(LinearQuasiStaticProblem& problem,
     }
   }
 
-  if (!linear_ && !tracefree_) {
+  if (!linear_) {
     CU_ = NodalUnrelaxedTensors(*sfes_, rh);
   }
 
@@ -499,40 +499,35 @@ void ViscoelasticOperator::EvaluateRelaxationTimes(const Vector& d,
     for (int q = 0; q < nodes.Size(); q++) {
       const int p = nodes[q];
       expand(d, p, s.strain);
-      // Stress at p: trace-free isotropic sum_j 2 mu_j (d - m_j) over the
-      // branches living at p (deviatoric part only); anisotropic C_U eps -
-      // sum_j C_j m_j through the nodal W forms.
-      if (tracefree_) {
-        s.stress = 0.0;
-        for (int j = 0; j < K; j++) {
-          const int qj = slot_[j][p];
-          if (qj < 0) {
-            continue;
-          }
-          expand_branch(j, qj, tmp);
+      // Stress at p: C_U eps - sum_j C_j m_j over the branches living at
+      // p, through the nodal unrelaxed tensor and the branch moduli. With
+      // trace-free variables the strain is dev(eps), so C_U eps is
+      // 2 mu_U dev(eps) and the result is the full deviatoric stress
+      // 2 mu_inf dev(eps) + sum_j 2 mu_j (dev(eps) - m_j); the branch
+      // moduli are then the scalars 2 mu_j.
+      const real_t* Wu =
+          CU_.GetData() + static_cast<std::size_t>(p) * ns * ns;
+      for (int a = 0; a < ns; a++) {
+        real_t v = 0.0;
+        for (int b = 0; b < ns; b++) {
+          v += Wu[a * ns + b] * s.strain[b];
+        }
+        s.stress[a] = v;
+      }
+      for (int j = 0; j < K; j++) {
+        const int qj = slot_[j][p];
+        if (qj < 0) {
+          continue;
+        }
+        expand_branch(j, qj, tmp);
+        if (tracefree_) {
           const real_t two_mu = branch_modulus_[j][qj];
-          for (int c = 0; c < ns; c++) {
-            s.stress[c] += two_mu * (s.strain[c] - tmp[c]);
+          for (int a = 0; a < ns; a++) {
+            s.stress[a] -= two_mu * tmp[a];
           }
-        }
-      } else {
-        const real_t* Wu =
-            CU_.GetData() + static_cast<std::size_t>(p) * ns * ns;
-        for (int a = 0; a < ns; a++) {
-          real_t v = 0.0;
-          for (int b = 0; b < ns; b++) {
-            v += Wu[a * ns + b] * s.strain[b];
-          }
-          s.stress[a] = v;
-        }
-        for (int j = 0; j < K; j++) {
-          const int qj = slot_[j][p];
-          if (qj < 0) {
-            continue;
-          }
+        } else {
           const real_t* Wj = branch_modulus_[j].GetData() +
                              static_cast<std::size_t>(qj) * ns * ns;
-          expand_branch(j, qj, tmp);
           for (int a = 0; a < ns; a++) {
             real_t v = 0.0;
             for (int b = 0; b < ns; b++) {
@@ -658,10 +653,29 @@ void ViscoelasticOperator::UseUnrelaxedOperator() const {
 }
 
 bool ViscoelasticOperator::CacheMatches(const Vector& m, real_t t) const {
-  int ok = cache_valid_ && t == cached_t_ && m.Size() == cached_m_.Size();
+  // Equal to round-off: an implicit step stores (m + h d) / (1 + h) as the
+  // key, while the ODE solver forms m + dt k, and output times may be
+  // accumulated by repeated addition; the two agree to a few ulps. A
+  // relative tolerance far below any solver tolerance accepts them, so
+  // the displacement is not solved again for the same state.
+  constexpr real_t rel = 1e-12;
+  int ok = cache_valid_ && m.Size() == cached_m_.Size() &&
+           std::abs(t - cached_t_) <=
+               rel * std::max<real_t>(1.0, std::abs(cached_t_));
   if (ok) {
+    real_t scale = 0.0;
     for (int j = 0; j < m.Size(); j++) {
-      if (m[j] != cached_m_[j]) {
+      scale = std::max(scale, std::abs(cached_m_[j]));
+    }
+#ifdef MFEM_USE_MPI
+    if (parallel_) {
+      MPI_Allreduce(MPI_IN_PLACE, &scale, 1, MPITypeMap<real_t>::mpi_type,
+                    MPI_MAX, comm_);
+    }
+#endif
+    const real_t tol = rel * scale;
+    for (int j = 0; j < m.Size(); j++) {
+      if (std::abs(m[j] - cached_m_[j]) > tol) {
         ok = 0;
         break;
       }
@@ -760,7 +774,9 @@ void ViscoelasticOperator::ImplicitSolve(real_t dt, const Vector& m,
       break;
     }
   }
-  // The displacement is consistent with the new state m + dt k.
+  // The displacement is consistent with the new state m + dt k (exactly
+  // when the internal order resolves eps(u), so that B^T beta C D =
+  // K(beta C)).
   cached_t_ = t;
   cache_valid_ = true;
 }
@@ -874,7 +890,8 @@ void ViscoelasticOperator::ExponentialTrapezoidStep(Vector& m, real_t& t,
   }
   t += dt;
   SetTime(t);
-  // By construction u^{n+1} satisfies K_U u = f + sum B^T C m^{n+1}.
+  // By construction u^{n+1} satisfies K_U u = f + sum B^T C m^{n+1}
+  // (exactly when the internal order resolves eps(u)).
   UpdateCache(m, t);
 }
 

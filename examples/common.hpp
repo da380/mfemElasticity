@@ -1,3 +1,6 @@
+// Non-dimensionalisation helpers shared by the examples built on
+// layered_model.hpp.
+
 #pragma once
 
 #include <iostream>
@@ -48,6 +51,8 @@ class Nondimensionalisation {
   }
 };
 
+// Physical constants in SI units.
 struct Constants {
+  // Newtonian gravitational constant [m^3 kg^-1 s^-2] (CODATA 2018).
   static constexpr mfem::real_t G = 6.6743e-11;
 };

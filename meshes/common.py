@@ -1,7 +1,8 @@
 """What every mesh script here shares.
 
 Each script in this directory builds one kind of mesh with planetmodel and
-writes the `.msh` file, with a JSON manifest beside it saying what every
+writes the mesh file (gmsh `.msh`, or MFEM's own `.mesh` for the
+aspherical meshes), with a JSON manifest beside it saying what every
 attribute means. The build runs them (see CMakeLists.txt here) and puts
 the meshes in the build tree's `data/` directory, where the C++ examples
 and tests read them; nothing is written to the source tree. Run by hand,

@@ -3,11 +3,13 @@
 //
 // Static linear elasticity with a transversely isotropic material whose
 // symmetry axis is the radial direction (radial anisotropy, as in PREM),
-// assembled with mfemElasticity::ElasticTensorIntegrator. The boundary
-// attribute 1 is clamped and a uniform body force is applied.
+// taken about the centre of the mesh's bounding box, and assembled with
+// mfemElasticity::ElasticTensorIntegrator. The boundary attribute 1 is
+// clamped and a uniform body force is applied.
 //
 // With -iso the Love constants are set to their isotropic values
-// (A = C = lambda + 2 mu, F = lambda, L = N = mu) and the solution is
+// (A = C = lambda + 2 mu, F = lambda, L = N = mu, with lambda = mu = 1),
+// overriding -A ... -N, and the solution is
 // compared with one assembled by mfem::ElasticityIntegrator; the two agree
 // to solver tolerance.
 //
@@ -16,7 +18,11 @@
 // serially, BoomerAMG in parallel) and the global reductions on the
 // printed norms.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Output: the L2 norm of the displacement (and with -iso the relative
+// maximum difference from the mfem::ElasticityIntegrator solution); with
+// -vis (on by default) the displacement in GLVis.
+//
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./anisotropic_elasticity -m ../data/star.mesh -o 2
 //    ./anisotropic_elasticity -m ../data/beam-tet.mesh -o 1 -iso
 //    ./anisotropic_elasticity -m ../data/ball.msh -o 1 -A 3.0 -C 2.6 -F 1.0

@@ -12,10 +12,10 @@
   - MakeRigidModeProjector() holds d(d+1)/2 orthonormal vectors that are
     (on a Cartesian mesh, exactly) in the null space of the free stiffness;
     adding the modes again adds nothing; a dependent vector is dropped.
-  - ProjectedSolver + CG on the singular stiffness of a free bar converges
-    for a load with net force and torque; the solution is orthogonal to every
-    basis vector, satisfies the projected equations, and equals the solution
-    for the projected load.
+  - ProjectedSolver + CG on the singular stiffness of a free unit square
+    (cube) converges for a load with net force and torque; the solution is
+    orthogonal to every basis vector, satisfies the projected equations,
+    and equals the solution for the projected load.
   - A warm start carrying a rigid component gives the same solution.
   - ProjectedSolver::SetGauge() with a mass matrix gives zero net momentum
     and angular momentum, and differs from the Euclidean-gauge solution by a

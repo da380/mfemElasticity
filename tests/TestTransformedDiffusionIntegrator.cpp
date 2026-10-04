@@ -1,4 +1,4 @@
-// Tests for TransformedDiffusionIntegrator (poisson.hpp): the pull-back of the
+// Tests for TransformedDiffusionIntegrator (bilininteg.hpp): the pull-back of the
 // Laplace form under a diffeomorphism xi(x). Three families of checks:
 //
 //  1. The four ways of specifying the mapping agree. For a radial map
@@ -10,7 +10,8 @@
 //     (order >= 2). The comparison is sensitive to the index order in the
 //     scalar-path Jacobian F(j,k) = x_j d_k f.
 //
-//  2. The discrete change-of-variables identity (doc/mappings.md, Section 5):
+//  2. The discrete change-of-variables identity (doc/mappings.md, "The
+//     discrete change-of-variables identity"):
 //     for an affine map the transformed form on the reference mesh equals the
 //     ordinary DiffusionIntegrator on the mapped mesh outright; for a smooth
 //     non-polynomial map the same holds — for the stiffness, the J rho mass

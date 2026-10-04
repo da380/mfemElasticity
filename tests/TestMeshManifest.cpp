@@ -58,8 +58,7 @@ const char* const kManifest = R"({
   "schema": "planetmodel.mesh.manifest/5"
 })";
 
-// The same mesh under the previous schema, which lacks the model-derived
-// records: the fluid layers then come from meta.fluid_layers.
+// The same mesh under schema 4, which lacks the model-derived records: the fluid layers then come from meta.fluid_layers.
 const char* const kOldManifest = R"({
   "mesh": {"file": "manifest_test.mesh", "format": "mfem",
            "nodes": "reference",

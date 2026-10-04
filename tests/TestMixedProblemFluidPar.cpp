@@ -7,9 +7,10 @@
 
   Every rank also builds the serial problem on the full mesh; the parallel
   and serial solutions are compared through partition-independent
-  quantities (global L2 norms of the displacement and of the potential, the
-  rigid-mode and region-rotation residuals, the potential-block Ritz
-  values), for both solver types, for the tidal load, and with a relaxation
+  quantities (global L2 norms of the displacement, the potential and the
+  background potential, the rigid-mode and region-rotation residuals, the
+  potential-block Ritz values), for both solver types under the combined
+  surface and tidal load, for its time scaling, and with a relaxation
   weight.
 */
 
@@ -185,5 +186,5 @@ int main(int argc, char* argv[]) {
                 << Mpi::WorldSize() << " ranks.\n";
     }
   }
-  return num_fails;
+  return num_fails == 0 ? 0 : 1;  // an exit status is taken modulo 256
 }

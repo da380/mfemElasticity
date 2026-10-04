@@ -9,21 +9,24 @@
   - The Schur-complement CG and the block MINRES solvers give the same
     displacement and potential to solver tolerance (both solve the system
     restricted to the complement of the rigid modes).
+  - With the mass-weighted rigid gauge the two solvers return the same
+    representative, which carries no linear or angular momentum and
+    differs from the Euclidean-gauge solution by a rigid motion only.
   - The rigid-mode residuals are small and decrease with the order.
   - With zero density the problem reduces to pure elasticity: the solution
     equals a direct projected CG solve of the traction problem's stiffness
     (the coupling, the gravity terms and the background potential all
     vanish). On these curved meshes the rigid rotations are exact null
-    vectors only for order >= 2, so the reference uses the same P A P
-    regularisation as the class rather than
-    LinearQuasiStaticTractionProblem's solver.
+    vectors only for order >= 2, so the result depends on the rigid-mode
+    regularisation: the reference solves P A P x = P b with the class's
+    own projector P.
   - The response is linear in the loads: time scaling of the surface load,
     and superposition of a surface load and an AddForce() increment.
   - Repeated and out-of-order solves (warm starts) reproduce the cold
     solutions to solver tolerance.
   - On a Maxwell rheology, a unit relaxation weight leaves the solution
     unchanged, a smaller one changes it and ClearRelaxationWeights()
-    restores it; the potential block is not rebuilt.
+    restores it.
   - A supplied background potential equal to the solved one gives the same
     solution.
   - The viscoelastic operator runs on top of the problem (creep under a

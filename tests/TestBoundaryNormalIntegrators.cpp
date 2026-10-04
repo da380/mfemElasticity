@@ -4,7 +4,8 @@
 
 /*
   Tests for the boundary integrators and coefficients used by the fluid–solid
-  interface terms of the self-gravitating problem (doc/self_gravitation.md):
+  interface terms of the self-gravitating problem (doc/self_gravitation.md,
+  "Fluid–solid interface conditions"):
 
   - BoundaryNormalNormalIntegrator  (u, v) -> int q (n.u)(n.v) dS
   - BoundaryNormalScalarIntegrator  (v, p) -> int q p (n.v) dS
@@ -231,7 +232,8 @@ INSTANTIATE_TEST_SUITE_P(
 // --- spheres ---------------------------------------------------------------
 
 // The canned two-layer meshes: attribute 1 the unit body, attribute 2 the
-// shell out to radius 2; bdr attribute 1 the unit sphere, 2 the outer one.
+// buffer shell (out to radius 1.2 in 2-D, 2 in 3-D); bdr attribute 1 the
+// unit sphere, 2 the outer one.
 std::string TwoLayerMesh(int dim) {
   return dim == 2 ? "../data/elastogravity_2d.msh"
                   : "../data/coupled_poisson.msh";

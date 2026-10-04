@@ -248,8 +248,8 @@ class SymmetricMatrixIndex : public MatrixIndex {
  *
  * This class extends `SymmetricMatrixIndex`. The indexing is identical
  * to that for symmetric matrices, with the implicit understanding that
- * the final diagonal element (e.g., `v_{22}` in 3D, component
- * `SymmetricComponentOrder::TraceFreeDropped`) is removed from the basis to
+ * the final diagonal element (component (d-1, d-1), i.e. 33 in 3D and 22 in
+ * 2D, at offset `SymmetricComponentOrder::TraceFreeDropped`) is removed from the basis to
  * enforce the trace-free condition. This removal is not explicitly checked
  * in calls to the indexing or offset functions.
  */

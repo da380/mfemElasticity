@@ -1,13 +1,16 @@
 // ============================================================================
 // aspherical_reference.cpp
 //
-// The independently-meshed leg of the relabelled 3-D benchmark (variant
-// 2b-independent of the plan; doc/mappings.md): the SAME spherical
+// Leg C of the relabelling family (doc/benchmarks.tex, "Leg C: an
+// aspherical reference body"; doc/mappings.md): the SAME spherical
 // physical problem, described from an ASPHERICAL reference body whose
 // mesh comes from its own generator (meshes/aspherical_body.py), not
-// from any nodal image — so the mapped machinery runs on genuinely
-// aspherical mesh geometry, with a mapping that is NOT the identity on
-// the surface, and the exact pyslfp reference still applies.
+// from the nodal image of the case's mesh — so the mapped machinery
+// runs on aspherical mesh geometry, with a mapping that is NOT the
+// identity on the surface, and the exact pyslfp reference still
+// applies. The generator's mesh is itself the image under D (below) of
+// a spherical gmsh mesh, so this is not a test on a mesh generated on
+// the aspherical body directly.
 //
 // The generator builds the body by the radial stretch
 //
@@ -30,8 +33,8 @@
 // EULERIAN potential phi1 = zeta1 - b.u over the body, per
 // degree. Degree one is skipped (frame bookkeeping adds nothing this
 // driver tests). The model must be a single solid layer (homogeneous,
-// linear_solid): the strict, gauge-free regime the solver-level
-// identity certified.
+// linear_solid): the gauge-free regime in which the identity of
+// relabelled_identity is strict.
 //
 // Sample run (the case is a SPHERICAL one of the campaign, made by
 // make_case.py; it supplies the model data and the reference only):
@@ -259,12 +262,10 @@ int main(int argc, char* argv[]) {
   }
   if (root) args.PrintOptions(std::cout);
 
-  // The shape parameters: a mesh built since aspherical_body.py wrote
-  // them records eps, beta (and buffer) in the manifest beside the
-  // mesh, which is then authoritative — the by-hand matching of the
-  // flags to the mesh was a recorded mistake (a stored "eps 0.02"
-  // comparison that had run on the stock eps 0.05 mesh). The flags
-  // cover older meshes without the meta; a flag that contradicts the
+  // The shape parameters: aspherical_body.py records eps, beta and the
+  // buffer in the manifest beside the mesh, which is then authoritative,
+  // so that a run cannot pair a mesh with the wrong flags. The flags
+  // serve meshes without that meta; a flag that contradicts the
   // manifest is refused unless it still holds its default.
   {
     std::string mmpath(mesh_file);
@@ -429,8 +430,8 @@ int main(int argc, char* argv[]) {
     const bool ok = problem.Solve();
     const double seconds = Seconds(t0);
 
-    // Relative L2 errors against the composed reference: u over the
-    // body, the Eulerian phi1 = zeta1 - b.u over body and buffer.
+    // Relative L2 errors against the composed reference: u and the
+    // Eulerian phi1 = zeta1 - b.u, both over the body.
     Vector cs(basis.Size());
     cs = 0.0;
     cs[i] = 1.0;
@@ -449,7 +450,7 @@ int main(int argc, char* argv[]) {
         const auto& ip = ir.IntPoint(q);
         T->SetIntPoint(&ip);
         T->Transform(ip, y);
-        xi.Eval(x, *T, ip);  // the physical point of this dof... (map)
+        xi.Eval(x, *T, ip);  // the physical point phi_e(y)
         const real_t w = ip.weight * T->Weight() * jac.Eval(*T, ip);
         const real_t r_phys = x.Norml2();
         basis.EvalWithGradient(x, Y, gradY);

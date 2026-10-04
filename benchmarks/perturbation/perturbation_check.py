@@ -1,4 +1,4 @@
-"""The degree-0 interface-shift perturbation benchmark (tier 3).
+"""The degree-0 interface-shift perturbation benchmark.
 
 One fixed spherical mesh; a family of PHYSICAL models with one interior
 interface at r_k + eps, described from it by the piecewise-linear radial
@@ -10,9 +10,12 @@ largely cancels in the finite difference, so
     [R_3D(+eps) - R_3D(-eps)] / 2 eps   vs   the same of pyslfp
 
 compares the DERIVATIVE of the response with respect to the interface
-radius — the first perturbation-theory verification of the mapped
-machinery, needing no new theory (the l >= 1 topography kernels come
-with the adjoint work).
+radius, through the mapped assembly. The 1-D side is a finite difference
+of pyslfp solves, not an analytic sensitivity kernel
+(doc/benchmarks.tex, "The perturbation family").
+
+The case must exist (love_numbers/run.py); its unmapped run of each
+method, beside the case, is the eps = 0 point, run here if missing.
 
 For each eps of the ladder this script builds the perturbed model's
 exact radial profiles and pyslfp reference beside the base case, runs

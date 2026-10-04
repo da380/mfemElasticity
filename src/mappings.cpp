@@ -95,10 +95,14 @@ RadialDiffeomorphism::RadialDiffeomorphism(int dim, Coefficient& f,
   MFEM_VERIFY(grad_f.GetVDim() == dim, "RadialDiffeomorphism: grad_f vdim.");
 }
 
+// Hidden from Doxygen, which cannot match the unqualified parameter types
+// of these overloaded constructors to their declarations.
+/// @cond
 RadialDiffeomorphism::RadialDiffeomorphism(
     int dim, std::function<real_t(real_t)> f, std::function<real_t(real_t)> df)
     : Diffeomorphism(dim), fr_(std::move(f)), dfr_(std::move(df)), x_(dim),
       g_(dim) {}
+/// @endcond
 
 real_t RadialDiffeomorphism::Scalar(ElementTransformation& T,
                                     const IntegrationPoint& ip) {
@@ -213,6 +217,8 @@ void TaperedDiffeomorphism::EvalGradient(DenseMatrix& F,
   }
 }
 
+// Hidden from Doxygen, as for RadialDiffeomorphism above.
+/// @cond
 GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(const GridFunction& h)
     : Diffeomorphism(h.VectorDim()), h_(&h), x_(h.VectorDim()) {
   MFEM_VERIFY(
@@ -230,6 +236,7 @@ GridFunctionDiffeomorphism::GridFunctionDiffeomorphism(
       owned_h_(std::move(h)),
       h_(owned_h_.get()),
       x_(vdim) {}
+/// @endcond
 
 void GridFunctionDiffeomorphism::Eval(Vector& V, ElementTransformation& T,
                                       const IntegrationPoint& ip) {

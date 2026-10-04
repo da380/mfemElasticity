@@ -2,12 +2,15 @@
 #include "TestCommon.hpp"
 
 /*
-  Tests for the background-state module (background.hpp): the radial
-  hydrostatic balance against analytic profiles, and the generated
-  coefficient chains against hand-rolled references. The end-to-end
-  acceptance — a relabelled background reproducing the base solution —
-  is TestReferentialProblem.RelabelledEquilibrium2D, which runs on this
-  module.
+  Tests for the background-state module (background.hpp) and the buffer
+  tapers of mappings.hpp: the radial hydrostatic balance against analytic
+  profiles; the generated coefficient chains against hand-rolled
+  references; the minimum-norm and minimum-deviatoric equilibrium-stress
+  generators (weak equilibrium, optimality, the hydrostatic disc, the
+  ellipse, the mapped mode); and the analytic and harmonic buffer tapers.
+  The end-to-end check, a relabelled background reproducing the base
+  solution, is ReferentialProblem.RelabelledEquilibrium2D in
+  TestReferentialProblem.cpp.
 */
 
 namespace {
@@ -170,7 +173,8 @@ TEST(Background, RelabelledCoefficientsMatchHandRolled) {
       });
   RelabelledBackground rel(base, xi);
 
-  // Hand-rolled chain, as tier (ii) originally built it.
+  // Hand-rolled chain: each coefficient composed from its transformation
+  // law.
   auto pressure = [&base](const Vector& y) {
     return base.PressureAt(y.Norml2());
   };
@@ -280,7 +284,7 @@ double UniformDiscPressure(const Vector& x) {
 
 }  // namespace
 
-// AW10 §3.3: the minimum equilibrium stress solves the equilibrium
+// Al-Attar & Woodhouse (2010, §3.3): the minimum equilibrium stress solves the equilibrium
 // equations weakly, at discretisation level improving with order.
 TEST(Background, MinimumNormEquilibriumSatisfiesWeakForm) {
   const int dim = 2;
@@ -302,7 +306,7 @@ TEST(Background, MinimumNormEquilibriumSatisfiesWeakForm) {
   EXPECT_LT(res[1], 5e-2);
 }
 
-// AW10 §3.4 on the uniform disc: the minimum deviatoric equilibrium
+// Al-Attar & Woodhouse (2010, §3.4) on the uniform disc: the minimum deviatoric equilibrium
 // stress recovers the hydrostatic state, T = -p0 1 with
 // p0 = pi G rho^2 (1 - r^2), essentially free of deviatoric content.
 TEST(Background, MinimumDeviatoricRecoversHydrostatic) {

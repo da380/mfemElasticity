@@ -4,8 +4,8 @@
 // The gauged treatment of an inviscid fluid region on the simplest problem
 // that has one: a purely elastic body with a fluid core under an external
 // surface pressure, with no gravity. A demonstration of the gauged-fluid
-// option of LinearQuasiStaticProblemBase (SetGaugedFluid; the method notes
-// are doc/gauged_fluid.md).
+// option of LinearQuasiStaticProblemBase (SetGaugedFluid; the method is in
+// doc/gauged_fluid.md, "Gauge fixing: penalty plus iterated refinement").
 //
 // The fluid carries a displacement like the solid, with its physical bulk
 // modulus and zero shear. That displacement is determined only up to a
@@ -39,9 +39,9 @@
 // and the fluid pressure are shown: the pressure window is the instructive
 // one — flat in the fluid, however the (gauge) displacement there looks.
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
-//    ./gauged_fluid_cavity
-//    ./gauged_fluid_cavity -eps 1e-3 -nref 5
+// Sample runs (with mpiexec -np N in front in a parallel build):
+//    ./gauged_fluid_cavity          (eps = 1e-2, 3 refinements: the
+//                                    recommended operating point)
 //    ./gauged_fluid_cavity -P2 0.01
 //    ./gauged_fluid_cavity -m ../data/elastogravity_three_layer_3d.msh
 // ============================================================================

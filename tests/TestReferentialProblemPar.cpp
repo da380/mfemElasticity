@@ -1,14 +1,17 @@
 /*
   Parallel tests for LinearQuasiStaticReferentialSelfGravitatingProblem with the
   prescribed vacuum extension (see TestReferentialProblem.cpp for the
-  serial suite and the model). Run with 1, 2 and 4 ranks; a standalone MPI
-  program returning the number of failed checks.
+  serial suite and the model), for the slip class
+  LinearQuasiStaticReferentialSelfGravitatingSlipProblem (single-valued
+  and broken zeta), for NewHarmonicExtensionMapping and for the
+  equilibrium-stress generators. Run with 1, 2 and 4 ranks; a standalone
+  MPI program returning 0 if every check passes, 1 otherwise.
 
   Every rank also solves the serial problem on the full mesh: serial and
   parallel build the same discrete system (the parallel extension's trace
   rows come from the cross-rank dof pairing and its interior rows from the
-  same interpolation), so the global L2 norms of displacement and
-  potential are compared directly.
+  same interpolation), so global L2 norms of the fields are compared
+  directly.
 */
 
 #include <mpi.h>
@@ -167,8 +170,8 @@ void RunCase(int order, const std::string& label) {
 // fluid extension, B_Sigma blocks and mismatch folds build the same
 // discrete system as the serial path, so the global L2 norms of the
 // solid displacement, the fluid displacement and the potential are
-// compared directly (the fluid field is gauge, but the discrete system
-// pins it too).
+// compared directly (the fluid displacement carries the fluid gauge, but
+// the eps penalty fixes it in the discrete system).
 void RunSlipCase(int order, const std::string& label) {
   const char* mesh_file = "../data/elastogravity_two_layer_2d.msh";
   Mesh smesh(mesh_file, 1, 1);
@@ -420,8 +423,8 @@ void RunHarmonicExtensionCase() {
         "harmonic extension displacement norm");
 }
 
-// Serial-vs-parallel agreement of the AW10 equilibrium-stress
-// generators (the auxiliary fields are rigid-projected, so they compare
+// Serial-vs-parallel agreement of the equilibrium-stress generators of
+// Al-Attar & Woodhouse (2010) (doc/gravitating_elasticity.md, §6) (the auxiliary fields are rigid-projected, so they compare
 // directly).
 void RunEquilibriumStressCase() {
   Mesh smesh("../data/elastogravity_2d.msh", 1, 1);
@@ -479,5 +482,5 @@ int main(int argc, char* argv[]) {
                 << Mpi::WorldSize() << " ranks.\n";
     }
   }
-  return num_fails;
+  return num_fails == 0 ? 0 : 1;  // an exit status is taken modulo 256
 }
