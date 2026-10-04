@@ -16,6 +16,11 @@
 // L2 norms of the displacement and of the potential perturbation and the
 // radial surface displacement under the load's maximum (theta = 0).
 //
+// Outputs: the table on the screen; self_gravitating_relaxation.csv, the
+// radial displacement at the pole and the two norms against time (python3
+// plot_csv.py self_gravitating_relaxation.csv); with -vis (the default), a
+// GLVis animation of the mantle displacement, one frame per output time.
+//
 // One source serves the serial and the parallel build; the genuine
 // differences are the mesh partitioning and the pole observation point,
 // which in parallel lives on one rank and is reduced globally.
@@ -39,6 +44,7 @@
 
 #include "layered_model.hpp"
 #include "mfemElasticity.hpp"
+#include "visualisation.hpp"
 
 using namespace mfem;
 using namespace mfemElasticity;
@@ -81,6 +87,8 @@ int main(int argc, char* argv[]) {
   int n_steps = 20;
   real_t rtol = 0.0;
   bool paraview = false;
+  bool visualization = true;
+  const char* csv_file = "self_gravitating_relaxation.csv";
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Two- or three-layer mesh.");
@@ -96,6 +104,10 @@ int main(int argc, char* argv[]) {
                  "Relative tolerance of adaptive stepping (0: fixed dt).");
   args.AddOption(&paraview, "-pv", "--paraview", "-no-pv", "--no-paraview",
                  "Write a ParaView data collection.");
+  args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                 "--no-visualization", "Animate the displacement in GLVis.");
+  args.AddOption(&csv_file, "-csv", "--csv",
+                 "Table of the history for plot_csv.py (\"\": none).");
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
@@ -237,6 +249,15 @@ int main(int argc, char* argv[]) {
   if (Root()) {
     std::cout << "t/tau        ||u||        ||phi||   u_r(pole) [m]\n";
   }
+  examples::GLVisWindow window("mantle displacement (Heaviside load)",
+                               examples::DefaultKeys(dim));
+  examples::CsvTable table(csv_file, {"t/tau", "u_r_pole", "u_L2",
+                                      "phi_L2"});
+  table.Meta("title", "Relaxation of a self-gravitating layered model")
+      .Meta("note", "Maxwell mantle, fluid core, Heaviside surface load")
+      .Meta("xlabel", "time / mantle Maxwell time")
+      .Meta("y", "u_r_pole|u_L2,phi_L2")
+      .Meta("ylabel", "u_r at the pole [m]|L2 norms (non-dim.)");
   auto report = [&](int cycle) {
     visco.SyncFields(m);
     const double un = L2Norm(problem.Displacement());
@@ -245,6 +266,10 @@ int main(int argc, char* argv[]) {
     if (Root()) {
       std::cout << std::setw(6) << t / tau_nd << std::setw(14) << un
                 << std::setw(14) << pn << std::setw(14) << ur << "\n";
+    }
+    table.Row({t / tau_nd, ur, un, pn});
+    if (visualization) {
+      window.Send(solid, problem.Displacement());
     }
     if (paraview) {
       dc.SetCycle(cycle);
@@ -280,5 +305,6 @@ int main(int argc, char* argv[]) {
     }
     std::cout << "\n";
   }
+  table.Write();
   return 0;
 }

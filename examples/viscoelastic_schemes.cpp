@@ -41,6 +41,14 @@
 // cost at that step is reported; for the adaptive solver the tolerance is
 // tightened by factors of 2 from 0.1 until the target is met.
 //
+// Outputs: the tables on the screen; viscoelastic_schemes.csv, the
+// history error of the displacement against the number of solves for every
+// scheme and step of the first table (python3 plot_csv.py
+// viscoelastic_schemes.csv: the efficiency of each scheme at a glance --
+// lower left is better, the slope is the order); -out, the cost-to-target
+// table as JSON. No fields are shown: the beam's deformation is that of
+// viscoelasticity.cpp.
+//
 // Sample runs:
 //    ./viscoelastic_schemes
 //    ./viscoelastic_schemes -o 1 -r 2 -tf 8
@@ -89,6 +97,7 @@
 #include <vector>
 
 #include "mfemElasticity.hpp"
+#include "visualisation.hpp"
 
 using namespace std;
 using namespace mfem;
@@ -177,6 +186,7 @@ int main(int argc, char* argv[]) {
   const char* steps_arg = "1,2,4,8,16";
   const char* targets_arg = "";
   const char* out_file = "";
+  const char* csv_file = "viscoelastic_schemes.csv";
   int max_steps_per_tau = 4096;
 
   OptionsParser args(argc, argv);
@@ -212,6 +222,8 @@ int main(int argc, char* argv[]) {
                  "times off the load's nodes, or a coarse step can "
                  "sample an aliased trajectory at matching phases and "
                  "score well stroboscopically.");
+  args.AddOption(&csv_file, "-csv", "--csv",
+                 "Error against solves for plot_csv.py (\"\": none).");
   args.AddOption(&out_file, "-out", "--output",
                  "Write the cost-to-target table as JSON (with -targets).");
   args.Parse();
@@ -423,6 +435,16 @@ int main(int argc, char* argv[]) {
     }
     return e;
   };
+  examples::CsvTable curve(csv_file, {"scheme", "solves", "u_error", "error"});
+  curve.Meta("title", "Time integrators on the viscoelastic beam")
+      .Meta("note", "history error of u against cost; slope = order")
+      .Meta("x", "solves")
+      .Meta("group", "scheme")
+      .Meta("y", "u_error")
+      .Meta("xlabel", "elastic solves")
+      .Meta("ylabel", "relative u error (history)")
+      .Meta("logx", "true")
+      .Meta("logy", "true");
   auto report = [&](const std::string& name, const std::string& dt_label,
                     const Vector& m, const Vector& u,
                     const std::vector<Vector>& checks, const Cost& c) {
@@ -436,6 +458,9 @@ int main(int argc, char* argv[]) {
     cout << std::left << std::setw(14) << name << std::right << std::setw(8)
          << dt_label;
     if (finite) {
+      // The adaptive rows ("Adaptive <rtol>") make one curve.
+      curve.Row(name.substr(0, name.find(' ')),
+                {static_cast<double>(c.solves), e_u, e_m});
       cout << std::setw(11) << std::scientific << std::setprecision(2) << e_m
            << std::setw(11) << e_u;
     } else {
@@ -620,5 +645,6 @@ int main(int argc, char* argv[]) {
       cout << "Wrote " << out_file << "\n";
     }
   }
+  curve.Write();
   return 0;
 }

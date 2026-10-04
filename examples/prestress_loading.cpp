@@ -43,6 +43,13 @@
 //
 // One source serves the serial and the parallel build.
 //
+// Outputs: the table on the screen; prestress_loading.csv, the three
+// relative measures against e (python3 plot_csv.py prestress_loading.csv);
+// with -vis (the default), for the largest ellipticity run, GLVis windows
+// of |dev S_e| (the deviatoric part the approximation drops) and of
+// u_full - u_hydro (what dropping it costs), drawn on the PHYSICAL
+// ellipse: a copy of the reference body moved by the ellipse map.
+//
 // Sample runs (with mpirun -np N in front in a parallel build):
 //    ./prestress_loading
 //    ./prestress_loading -G 0.2 -o 3
@@ -54,9 +61,11 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "mfemElasticity.hpp"
+#include "visualisation.hpp"
 
 using namespace mfem;
 using namespace mfemElasticity;
@@ -207,6 +216,32 @@ double L2Norm(const GridFunction& u) {
   return const_cast<GridFunction&>(u).ComputeL2Error(z);
 }
 
+// |dev S| pointwise (Frobenius), for plotting.
+class DeviatoricNormCoefficient : public Coefficient {
+ public:
+  explicit DeviatoricNormCoefficient(MatrixCoefficient& S) : S_(S) {}
+  real_t Eval(ElementTransformation& T, const IntegrationPoint& ip) override {
+    S_.Eval(M_, T, ip);
+    const int d = M_.Height();
+    real_t tr = 0.0;
+    for (int i = 0; i < d; i++) {
+      tr += M_(i, i);
+    }
+    real_t n2 = 0.0;
+    for (int i = 0; i < d; i++) {
+      for (int j = 0; j < d; j++) {
+        const real_t v = M_(i, j) - (i == j ? tr / d : 0.0);
+        n2 += v * v;
+      }
+    }
+    return std::sqrt(n2);
+  }
+
+ private:
+  MatrixCoefficient& S_;
+  DenseMatrix M_;
+};
+
 void StressNorms(MatrixCoefficient& S, Mesh& mesh, int order, double& full,
                  double& dev) {
   const int dim = mesh.Dimension();
@@ -248,6 +283,8 @@ int main(int argc, char* argv[]) {
   const char* mesh_file = "../data/elastogravity_2d_wide.msh";
   int order = 2;
   double single_e = -1.0;
+  bool visualization = true;
+  const char* csv_file = "prestress_loading.csv";
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file to use (2-D).");
@@ -257,6 +294,11 @@ int main(int argc, char* argv[]) {
   args.AddOption(&Sigma0, "-s", "--sigma", "Surface load amplitude.");
   args.AddOption(&single_e, "-e", "--ellipticity",
                  "Run a single ellipticity instead of the sweep.");
+  args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                 "--no-visualization",
+                 "Show |dev S_e| and the response difference in GLVis.");
+  args.AddOption(&csv_file, "-csv", "--csv",
+                 "Table of the sweep for plot_csv.py (\"\": none).");
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
@@ -302,6 +344,19 @@ int main(int argc, char* argv[]) {
   } else {
     sweep = {0.005, 0.02, 0.05, 0.1, 0.2, 0.3};
   }
+
+  examples::CsvTable table(csv_file, {"e", "dev_ratio", "du_rel", "dzeta_rel"});
+  table.Meta("title", "Pre-stress in loading: full vs quasi-hydrostatic")
+      .Meta("note", "homogeneous ellipse, G = " + std::to_string(G).substr(0, 5))
+      .Meta("xlabel", "ellipticity e")
+      .Meta("ylabel", "relative size")
+      .Meta("logx", "true")
+      .Meta("logy", "true");
+  // The last (largest) ellipticity's fields, for GLVis.
+  L2_FECollection fec_l2(order, dim);
+  SpaceType fes_dev(&body, &fec_l2);
+  FieldType dev_field(&fes_dev), du_field(&fes_u);
+  double shown_e = -1.0;
 
   if (Root()) {
     std::cout << "pre-stress in loading on the homogeneous ellipse "
@@ -423,6 +478,13 @@ int main(int argc, char* argv[]) {
     const double dz_rel =
         MeanFreeNorm(dz, mesh, order) / MeanFreeNorm(zA, mesh, order);
 
+    table.Row({e, dev_n / full_n, du_rel, dz_rel});
+    if (visualization) {
+      DeviatoricNormCoefficient dev_c(S_full);
+      dev_field.ProjectCoefficient(dev_c);
+      du_field = du;
+      shown_e = e;
+    }
     if (Root()) {
       std::cout << std::setw(7) << std::setprecision(3) << e << "   "
                 << std::setw(10) << dev_n / full_n << "   " << std::setw(10)
@@ -435,6 +497,25 @@ int main(int argc, char* argv[]) {
     std::cout << "\n(the difference rows scale with e and with p/mu: the "
                  "quasi-hydrostatic\napproximation is safe when both are "
                  "small, and only then)\n";
+  }
+  table.Write();
+  if (visualization && shown_e >= 0.0) {
+    // The physical ellipse: a copy of the reference body moved by the
+    // linear ellipse map (exact on the body). The fields are referential
+    // (functions of the reference point), so they go across unchanged.
+    MeshType ellipse(body);
+    const double a = 1.0 + shown_e;
+    VectorFunctionCoefficient map(dim, [a](const Vector& x, Vector& y) {
+      y.SetSize(2);
+      y(0) = a * x(0);
+      y(1) = x(1) / a;
+    });
+    ellipse.Transform(map);
+    const std::string tag = " (e = " + std::to_string(shown_e).substr(0, 5) + ")";
+    examples::GLVisWindow("|dev S_e|" + tag, examples::DefaultKeys(dim))
+        .Send(ellipse, dev_field);
+    examples::GLVisWindow("u_full - u_hydro" + tag, examples::DefaultKeys(dim))
+        .Send(ellipse, du_field);
   }
   return 0;
 }

@@ -47,6 +47,11 @@
 // robustness (MINRES), fluid physics beyond the barotropic gauge (slip),
 // mapped/aspherical generality (referential family).
 //
+// With -vis (the default) GLVis shows the mantle displacement of the first
+// architecture and, beside it, the DIFFERENCE field of the architecture
+// that agrees least (rigid modes projected out): where the formulations
+// part company, typically at the core-mantle boundary.
+//
 // One source serves the serial and the parallel build.
 //
 // Sample runs (with mpirun -np N in front in a parallel build):
@@ -65,6 +70,7 @@
 #include <vector>
 
 #include "mfemElasticity.hpp"
+#include "visualisation.hpp"
 
 using namespace mfem;
 using namespace mfemElasticity;
@@ -75,11 +81,13 @@ namespace {
 using MeshType = ParMesh;
 using SubMeshType = ParSubMesh;
 using SpaceType = ParFiniteElementSpace;
+using FieldType = ParGridFunction;
 bool Root() { return Mpi::Root(); }
 #else
 using MeshType = Mesh;
 using SubMeshType = SubMesh;
 using SpaceType = FiniteElementSpace;
+using FieldType = GridFunction;
 bool Root() { return true; }
 #endif
 
@@ -162,6 +170,7 @@ int main(int argc, char* argv[]) {
   int order = 2;
   bool with_slip = true;
   double rel_tol = 1e-10;
+  bool visualization = true;
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh",
@@ -170,6 +179,9 @@ int main(int argc, char* argv[]) {
   args.AddOption(&rel_tol, "-rt", "--rel-tol", "Relative solver tolerance.");
   args.AddOption(&with_slip, "-slip", "--slip", "-no-slip", "--no-slip",
                  "Run the slipping-interface architectures as well.");
+  args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                 "--no-visualization",
+                 "Show the solution and the largest disagreement in GLVis.");
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
@@ -216,7 +228,12 @@ int main(int argc, char* argv[]) {
 
   std::vector<Entry> table;
   auto rigid_proj = MakeRigidModeProjector(fes_s);
-  std::unique_ptr<GridFunction> reference;  // mantle displacement of run 1
+  // FieldType, not GridFunction: a plain GridFunction copy of a parallel
+  // field computes rank-local norms.
+  std::unique_ptr<FieldType> reference;  // mantle displacement of run 1
+  std::unique_ptr<FieldType> worst;      // largest difference from it
+  std::string worst_name;
+  double worst_difference = 0.0;
 
   // The mantle part of a solution, on the solid space.
   auto on_mantle = [&](const GridFunction& u) {
@@ -257,12 +274,17 @@ int main(int argc, char* argv[]) {
       reference = std::move(mantle);
       e.difference = 0.0;
     } else {
-      GridFunction d(*mantle);
+      FieldType d(*mantle);
       d -= *reference;
       rigid_proj->Project(d);
-      GridFunction ref(*reference);
+      FieldType ref(*reference);
       rigid_proj->Project(ref);
       e.difference = L2Norm(d) / L2Norm(ref);
+      if (!worst || e.difference > worst_difference) {
+        worst = std::make_unique<FieldType>(d);
+        worst_name = name;
+        worst_difference = e.difference;
+      }
     }
     table.push_back(e);
     if (Root()) {
@@ -404,6 +426,17 @@ int main(int argc, char* argv[]) {
                  "discretisations; the costs differ by their structure: "
                  "nested solves (Schur), iteration counts (MINRES), gauge "
                  "refinements, and full solves per AL iteration (slip).\n";
+  }
+  if (visualization && reference) {
+    examples::GLVisWindow("mantle displacement: " + table[0].name,
+                          examples::DefaultKeys(dim))
+        .Send(solid, *reference);
+    if (worst) {
+      examples::GLVisWindow("difference, " + worst_name + " - " +
+                                table[0].name + " (rigid modes removed)",
+                            examples::DefaultKeys(dim))
+          .Send(solid, *worst);
+    }
   }
   return 0;
 }

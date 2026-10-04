@@ -42,6 +42,11 @@
 // are only the mesh partitioning, the total-mass reduction and the
 // guarded printing.
 //
+// Outputs: the table on the screen; love_numbers.csv, the Love numbers by
+// degree (with the incompressible sphere's in 3-D; python3 plot_csv.py
+// love_numbers.csv); with -vis, the displacement and the potential
+// perturbation of the load solve at degree -vl in GLVis.
+//
 // Sample runs (with mpirun -np N in front in a parallel build):
 //    ./love_numbers -o 2 -lmax 6
 //    ./love_numbers -m ../data/coupled_poisson.msh -o 2 -lmax 4 -kappa 100
@@ -51,8 +56,11 @@
 #include <iostream>
 #include <memory>
 #include <numbers>
+#include <string>
+#include <vector>
 
 #include "mfemElasticity.hpp"
+#include "visualisation.hpp"
 
 using namespace mfem;
 using namespace mfemElasticity;
@@ -134,6 +142,9 @@ int main(int argc, char* argv[]) {
   int lmin = 2, lmax = 6;
   real_t G = 0.05, rho = 1.0, kappa = 100.0, mu = 0.5, rel_tol = 1e-10;
   bool analytic = true;
+  bool visualization = true;
+  int vis_degree = 2;
+  const char* csv_file = "love_numbers.csv";
 
   OptionsParser args(argc, argv);
   args.AddOption(&mesh_file, "-m", "--mesh", "Mesh file (ball in a ball).");
@@ -149,6 +160,12 @@ int main(int argc, char* argv[]) {
   args.AddOption(&analytic, "-analytic", "--analytic", "-no-analytic",
                  "--no-analytic",
                  "Compare with the incompressible homogeneous sphere (3-D).");
+  args.AddOption(&visualization, "-vis", "--visualization", "-no-vis",
+                 "--no-visualization", "Show one degree's load solution in GLVis.");
+  args.AddOption(&vis_degree, "-vl", "--vis-degree",
+                 "The degree whose load solution is shown.");
+  args.AddOption(&csv_file, "-csv", "--csv",
+                 "Table of the Love numbers for plot_csv.py (\"\": none).");
   args.Parse();
   if (!args.Good()) {
     if (Root()) {
@@ -235,6 +252,20 @@ int main(int argc, char* argv[]) {
     std::cout << std::setprecision(6);
   }
   GridFunction phi_direct(&problem.PotentialSpaceOnBody());
+  std::vector<std::string> columns{"l", "h'", "k'", "h", "k"};
+  if (compare) {
+    columns.insert(columns.end(), {"h'_exact", "k'_exact", "h_exact", "k_exact"});
+  }
+  examples::CsvTable table(csv_file, columns);
+  table.Meta("title", std::string("Love numbers of a homogeneous ") +
+                          (dim == 2 ? "disc" : "sphere"))
+      .Meta("x", "l")
+      .Meta("xlabel", "degree l")
+      .Meta("y", "h',k'|h,k")
+      .Meta("ylabel", "load|tidal");
+  if (compare) {
+    table.Meta("note", "dashed: incompressible sphere (Wu & Peltier 1982)");
+  }
   if (Root()) {
     std::cout << "\n  l         h'          k'           h           k"
               << "   spurious   phi_s";
@@ -249,6 +280,14 @@ int main(int argc, char* argv[]) {
            phi_ratio = NAN;
     {
       auto [cu, cphi] = solve(i, true);
+      if (visualization && l == vis_degree) {
+        const std::string tag = " (load, degree " + std::to_string(l) + ")";
+        examples::GLVisWindow("displacement" + tag, examples::DefaultKeys(dim))
+            .Send(body, problem.Displacement());
+        examples::GLVisWindow("potential perturbation" + tag,
+                              examples::DefaultKeys(dim))
+            .Send(parent, problem.Potential());
+      }
       problem.SolveLoadPotential(phi_direct);
       Vector cdirect;
       scalar.Coefficients(phi_direct, cdirect);
@@ -265,6 +304,14 @@ int main(int argc, char* argv[]) {
       h = -g * cu[i];
       k = cphi[i];
       spurious = std::max({spurious, Spurious(cu, i), Spurious(cphi, i)});
+    }
+    if (l >= 2) {
+      std::vector<double> row{static_cast<double>(l), h_load, k_load, h, k};
+      if (compare) {
+        const auto ref = IncompressibleSphere(l, mu, rho, g, a);
+        row.insert(row.end(), {ref.h_load, ref.k_load, ref.h, ref.k});
+      }
+      table.Row(row);
     }
     if (Root()) {
       std::cout << std::setw(3) << l << std::setw(12) << h_load
@@ -284,5 +331,6 @@ int main(int argc, char* argv[]) {
       std::cout << "\n";
     }
   }
+  table.Write();
   return 0;
 }

@@ -17,11 +17,14 @@ set(EXAMPLES
     prestress_loading           # does the deviatoric pre-stress matter for loading? (ellipse sweep)
     referential_elastogravity   # general referential problem vs the Eulerian one (self-benchmark)
     viscoelasticity             # ViscoelasticOperator driver
-    viscoelastic_loading        # GIA-style layered load/rebound driver
+    viscoelastic_column         # two-layer Maxwell column vs exact: interface on a face or inside an element
+    viscoelastic_loading        # load on, load off: layered Maxwell box, no gravity
     viscoelastic_schemes        # cost/accuracy table of the time integrators
     self_gravitating_relaxation # Maxwell mantle + fluid core under a Heaviside load
+    lateral_viscosity           # self-gravitating disc relaxing faster on one side: transient asymmetry
     self_gravitating_solvers    # one problem, every linear-solver architecture: cost/agreement table
     love_numbers                # load and tidal Love numbers by degree, one solve each
+    viscoelastic_love_numbers   # load Love-number histories of a Maxwell sphere vs the closed form
     anisotropic_elasticity      # ElasticTensorIntegrator, radial TI
 )
 
@@ -30,3 +33,7 @@ foreach(ex IN LISTS EXAMPLES)
     target_link_libraries(${ex} mfemElasticity)
 endforeach()
 
+
+# The examples write their curves as CSV tables (visualisation.hpp) into
+# the directory they run in; the plotting script sits beside them.
+configure_file(plot_csv.py ${CMAKE_CURRENT_BINARY_DIR}/plot_csv.py COPYONLY)
