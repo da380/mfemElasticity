@@ -1,16 +1,23 @@
 """Run the Love-number benchmark over element sizes and orders.
 
 For each model named (`all` for every one), each element size `--h` is a case (made with make_case.py
-if its directory does not hold one) and each order `--order` a run of
+if its directory does not hold one) and each order `--order`, method
+`--method`, Eulerian solver `--solver` and CMB treatment `--cmb` a run of
 love_benchmark on it under MPI, and with `--field` a run of field_benchmark
-as well, which compares the response to a cap load as fields:
+as well (Eulerian methods only), which compares the response to a cap load
+as fields:
 
   <out>/<model>/h<h>/                 the case: mesh, fields, reference
-  <out>/<model>/h<h>/results_o<p>.json
-  <out>/<model>/h<h>/log_o<p>.txt
-  <out>/<model>/h<h>/field_o<p>.json      with --field
-  <out>/<model>/h<h>/paraview_o<p>/       with --field --paraview
+  <out>/<model>/h<h>/results_o<p><s>.json
+  <out>/<model>/h<h>/log_o<p><s>.txt
+  <out>/<model>/h<h>/field_o<p><s>.json   with --field
+  <out>/<model>/h<h>/paraview_o<p><s>/    with --field --paraview
   <out>/<model>/h<h>/parts_<np>/          with --partition
+
+The suffix <s> is empty for the Dahlen method with the full CMB
+treatment and block MINRES; otherwise it names the method, the CMB
+treatment, the map amplitude (_map<A>), the Schur solver (_schur) and,
+for the Love-number results, --combined, in that order.
 
 A run whose results file exists is skipped unless `--force` is given, and a
 case that exists is kept unless `--remake` is, so a sweep can be extended or
@@ -34,56 +41,22 @@ repository; the launcher is then `--mpiexec`, else the environment's
 MPIEXEC, else `mpiexec`, and must belong to the MPI of the drivers.
 `--launcher-args` are passed to it before the program (binding, host
 files). `--dry-run` prints the commands without running anything.
+`--combined` runs love_benchmark with one solve per forcing for all the
+degrees (README.md), its results carrying the suffix `_combined`.
 """
 from __future__ import annotations
 
 import argparse
 import os
 import shlex
-import subprocess
 import sys
-import time
 from pathlib import Path
 
-import models
-
 HERE = Path(__file__).resolve().parent
-REPOSITORY = HERE.parent.parent
+sys.path.insert(0, str(HERE.parent / "common"))
 
-
-def find_programs(given: Path | None) -> Path:
-    """The directory holding the drivers: the one given, or that of a
-    build tree of the repository."""
-    if given is not None:
-        return given.resolve()
-    for build in sorted(REPOSITORY.glob("build*")):
-        candidate = build / "benchmarks" / "love_numbers"
-        if (candidate / "love_benchmark").exists():
-            return candidate
-    raise SystemExit("love_benchmark not found in a build tree of the "
-                     "repository (configure with -DUSE_MPI=ON "
-                     "-DBUILD_BENCHMARKS=ON), and no --programs given")
-
-
-def run(command: list[str], *, log: Path | None, dry_run: bool) -> bool:
-    """Run a command, its output to `log` and the terminal; True on
-    success."""
-    print("  $ " + shlex.join(command), flush=True)
-    if dry_run:
-        return True
-    start = time.time()
-    with subprocess.Popen(command, stdout=subprocess.PIPE,
-                          stderr=subprocess.STDOUT, text=True) as process:
-        lines = []
-        for line in process.stdout:
-            lines.append(line)
-            sys.stdout.write("    " + line)
-        process.wait()
-    if log is not None:
-        log.write_text("$ " + shlex.join(command) + "\n" + "".join(lines))
-    print(f"  ({time.time() - start:.1f} s, exit {process.returncode})",
-          flush=True)
-    return process.returncode == 0
+import models  # noqa: E402
+from drivers import find_programs, run  # noqa: E402
 
 
 def main() -> None:
@@ -103,8 +76,46 @@ def main() -> None:
     p.add_argument("--lmin", type=int, default=0, help="lowest degree")
     p.add_argument("--dtn-degree", type=int, default=16)
     p.add_argument("--rel-tol", type=float, default=1e-10)
-    p.add_argument("--solver", type=int, default=1, choices=(0, 1),
-                   help="0: Schur-complement CG, 1: block MINRES")
+    p.add_argument("--method", nargs="+",
+                   choices=("dahlen", "gauged", "referential", "slip",
+                            "slip_broken"),
+                   default=["dahlen"],
+                   help="the formulations to run, one results file each: "
+                        "dahlen (Eulerian, fluid eliminated), gauged "
+                        "(Eulerian, gauged fluid), referential (welded "
+                        "gauged referential), slip and slip_broken (the "
+                        "slipping interface, single-valued or broken "
+                        "zeta); non-dahlen results carry the method as a "
+                        "suffix")
+    p.add_argument("--fluid", choices=("dahlen", "gauged"), default=None,
+                   help="deprecated alias: --fluid gauged adds gauged to "
+                        "--method")
+    p.add_argument("--map", type=float, default=0.0, metavar="A",
+                   help="amplitude of the interior relabelling: the 3-D "
+                        "relabelled benchmark (relabelling.hpp) — the same "
+                        "spherical physics described from laterally mapped "
+                        "coordinates, methods referential and slip_broken "
+                        "only; results "
+                        "carry a _map<A> suffix")
+    p.add_argument("--cmb", nargs="+",
+                   choices=("full", "nomass", "uniform", "winkler"),
+                   default=["full"],
+                   help="Dahlen-path fluid-interface treatments to run, "
+                        "one results file each (doc/self_gravitation.md); "
+                        "non-full results carry the choice as a suffix, "
+                        "and cmb_report.py compares their cost and "
+                        "accuracy")
+    p.add_argument("--solver", type=int, nargs="+", default=[1],
+                   choices=(0, 1),
+                   help="Eulerian linear solvers to run, one results file "
+                        "each: 0 Schur-complement CG (suffix _schur), 1 "
+                        "block MINRES; the referential methods have their "
+                        "own solver and ignore the choice")
+    p.add_argument("--combined", action="store_true",
+                   help="solve the loads of all the degrees together, and "
+                        "the tides, one solve each (love_benchmark "
+                        "-combined); the results carry the suffix "
+                        "_combined")
     p.add_argument("--buffer", type=float, default=0.2,
                    help="thickness of the buffer shell over the radius")
     p.add_argument("--angular", type=float, default=0.3,
@@ -152,7 +163,8 @@ def main() -> None:
         case = args.out / name / f"h{h:g}"
         print(f"{name}, h = {h:g}: {case}", flush=True)
         if args.remake or not (case / "case.json").exists():
-            ok = run([sys.executable, str(HERE / "make_case.py"), name,
+            ok = run([sys.executable,
+                      str(HERE.parent / "common" / "make_case.py"), name,
                       "--h", f"{h:g}", "--buffer", f"{args.buffer:g}",
                       "--angular", f"{args.angular:g}",
                       "--thin", f"{args.thin:g}",
@@ -170,24 +182,53 @@ def main() -> None:
             if not ok:
                 failures.append(f"{case}: partition_case")
                 continue
-        for order in args.order:
+        methods = list(args.method)
+        if args.fluid == "gauged" and "gauged" not in methods:
+            methods.append("gauged")
+        for order, method, solver, cmb in ((o, m, s, c) for o in args.order
+                                           for m in methods
+                                           for s in args.solver
+                                           for c in args.cmb):
+            if method not in ("dahlen", "gauged") and solver != args.solver[0]:
+                continue  # the referential solvers ignore the choice
+            if method != "dahlen" and cmb != args.cmb[0]:
+                continue  # the treatments are the Dahlen path's: one
+                # run of the other methods per sweep, without them
+            mapped = args.map != 0.0
+            if mapped and method not in ("referential", "slip_broken"):
+                continue  # the mapped benchmark runs the mapped methods
+            suffix = "" if method == "dahlen" else f"_{method}"
+            if cmb != "full" and method == "dahlen":
+                suffix += f"_{cmb}"
+            if mapped:
+                suffix += f"_map{args.map:g}"
+            if solver == 0:
+                suffix += "_schur"
+            love_suffix = suffix + ("_combined" if args.combined else "")
             common = ["-c", str(case / "case.json"), "-o", str(order),
-                      "-rt", f"{args.rel_tol:g}", "-s", str(args.solver),
+                      "-rt", f"{args.rel_tol:g}", "-s", str(solver),
+                      "-method", method,
+                      *(["-map", f"{args.map:g}"] if mapped else []),
+                      *(["-cmb", cmb]
+                        if cmb != "full" and method == "dahlen"
+                        else []),
                       *shlex.split(args.program_args)]
             jobs = []
             if not args.field_only:
                 jobs.append((
-                    case / f"results_o{order}.json",
-                    case / f"log_o{order}.txt",
+                    case / f"results_o{order}{love_suffix}.json",
+                    case / f"log_o{order}{love_suffix}.txt",
                     [str(programs / "love_benchmark"), *common,
                      "-lmin", str(args.lmin), "-lmax", str(args.lmax),
-                     "-deg", str(max(args.dtn_degree, args.lmax))]))
-            if args.field or args.field_only:
-                extra = (["-pv", str(case / f"paraview_o{order}")]
+                     "-deg", str(max(args.dtn_degree, args.lmax)),
+                     *(["-combined"] if args.combined else [])]))
+            if (args.field or args.field_only) and method in ("dahlen",
+                                                              "gauged"):
+                extra = (["-pv", str(case / f"paraview_o{order}{suffix}")]
                          if args.paraview else [])
                 jobs.append((
-                    case / f"field_o{order}.json",
-                    case / f"field_log_o{order}.txt",
+                    case / f"field_o{order}{suffix}.json",
+                    case / f"field_log_o{order}{suffix}.txt",
                     [str(programs / "field_benchmark"), *common,
                      "-lmax", str(args.field_lmax),
                      "-deg", str(max(args.dtn_degree, args.field_lmax)),

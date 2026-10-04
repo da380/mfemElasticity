@@ -5,8 +5,8 @@
  * and the units and constants they are in.
  *
  * A mesh file carries numbered attributes and nothing else. The manifest is
- * a JSON file of the same basename (schema `planetmodel.mesh.manifest/5`,
- * with /4 still read) listing the layers (element attributes 1..N from the
+ * a JSON file of the same basename (schema `planetmodel.mesh.manifest/5`;
+ * /4 is also read) listing the layers (element attributes 1..N from the
  * centre, the shells outside the body last) and the interfaces (boundary
  * attributes 1..M in the same order) with their names and radii, the fields
  * written as GridFunctions beside the mesh, the scales of the model's units
@@ -18,10 +18,10 @@
  * Schema 5 carries what only the exported model can say, null where no
  * model has said: `layers[].fluid`, `interfaces[].kind`, the one-sided
  * `interfaces[].values` of the exported scalar radial fields, and
- * `fields[].radial_degree`. Which layers are fluid is read from
- * `layers[].fluid`; where that is null (or the schema is /4) the list of
- * attributes `meta.fluid_layers` is the fallback, and a manifest with
- * neither has no fluid layers.
+ * `fields[].radial_degree`; schema /4 lacks them. A layer is fluid when
+ * its `layers[].fluid` is true or its attribute is listed in
+ * `meta.fluid_layers` (which must name layers of the body); a manifest
+ * with neither has no fluid layers.
  */
 
 #pragma once

@@ -16,6 +16,8 @@
     matrices by the block rotation.
   - 2-D/3-D consistency: a plane-strain 2-D problem and an extruded 3-D
     slab give the same in-plane energy per unit thickness.
+  - Pull-back identity: the mapped integrator on the reference mesh equals
+    the standard integrator on the mapped mesh to machine precision.
 */
 
 namespace {
@@ -285,6 +287,93 @@ TEST(ElasticTensorPlaneStrain, SlabEnergy) {
   const double e2 = energy(fes2, ti2, u2);
   const double e3 = energy(fes3, ti3, u3);
   EXPECT_NEAR(e3 / h, e2, 1e-12 * std::abs(e2));
+}
+
+// Pull-back identity (doc/mappings.md, "The discrete change-of-variables
+// identity"): with the mapping
+// interpolated on the mesh's geometric space and one integration rule on
+// both sides, the mapped integrator on the reference mesh — referential
+// tensor, gshape -> gshape F^{-1}, w -> J w, the pulled-back 45-component
+// tensor never formed — equals the standard integrator assembled on the
+// mapped mesh, for a spatially varying isotropic tensor and for a
+// constant TI tensor (whose fixed physical axis is untouched by the
+// relabelling), at every order and element type.
+TEST(ElasticTensorIntegratorMapped, MatchesMappedMesh) {
+  for (int dim = 2; dim <= 3; dim++) {
+    for (int elementType = 0; elementType <= 1; elementType++) {
+      for (int order = 1; order <= 3; order++) {
+        auto mesh = SmallMesh(dim, elementType);
+        mesh.SetCurvature(order);
+        H1_FECollection fec(order, dim);
+        FiniteElementSpace fes(&mesh, &fec, dim);
+
+        // A smooth non-polynomial map with exact gradient:
+        // xi_i = x_i + c sin(pi x_j), j = (i + 1) mod dim.
+        const double c = 0.05;
+        CallableDiffeomorphism xi(
+            dim,
+            [c, dim](const Vector& x, Vector& y) {
+              for (int i = 0; i < dim; i++) {
+                y(i) = x(i) + c * std::sin(kPi * x((i + 1) % dim));
+              }
+            },
+            [c, dim](const Vector& x, DenseMatrix& F) {
+              F = 0.0;
+              for (int i = 0; i < dim; i++) {
+                F(i, i) = 1.0;
+                F(i, (i + 1) % dim) =
+                    c * kPi * std::cos(kPi * x((i + 1) % dim));
+              }
+            });
+        auto xi_h = Interpolate(xi, mesh);
+        auto mapped = MappedMesh(mesh, xi);
+        FiniteElementSpace fes_mapped(&mapped, &fec, dim);
+
+        const IntegrationRule& ir =
+            IntRules.Get(mesh.GetTypicalElementGeometry(), 2 * order + 3);
+
+        auto assemble = [](FiniteElementSpace& s, BilinearFormIntegrator* bi) {
+          BilinearForm a(&s);
+          a.AddDomainIntegrator(bi);
+          a.Assemble();
+          a.Finalize();
+          return std::make_unique<SparseMatrix>(a.SpMat());
+        };
+
+        // Isotropic moduli varying with physical position, expressed
+        // referentially through the pull-back.
+        auto lam_fn = [dim](const Vector& x) {
+          double s = 0.0;
+          for (int i = 0; i < dim; i++) s += (i + 1) * x(i);
+          return 2.0 + std::sin(s);
+        };
+        auto mu_fn = [dim](const Vector& x) {
+          return 1.0 + 0.5 * std::cos(x(0) - x(dim - 1));
+        };
+        FunctionCoefficient lam_phys(lam_fn), mu_phys(mu_fn);
+        TransformedFunctionCoefficient lam_ref(xi_h, lam_fn),
+            mu_ref(xi_h, mu_fn);
+        IsotropicElasticTensorCoefficient C_phys(dim, lam_phys, mu_phys);
+        IsotropicElasticTensorCoefficient C_ref(dim, lam_ref, mu_ref);
+
+        auto A_ref = assemble(fes, new ElasticTensorIntegrator(C_ref, xi_h, &ir));
+        auto A_map = assemble(fes_mapped, new ElasticTensorIntegrator(C_phys, &ir));
+        EXPECT_LT(::MaxDiff(*A_ref, *A_map), 1e-12 * A_map->MaxNorm());
+
+        // A constant TI tensor with a fixed axis: the same coefficient
+        // serves both sides.
+        Vector axis(dim);
+        axis = 1.0;
+        VectorConstantCoefficient axis_c(axis);
+        ConstantCoefficient tiA(4.0), tiC(5.0), tiF(1.2), tiL(1.1), tiN(1.0);
+        TransverselyIsotropicElasticTensorCoefficient Cti(dim, tiA, tiC, tiF,
+                                                          tiL, tiN, axis_c);
+        auto B_ref = assemble(fes, new ElasticTensorIntegrator(Cti, xi_h, &ir));
+        auto B_map = assemble(fes_mapped, new ElasticTensorIntegrator(Cti, &ir));
+        EXPECT_LT(::MaxDiff(*B_ref, *B_map), 1e-12 * B_map->MaxNorm());
+      }
+    }
+  }
 }
 
 }  // namespace

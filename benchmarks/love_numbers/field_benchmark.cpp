@@ -18,12 +18,19 @@
 // The solution is known up to a rigid translation when the load has a part
 // of degree one; it is taken to the frame of the centre of mass of the body
 // and its load, that of the reference, by the translation that removes the
-// degree-one part of the potential on the surface. With a fluid layer degree
-// zero is not comparable (README.md) and lmin is one.
+// degree-one part of the potential on the surface. With a fluid layer lmin
+// defaults to one: Dahlen's fluid differs from the reference at degree zero
+// by design (doc/gauged_fluid.md, "Degree 0"), and with the degrees summed
+// into one load that difference would enter every degree's fields. -lmin 0
+// includes degree zero anyway, for either method, to show it.
 //
 // Written: the relative L2 errors of u and phi, the coefficients of U, V and
 // phi on the surface beside the reference's, as JSON; and with -pv the
-// fields, the reference and their difference for ParaView.
+// fields, the reference and their difference for ParaView. The u error is
+// over the SOLID elements alone: the gauged method's displacement SubMesh
+// carries the fluid too, where the reference writes zero and the computed
+// field is a gauge representative — its norm is written separately
+// (u_fluid_norm) as a gauge diagnostic, not an error.
 //
 // Sample runs:
 //    mpiexec -np 8 ./field_benchmark -c case.json -o 3 -lmax 8
@@ -42,17 +49,37 @@ using namespace benchmark;
 
 namespace {
 
-// The L2 norm of a coefficient over the mesh of a space.
-real_t Norm(ParFiniteElementSpace& fes, Coefficient& f) {
+// The L2 norm of a coefficient over the mesh of a space (optionally
+// over the listed elements alone).
+real_t Norm(ParFiniteElementSpace& fes, Coefficient& f,
+            const Array<int>* elems = nullptr) {
   ParGridFunction zero(&fes);
   zero = 0.0;
-  return zero.ComputeL2Error(f);
+  return zero.ComputeL2Error(f, nullptr, elems);
 }
 
-real_t Norm(ParFiniteElementSpace& fes, VectorCoefficient& f) {
+real_t Norm(ParFiniteElementSpace& fes, VectorCoefficient& f,
+            const Array<int>* elems = nullptr) {
   ParGridFunction zero(&fes);
   zero = 0.0;
-  return zero.ComputeL2Error(f);
+  return zero.ComputeL2Error(f, nullptr, elems);
+}
+
+// The max of the elementwise max errors over the marked elements,
+// across ranks.
+real_t MaxErrorOver(const ParGridFunction& g, VectorCoefficient& f,
+                    const Array<int>& marker) {
+  Vector per_element(g.FESpace()->GetMesh()->GetNE());
+  g.ComputeElementMaxErrors(f, per_element);
+  real_t m = 0.0;
+  for (int e = 0; e < marker.Size(); e++) {
+    if (marker[e]) {
+      m = std::max(m, per_element[e]);
+    }
+  }
+  MPI_Allreduce(MPI_IN_PLACE, &m, 1, MPITypeMap<real_t>::mpi_type, MPI_MAX,
+                MPI_COMM_WORLD);
+  return m;
 }
 
 }  // namespace
@@ -77,7 +104,9 @@ int main(int argc, char* argv[]) {
                  "Radial solutions of the reference (default: "
                  "reference_fields.txt beside the manifest).");
   args.AddOption(&lmin, "-lmin", "--min-degree",
-                 "Lowest degree of the load (default: 0, or 1 with a fluid).");
+                 "Lowest degree of the load (default: 0, or 1 with a fluid; "
+                 "-lmin 0 with a fluid shows Dahlen's degree-zero "
+                 "difference).");
   args.AddOption(&latitude, "-lat", "--latitude",
                  "Latitude of the cap's centre, in degrees.");
   args.AddOption(&longitude, "-lon", "--longitude",
@@ -94,14 +123,15 @@ int main(int argc, char* argv[]) {
   if (root) args.PrintOptions(std::cout);
 
   Case c(options);
+  MFEM_VERIFY(c.eulerian,
+              "field_benchmark supports the Eulerian methods (dahlen, "
+              "gauged).");
   Problem& problem = *c.problem;
   const auto& basis = c.Basis();
   const int n = basis.Size();
   if (lmin < 0) {
     lmin = c.HasFluid() ? 1 : 0;
   }
-  MFEM_VERIFY(!(c.HasFluid() && lmin == 0),
-              "Degree zero is not comparable with a fluid layer.");
 
   std::string reference_path = reference_file;
   if (reference_path.empty()) {
@@ -163,15 +193,42 @@ int main(int argc, char* argv[]) {
     phi += t_phi;
   }
 
-  // The reference, and the errors.
+  // The reference, and the errors. The displacement is compared over
+  // the SOLID elements alone: for the welded treatments of the fluid
+  // (gauged) the displacement SubMesh carries the fluid layers too,
+  // where the reference writes U = V = 0 while the computed field is a
+  // genuine gauge representative — including them would score the
+  // gauge, not the solution. The fluid's own norm is reported as a
+  // gauge diagnostic instead.
+  // Element markers (ComputeL2Error's `elems` is a marker, not a list).
+  Array<int> solid_elems(c.solid->GetNE()), fluid_elems(c.solid->GetNE());
+  long long n_fluid = 0;
+  for (int e = 0; e < c.solid->GetNE(); e++) {
+    const bool is_solid =
+        c.solid_attributes.Find(c.solid->GetAttribute(e)) >= 0;
+    solid_elems[e] = is_solid ? 1 : 0;
+    fluid_elems[e] = is_solid ? 0 : 1;
+    n_fluid += is_solid ? 0 : 1;
+  }
   ReferenceDisplacement u_ref_c(reference, basis, load);
   ReferencePotential phi_ref_c(reference, basis, load);
-  const real_t u_error = u.ComputeL2Error(u_ref_c);
-  const real_t u_norm = Norm(*c.fes_u, u_ref_c);
+  const real_t u_error = u.ComputeL2Error(u_ref_c, nullptr, &solid_elems);
+  const real_t u_norm = Norm(*c.fes_u, u_ref_c, &solid_elems);
   const real_t phi_error = phi.ComputeL2Error(phi_ref_c);
   const real_t phi_norm = Norm(*c.fes_phi, phi_ref_c);
-  const real_t u_max_error = u.ComputeMaxError(u_ref_c);
+  const real_t u_max_error = MaxErrorOver(u, u_ref_c, solid_elems);
   const real_t phi_max_error = phi.ComputeMaxError(phi_ref_c);
+  real_t u_fluid_norm = 0.0;
+  {
+    MPI_Allreduce(MPI_IN_PLACE, &n_fluid, 1, MPI_LONG_LONG, MPI_SUM,
+                  MPI_COMM_WORLD);
+    if (n_fluid > 0) {
+      Vector zero_v(u.FESpace()->GetVDim());
+      zero_v = 0.0;
+      VectorConstantCoefficient zero_c(zero_v);
+      u_fluid_norm = u.ComputeL2Error(zero_c, nullptr, &fluid_elems);
+    }
+  }
 
   // The coefficients on the surface, in the same frame.
   c.Surface().radial->Coefficients(problem.Displacement(), cu);
@@ -199,8 +256,12 @@ int main(int argc, char* argv[]) {
               << " s\nTranslation to the centre-of-mass frame: "
               << translation[0] << " " << translation[1] << " "
               << translation[2] << "\n"
-              << "Relative L2 error: u " << u_error / u_norm << ", phi "
-              << phi_error / phi_norm << "\n";
+              << "Relative L2 error: u (solid) " << u_error / u_norm
+              << ", phi " << phi_error / phi_norm << "\n";
+    if (u_fluid_norm > 0.0) {
+      std::cout << "Fluid displacement norm (gauge diagnostic): "
+                << u_fluid_norm << "\n";
+    }
   }
 
   if (paraview[0] != '\0') {
@@ -267,6 +328,7 @@ int main(int argc, char* argv[]) {
        << ",\n  \"u_norm\": " << Num(u_norm) << ",\n  \"phi_norm\": "
        << Num(phi_norm) << ",\n  \"u_max_error\": " << Num(u_max_error)
        << ",\n  \"phi_max_error\": " << Num(phi_max_error)
+       << ",\n  \"u_fluid_norm\": " << Num(u_fluid_norm)
        << ",\n  \"degree\": " << List(degree) << ",\n  \"order_m\": "
        << List(order) << ",\n  \"load\": " << List(load)
        << ",\n  \"u\": " << List(cu) << ",\n  \"v\": " << List(cv)

@@ -40,8 +40,13 @@ int main(int argc, char* argv[]) {
 
   const MeshManifest manifest(manifest_file);
   Mesh mesh = manifest.LoadMesh();
+  std::vector<std::string> names(std::begin(benchmark::kFields),
+                                 std::end(benchmark::kFields));
+  if (manifest.HasField("p0")) {
+    names.push_back("p0");
+  }
   std::vector<std::unique_ptr<GridFunction>> fields;
-  for (const char* name : benchmark::kFields) {
+  for (const std::string& name : names) {
     fields.push_back(manifest.LoadField(mesh, name));
   }
 
@@ -57,7 +62,7 @@ int main(int argc, char* argv[]) {
       part.Print(os);
     }
     std::size_t k = 0;
-    for (const char* name : benchmark::kFields) {
+    for (const std::string& name : names) {
       auto fes = partitioner.ExtractFESpace(part, *fields[k]->FESpace());
       auto local = partitioner.ExtractGridFunction(part, *fields[k], *fes);
       std::ofstream os(

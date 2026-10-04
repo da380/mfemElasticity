@@ -1,5 +1,5 @@
 #include <cmath>
-#include <cstdio>
+#include <filesystem>
 #include <fstream>
 
 #include "TestCommon.hpp"
@@ -58,8 +58,7 @@ const char* const kManifest = R"({
   "schema": "planetmodel.mesh.manifest/5"
 })";
 
-// The same mesh under the previous schema, which lacks the model-derived
-// records: the fluid layers then come from meta.fluid_layers.
+// The same mesh under schema 4, which lacks the model-derived records: the fluid layers then come from meta.fluid_layers.
 const char* const kOldManifest = R"({
   "mesh": {"file": "manifest_test.mesh", "format": "mfem",
            "nodes": "reference",
@@ -82,10 +81,22 @@ const char* const kOldManifest = R"({
   "schema": "planetmodel.mesh.manifest/4"
 })";
 
+// The manifest, mesh and field of a test, in a directory of its own (named
+// after the test): ctest runs the tests as concurrent processes in one
+// working directory, and shared file names let one test's clean-up delete
+// the files another is reading. The manifest names its mesh and field
+// relative to its own directory, so the names inside stay fixed.
 struct Files {
-  std::string manifest = "manifest_test.json";
-  std::string old_manifest = "manifest_test_v4.json";
+  std::filesystem::path dir;
+  std::string manifest, old_manifest;
   Files() {
+    const auto* info = testing::UnitTest::GetInstance()->current_test_info();
+    dir = std::string("manifest_test_") + info->test_suite_name() + "_" +
+          info->name();
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directory(dir);
+    manifest = (dir / "manifest_test.json").string();
+    old_manifest = (dir / "manifest_test_v4.json").string();
     Mesh mesh = Mesh::MakeCartesian3D(2, 2, 2, Element::TETRAHEDRON);
     L2_FECollection fec(1, 3);
     FiniteElementSpace fes(&mesh, &fec);
@@ -93,21 +104,16 @@ struct Files {
     for (int i = 0; i < rho.Size(); i++) {
       rho[i] = 1.0 + 0.5 * i;
     }
-    std::ofstream mesh_out("manifest_test.mesh");
+    std::ofstream mesh_out(dir / "manifest_test.mesh");
     mesh_out.precision(16);
     mesh.Print(mesh_out);
-    std::ofstream rho_out("manifest_test.rho.gf");
+    std::ofstream rho_out(dir / "manifest_test.rho.gf");
     rho_out.precision(16);
     rho.Save(rho_out);
     std::ofstream(manifest) << kManifest;
     std::ofstream(old_manifest) << kOldManifest;
   }
-  ~Files() {
-    std::remove("manifest_test.mesh");
-    std::remove("manifest_test.rho.gf");
-    std::remove(manifest.c_str());
-    std::remove(old_manifest.c_str());
-  }
+  ~Files() { std::filesystem::remove_all(dir); }
 };
 
 void ExpectArray(const Array<int>& a, std::initializer_list<int> want) {

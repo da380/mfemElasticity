@@ -1,14 +1,16 @@
 /*
   Parallel tests for ViscoelasticOperator on ParFiniteElementSpaces. Run
-  with 1, 2 and 4 ranks; a standalone MPI program returning the number of
-  failed checks.
+  with 1, 2 and 4 ranks; a standalone MPI program that exits non-zero if
+  any check fails.
 
   The checks are the partition-independent analytic ones of the serial
   test: Maxwell creep under constant uniaxial stress (exponential
   trapezoid, exact) and relaxation under a prescribed uniform strain
   (exponential Euler and backward Euler, exact at their discrete levels),
-  and the same creep through the anisotropic rheology (full symmetric
-  internal variables, tensor branch moduli) with an isotropic tensor.
+  the same creep through the anisotropic rheology (full symmetric
+  internal variables, tensor branch moduli) with an isotropic tensor, and
+  power-law creep under constant stress (constant relaxation time, so the
+  linear creep formula at that time is exact).
 */
 
 #include <mpi.h>

@@ -3,7 +3,8 @@
  * @brief Singular symmetric systems: the rigid-body modes as
  * VectorCoefficients, an orthonormal basis of a (near-)null space
  * (NullSpaceProjector, MakeRigidModeProjector()), and the projected operator
- * and solver built on it.
+ * and solver built on it. The rationale (which inner product projects, which
+ * gauges, why the projected system is solved) is in doc/null_space.md.
  */
 
 #pragma once
@@ -12,6 +13,7 @@
 #include <vector>
 
 #include "mfem.hpp"
+#include "mfemElasticity/mappings.hpp"
 
 namespace mfemElasticity {
 
@@ -122,6 +124,40 @@ class RigidRotation : public mfem::VectorCoefficient {
 };
 
 /**
+ * @brief The rigid rotation of the *mapped* positions, @f$W\varphi(x)@f$,
+ * about the axis @p component (2-D: the single in-plane rotation, component
+ * 2): the strain-free rotational mode of a problem posed on a fixed
+ * reference body with equilibrium mapping @f$\varphi@f$. Reduces to
+ * RigidRotation at the identity.
+ */
+class MappedRotation : public mfem::VectorCoefficient {
+ public:
+  MappedRotation(Diffeomorphism &map, int component)
+      : mfem::VectorCoefficient(map.GetVDim()), map_(&map), c_(component) {}
+
+  void Eval(mfem::Vector &V, mfem::ElementTransformation &T,
+            const mfem::IntegrationPoint &ip) override {
+    map_->Eval(y_, T, ip);
+    V.SetSize(vdim);
+    if (vdim == 2) {
+      V(0) = -y_(1);
+      V(1) = y_(0);
+    } else {
+      // V = e_c x y: V_a = -y_b, V_b = y_a with (c, a, b) cyclic.
+      const int a = (c_ + 1) % 3, b = (c_ + 2) % 3;
+      V(c_) = 0.0;
+      V(a) = -y_(b);
+      V(b) = y_(a);
+    }
+  }
+
+ private:
+  Diffeomorphism *map_;
+  int c_;
+  mfem::Vector y_;
+};
+
+/**
  * @brief An orthonormal basis of a (near-)null space of an operator, with the
  * Euclidean projection onto its orthogonal complement; serial or parallel
  * (true-dof vectors, global inner products).
@@ -180,18 +216,27 @@ class NullSpaceProjector {
  * three rotations in three dimensions) to @p P as true-dof vectors. Returns
  * the number actually added (a mode already spanned by @p P is dropped).
  *
+ * With a non-null @p map the rotations are those of the *mapped* positions
+ * @f$W\varphi_e(x)@f$ (MappedRotation) — the strain-free rotational modes
+ * of a problem posed on a fixed reference body with a non-natural
+ * reference state; translations are unchanged.
+ *
  * @p P must use the communicator of @p fes when the space is parallel. The
- * space must have vdim 2 or 3.
+ * space must have vdim 2 or 3. On a curved mesh the rotations lie in the
+ * discrete space only when the displacement order is at least the geometry
+ * order (doc/null_space.md, "Element order on curved meshes").
  */
-int AddRigidModes(NullSpaceProjector& P, mfem::FiniteElementSpace& fes);
+int AddRigidModes(NullSpaceProjector& P, mfem::FiniteElementSpace& fes,
+                  Diffeomorphism* map = nullptr);
 
 /**
  * @brief A projector holding exactly the rigid modes of @p fes (serial or
  * parallel, the communicator taken from the space); the null-space handling
- * of a pure traction problem.
+ * of a pure traction problem. Rotations are mapped through @p map when one
+ * is given (see AddRigidModes).
  */
 std::unique_ptr<NullSpaceProjector> MakeRigidModeProjector(
-    mfem::FiniteElementSpace& fes);
+    mfem::FiniteElementSpace& fes, Diffeomorphism* map = nullptr);
 
 /**
  * @brief The operator @f$P A P@f$ for a projector @f$P@f$ from a

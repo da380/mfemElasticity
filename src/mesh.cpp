@@ -95,7 +95,8 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
   auto [local_found, local_same, local_radius] =
       SphericalBoundaryRadius(dynamic_cast<Mesh*>(mesh), bdr_marker, x0);
 
-  real_t radius;
+  // As in the serial version: radius -1 when no rank holds the boundary.
+  real_t radius = -1;
   auto found = 0;
   auto same = 1;
 
@@ -109,8 +110,10 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     MPI_Gather(&local_radius, 1, MFEM_MPI_REAL_T, radii.data(), 1,
                MFEM_MPI_REAL_T, 0, comm);
 
+    // The boundary is a sphere only if every rank holding part of it
+    // found its part spherical, all with the same radius.
     for (auto i = 0; i < size; i++) {
-      if (founds[i] == 1 && sames[i] == 1) {
+      if (founds[i] == 1) {
         found = 1;
         radius = radii[i];
         break;
@@ -118,8 +121,8 @@ std::tuple<int, int, mfem::real_t> SphericalBoundaryRadius(
     }
 
     for (auto i = 0; i < size; i++) {
-      if (founds[i] == 1 && sames[i] == 1) {
-        if (std::abs(radius - radii[i]) > rtol * radius) {
+      if (founds[i] == 1) {
+        if (sames[i] == 0 || std::abs(radius - radii[i]) > rtol * radius) {
           same = 0;
           break;
         }

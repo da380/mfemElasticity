@@ -33,8 +33,13 @@
     (exact for the trapezoid; rate ratio 2^n between two stress levels);
     under a prescribed strain tau grows as the stress relaxes, and the
     trapezoid with one corrector is second order, ETD1 and backward Euler
-    first order, against a nodal ODE reference; the adaptive solver meets
-    its tolerance with fewer steps.
+    first order, against a nodal ODE reference; the adaptive exponential
+    trapezoid meets its tolerance in a few tens of steps.
+  - The anisotropic and isotropic bodies with a power-law branch and a
+    long-term modulus give the same nodal relaxation times and the same
+    displacement (the law reads the full deviatoric stress on both paths).
+  - After an implicit (backward-Euler) step, SolveElastic at the new state
+    reuses the displacement already solved instead of solving again.
 */
 
 namespace {
@@ -573,6 +578,84 @@ TEST_P(ViscoelasticTest, PowerLawLinearLimit) {
       on->Step(mn, tn, dt);
     }
     EXPECT_LT(RelMaxDiff(mn, ml), 1e-10) << "scheme " << scheme;
+  }
+}
+
+TEST_P(ViscoelasticTest, AnisotropicMatchesIsotropicPowerLaw) {
+  // As AnisotropicMatchesIsotropic, with a power law on the branch and a
+  // long-term modulus: the law reads the deviatoric stress at the nodes,
+  // which includes 2 mu_inf dev(eps), so the trace-free and full paths must
+  // evaluate the same stress for the two bodies to agree.
+  if (order == 2 && elementType == 0) {
+    return;  // the same physics; keep the run short
+  }
+  auto marker = Marker(nbdr, {x0_attr, x1_attr});
+  VectorFunctionCoefficient traction(dim, ConstantUniaxial);
+  ConstantCoefficient gamma(3.0), n3(3.0), mu0(kMu);
+  PowerLawRelaxation law(gamma, n3, mu0);
+  ConstantCoefficient mu_inf(0.3 * kMu), mu1(0.7 * kMu), tau1(1.0);
+  std::vector<MaxwellBranch> branches{{&mu1, &tau1, &law}};
+  IsotropicMaxwellRheology iso(dim, *kappa, mu_inf, branches);
+  auto C_inf = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, *kappa,
+                                                                  mu_inf);
+  ConstantCoefficient zero(0.0);
+  auto C_1 = IsotropicElasticTensorCoefficient::FromBulkModulus(dim, zero, mu1);
+  std::vector<AnisotropicBranch> abranches{{&C_1, &tau1, &law}};
+  AnisotropicMaxwellRheology aniso(dim, C_inf, abranches);
+
+  LinearQuasiStaticTractionProblem pi(fes.get(), iso, traction, marker);
+  LinearQuasiStaticTractionProblem pa(fes.get(), aniso, traction, marker);
+  ViscoelasticOperator vi(pi), va(pa);
+  ASSERT_TRUE(vi.TraceFree());
+  ASSERT_FALSE(va.TraceFree());
+  ExponentialTrapezoidSolver oi, oa;
+  oi.Init(vi);
+  oa.Init(va);
+  Vector mi(vi.Height()), ma(va.Height());
+  mi = 0.0;
+  ma = 0.0;
+  double ti = 0.0, ta = 0.0, dt = 0.25;
+  for (int step = 0; step < 4; step++) {
+    oi.Step(mi, ti, dt);
+    oa.Step(ma, ta, dt);
+  }
+  // The same nodal relaxation times, then the same displacement.
+  const Vector& itau_i = vi.InverseRelaxationTimes(0);
+  const Vector& itau_a = va.InverseRelaxationTimes(0);
+  ASSERT_EQ(itau_i.Size(), itau_a.Size());
+  double tau_err = 0.0;
+  for (int p = 0; p < itau_i.Size(); p++) {
+    tau_err = std::max(tau_err, std::abs(itau_i[p] / itau_a[p] - 1.0));
+  }
+  EXPECT_LT(tau_err, 1e-10);
+  ASSERT_TRUE(vi.SolveElastic(mi, ti));
+  ASSERT_TRUE(va.SolveElastic(ma, ta));
+  EXPECT_LT(RelMaxDiff(pa.Displacement(), pi.Displacement()), 1e-10);
+}
+
+TEST_P(ViscoelasticTest, ObservationAfterImplicitStepIsCached) {
+  // A backward-Euler step solves the displacement at the new state; the ODE
+  // solver then forms that state as m + dt k, equal to it only to
+  // round-off. SolveElastic at the new state must reuse the displacement.
+  if (order == 2 && elementType == 0) {
+    return;
+  }
+  auto marker = Marker(nbdr, {x0_attr, x1_attr});
+  VectorFunctionCoefficient traction(dim, ConstantUniaxial);
+  auto rheology = IsotropicMaxwellRheology::Maxwell(dim, *kappa, *mu, *tau);
+  LinearQuasiStaticTractionProblem problem(fes.get(), rheology, traction,
+                                           marker);
+  ViscoelasticOperator visco(problem);
+  BackwardEulerSolver ode;
+  ode.Init(visco);
+  Vector m(visco.Height());
+  m = 0.0;
+  double t = 0.0, dt = 0.3;
+  for (int step = 0; step < 3; step++) {
+    ode.Step(m, t, dt);
+    const int before = problem.NumSolves();
+    ASSERT_TRUE(visco.SolveElastic(m, t));
+    EXPECT_EQ(problem.NumSolves(), before) << "step " << step;
   }
 }
 

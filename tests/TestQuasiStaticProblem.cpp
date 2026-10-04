@@ -1,3 +1,5 @@
+#include <numbers>
+
 #include "QuasiStaticTestCommon.hpp"
 #include "TestCommon.hpp"
 
@@ -18,8 +20,18 @@
     isotropic problem, relaxed or not.
   - LinearQuasiStaticTractionProblem under uniaxial stress gives the exact
     constant strain.
+  - SetMassWeightedGauge selects the solution with zero rho-weighted linear
+    and angular momentum (the Euclidean-gauge solution does not have it),
+    and SetEuclideanGauge restores the Euclidean one.
   - Loads scale with time through the registered coefficients, and
     AddForce superposes exactly like an integrator on the load.
+  - The non-natural reference state (ReferentialElasticRheology with an
+    equilibrium mapping): the traction problem on the reference mesh with
+    the interpolated mapping and the Nanson-composed traction equals, dof
+    for dof, the identity-mapped problem on the nodal-image mesh (the
+    discrete change-of-variables identity at problem level), and the
+    projector's mapped rotations are discrete null vectors of the mapped
+    stiffness (RigidPairResiduals).
 */
 
 namespace {
@@ -222,14 +234,26 @@ TEST_P(ElasticProblemTest, PreconditionerReuse) {
     } else {
       EXPECT_EQ(problem.NumPreconditionerSetups(), assemblies);
     }
-    // A large drift makes the count grow: with reuse the preconditioner is
-    // rebuilt at the following assembly.
+    // A large drift makes the iteration count grow (with reuse, the
+    // preconditioner is rebuilt at the following assembly); the solution
+    // must still be the exact one.
     ConstantCoefficient tiny(0.01), mu_tiny(0.01 * kMu);
     SumCoefficient lambda_tiny(*kappa, mu_tiny, 1.0, -2.0 / dim);
     problem.SetRelaxationWeights({&tiny});
     ASSERT_TRUE(problem.Solve());
     auto u_ref = DirectClamped(lambda_tiny, mu_tiny, ess_bdr, b);
     EXPECT_LT(RelMaxDiff(problem.Displacement(), u_ref), 1e-8);
+    // The next assembly, a small further drift that would not by itself
+    // force a rebuild, rebuilds the preconditioner: the large drift marked
+    // it stale.
+    const int setups = problem.NumPreconditionerSetups();
+    ConstantCoefficient near(0.011), mu_near(0.011 * kMu);
+    SumCoefficient lambda_near(*kappa, mu_near, 1.0, -2.0 / dim);
+    problem.SetRelaxationWeights({&near});
+    ASSERT_TRUE(problem.Solve());
+    EXPECT_EQ(problem.NumPreconditionerSetups(), setups + 1);
+    auto u_near = DirectClamped(lambda_near, mu_near, ess_bdr, b);
+    EXPECT_LT(RelMaxDiff(problem.Displacement(), u_near), 1e-8);
   }
 }
 
@@ -364,5 +388,90 @@ INSTANTIATE_TEST_SUITE_P(ElasticProblem, ElasticProblemTest,
                          testing::Combine(testing::Values(2, 3),
                                           testing::Values(0, 1),
                                           testing::Values(1, 2)));
+
+// The traction problem with a non-natural reference state: both sides use
+// the same rheology class (identity mapping on the mapped-mesh side) so
+// the integrator classes and quadrature defaults coincide, the mapping is
+// the geometric-space interpolant, and the traction on the reference side
+// carries the Nanson area factor — then the two discrete problems are the
+// same linear system and the solutions agree dof for dof. The mapped
+// rotations of the projector are discrete null vectors of the mapped
+// stiffness (translations exactly, rotations by the identity).
+TEST(TractionProblemMapped, MatchesMappedMeshAndRigidModes) {
+  constexpr double kPi = std::numbers::pi;
+  for (int dim = 2; dim <= 3; dim++) {
+    for (int order = 1; order <= 2; order++) {
+      auto mesh = MakeSmallMesh(dim, 0);
+      mesh.SetCurvature(order);
+      H1_FECollection fec(order, dim);
+      FiniteElementSpace fes(&mesh, &fec, dim);
+
+      const double c = 0.05;
+      CallableDiffeomorphism xi(
+          dim,
+          [c, dim](const Vector& x, Vector& y) {
+            for (int i = 0; i < dim; i++) {
+              y(i) = x(i) + c * std::sin(kPi * x((i + 1) % dim));
+            }
+          },
+          [c, dim](const Vector& x, DenseMatrix& F) {
+            F = 0.0;
+            for (int i = 0; i < dim; i++) {
+              F(i, i) = 1.0;
+              F(i, (i + 1) % dim) = c * kPi * std::cos(kPi * x((i + 1) % dim));
+            }
+          });
+      auto xi_h = Interpolate(xi, mesh);
+      auto mapped = MappedMesh(mesh, xi);
+      FiniteElementSpace fes_mapped(&mapped, &fec, dim);
+      CallableDiffeomorphism id(
+          dim, [](const Vector& x, Vector& y) { y = x; },
+          [dim](const Vector&, DenseMatrix& F) {
+            F = 0.0;
+            for (int i = 0; i < dim; i++) {
+              F(i, i) = 1.0;
+            }
+          });
+
+      ConstantCoefficient lam(kLambda), mu_c(kMu);
+      IsotropicElasticTensorCoefficient C(dim, lam, mu_c);
+      DenseMatrix zero_mat(dim);
+      zero_mat = 0.0;
+      MatrixConstantCoefficient S0(zero_mat);
+      // The rheology takes the *referential* description: the relabelled
+      // tensor (C is constant, so the composition C o xi is C itself).
+      RelabelledElasticTensorCoefficient C_rel(dim, C, xi_h);
+      ReferentialElasticRheology rheo_ref(dim, C_rel, S0, xi_h);
+      ReferentialElasticRheology rheo_map(dim, C, S0, id);
+
+      Vector tv(dim);
+      tv = 0.3;
+      tv(0) = 1.0;
+      VectorConstantCoefficient t_phys(tv);
+      NansonAreaCoefficient area(xi_h);
+      ScalarVectorProductCoefficient t_ref(area, t_phys);
+
+      Array<int> all_bdr(mesh.bdr_attributes.Max());
+      all_bdr = 1;
+
+      LinearQuasiStaticTractionProblem p_ref(&fes, rheo_ref, t_ref, all_bdr);
+      LinearQuasiStaticTractionProblem p_map(&fes_mapped, rheo_map, t_phys,
+                                             all_bdr);
+      p_ref.AssembleForce(0.0);
+      ASSERT_TRUE(p_ref.Solve());
+      p_map.AssembleForce(0.0);
+      ASSERT_TRUE(p_map.Solve());
+
+      Vector d(p_ref.Displacement());
+      d -= p_map.Displacement();
+      EXPECT_LT(d.Normlinf() / p_map.Displacement().Normlinf(), 1e-8)
+          << "dim " << dim << " order " << order;
+
+      for (auto r : p_ref.RigidPairResiduals()) {
+        EXPECT_LT(r, 1e-10) << "dim " << dim << " order " << order;
+      }
+    }
+  }
+}
 
 }  // namespace

@@ -1,18 +1,19 @@
 #include <numbers>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
-  Tests for the multipole operators of poisson.hpp on the two-layer test
-  meshes: a unit ball (disc), attribute 1, about the origin inside a buffer
-  with a spherical outer boundary of radius b.
+  Tests for the multipole operators of poisson.hpp on the body-in-buffer
+  test meshes of MixedProblemTestCommon.hpp: a unit ball (disc), attribute
+  1, about the origin inside a buffer with a spherical outer boundary of
+  radius b.
 
   With nabla^2 u = rho, a density rho = r^l Y_i in the unit ball has the
   single multipole moment q = int r^{2l} Y_i^2 dV, and on the outer boundary
 
     du/dn = (l + 1) / (2 l + 1) q / b^{l+2} Y_i    (3-D),
-    du/dn = q / (2 b^{k+1}) Y_i                    (2-D, k >= 1),
+    du/dn = q / (2 b^{l+1}) Y_i                    (2-D, l >= 1),
 
   so that pairing with v = Y_i on the boundary isolates the degree.
 

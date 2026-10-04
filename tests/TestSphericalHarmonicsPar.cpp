@@ -1,7 +1,7 @@
 /*
   Parallel tests for BoundaryHarmonicCoefficients on a ParSubMesh body
   inside a ParMesh ball. Run with 1, 2 and 4 ranks; a standalone MPI program
-  returning the number of failed checks. Every rank also builds the serial
+  that exits non-zero if any check fails. Every rank also builds the serial
   operator on the full mesh; the parallel coefficients (scalar, radial, and
   from a coefficient) must equal the serial ones, the radius must agree, and
   the parallel load vector must reproduce the duality relation globally.
@@ -14,7 +14,7 @@
 #include <memory>
 #include <string>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
 

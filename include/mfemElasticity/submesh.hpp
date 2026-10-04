@@ -3,7 +3,7 @@
  * @brief Coupling between a mesh and its (Par)SubMesh: the signed dof
  * injection SubMeshDofInjection and the mixed bilinear forms
  * SubMeshMixedBilinearForm / ParSubMeshMixedBilinearForm whose trial and
- * test spaces live on the two meshes.
+ * test spaces live on the two meshes. Background: doc/submesh_coupling.md.
  */
 
 #pragma once
@@ -97,6 +97,12 @@ class SubMeshDofInjection : public mfem::Operator {
   std::unique_ptr<mfem::SparseMatrix> RemapColumns(
       const mfem::SparseMatrix& M) const;
 
+  /** @brief The space on the SubMesh. */
+  const mfem::FiniteElementSpace& SubSpace() const { return *sub_fes_; }
+
+  /** @brief The space on the parent mesh. */
+  const mfem::FiniteElementSpace& ParentSpace() const { return *parent_fes_; }
+
 #ifdef MFEM_USE_MPI
   /**
    * @brief The true-dof injection Pi (parent true dofs x sub true dofs) as a
@@ -123,6 +129,41 @@ class SubMeshDofInjection : public mfem::Operator {
   mfem::Array<int> parent_vdof_;
   mfem::Array<mfem::real_t> sign_;
 };
+
+/**
+ * @brief The signed pairing @f$J = \Pi_a^T \Pi_b@f$ of the vdofs of two
+ * spaces on SubMeshes of one parent: @f$J_{ij} = s_i s_j@f$ where the
+ * @f$i@f$-th vdof of @p a and the @f$j@f$-th vdof of @p b map to the same
+ * parent vdof (with signs @f$s@f$ from the injections), zero elsewhere.
+ *
+ * For two domain SubMeshes meeting along an interface the shared parent
+ * dofs are exactly the interface dofs, so @f$J@f$ identifies the two
+ * spaces' traces there nodally: for GridFunctions @f$u_a, u_b@f$ of equal
+ * trace on the interface, @f$(J u_b)_i = (u_a)_i@f$ on the interface dofs
+ * of @p a. This is the pairing a sliding fluid–solid interface is built
+ * from (doc/slip_interface.tex, "Discretisation of the slipping
+ * interface"): with @f$B@f$ an interface bilinear form
+ * assembled on @p a's boundary elements, the same form on @p b's trace is
+ * @f$J^T\!B J@f$ and the cross terms are @f$B J@f$ — one assembly serves
+ * all four blocks, and the orientation bookkeeping is the injections'.
+ *
+ * Both injections must target the same parent space. @f$J J^T@f$ is the
+ * identity on the shared dofs of @p a (the pairing is one-to-one).
+ */
+std::unique_ptr<mfem::SparseMatrix> NewSubMeshPairingMatrix(
+    const SubMeshDofInjection& a, const SubMeshDofInjection& b);
+
+#ifdef MFEM_USE_MPI
+/**
+ * @brief The true-dof pairing @f$J = \Pi_a^T \Pi_b@f$ as a HypreParMatrix
+ * (a true dofs x b true dofs), from the two injections' NewTrueDofMatrix().
+ * The product is formed by hypre, so the two sides of a shared parent dof
+ * may live on different ranks: the pairing works across partition
+ * boundaries.
+ */
+std::unique_ptr<mfem::HypreParMatrix> NewSubMeshPairingTrueDofMatrix(
+    const SubMeshDofInjection& a, const SubMeshDofInjection& b);
+#endif
 
 namespace detail {
 

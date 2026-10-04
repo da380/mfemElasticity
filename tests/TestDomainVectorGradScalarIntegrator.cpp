@@ -21,7 +21,13 @@ class BilinearFormIntegratorTests
     vector_fes = new FiniteElementSpace(&mesh, L2, dim);
   }
 
-  void TearDown() { delete L2, H1, scalar_fes, vector_fes; }
+  void TearDown() {
+    // The spaces first: they refer to the collections.
+    delete vector_fes;
+    delete scalar_fes;
+    delete H1;
+    delete L2;
+  }
 
   int dim, order, elementType;
   Mesh mesh;
@@ -29,6 +35,9 @@ class BilinearFormIntegratorTests
   FiniteElementSpace *scalar_fes, *vector_fes;
 };
 
+// int v . (q grad u) for u = |x| and the three coefficient types, each
+// against MFEM's DomainLFGradIntegrator with the vector coefficient q^T v
+// acting on u. Scalar q = |x|, v = (1, ..., 1).
 TEST_P(BilinearFormIntegratorTests,
        DomainVectorGradScalarIntegrator_ScalarCoefficient) {
   const auto& current_tuple = GetParam();
@@ -63,6 +72,7 @@ TEST_P(BilinearFormIntegratorTests,
   EXPECT_NEAR(value1, value2, 1.e-6 * std::abs(value1));
 }
 
+// Vector q = a (a diagonal matrix), v = x.
 TEST_P(BilinearFormIntegratorTests,
        DomainVectorGradScalarIntegrator_VectorCoefficient) {
   auto a = RandomVector(dim);
@@ -103,6 +113,8 @@ TEST_P(BilinearFormIntegratorTests,
   EXPECT_NEAR(value1, value2, 1.e-6 * std::abs(value1));
 }
 
+// Full matrix q = A (random, non-symmetric), v = x: the reference uses
+// A^T v, which checks the side on which the matrix acts.
 TEST_P(BilinearFormIntegratorTests,
        DomainVectorGradScalarIntegrator_MatrixCoefficient) {
   auto A = RandomMatrix(dim);

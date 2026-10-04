@@ -1,3 +1,10 @@
+/**
+ * @file null_space.cpp
+ * @brief Implementation of the rigid-mode coefficients, NullSpaceProjector,
+ * AddRigidModes(), MakeRigidModeProjector(), ProjectedOperator and
+ * ProjectedSolver.
+ */
+
 #include "mfemElasticity/null_space.hpp"
 
 #include <cmath>
@@ -92,7 +99,8 @@ void NullSpaceProjector::Project(mfem::Vector &x) const {
   }
 }
 
-int AddRigidModes(NullSpaceProjector &P, mfem::FiniteElementSpace &fes) {
+int AddRigidModes(NullSpaceProjector &P, mfem::FiniteElementSpace &fes,
+                  Diffeomorphism *map) {
   const int dim = fes.GetVDim();
   MFEM_VERIFY(dim == 2 || dim == 3,
               "AddRigidModes: the space must have vdim 2 or 3.");
@@ -106,24 +114,31 @@ int AddRigidModes(NullSpaceProjector &P, mfem::FiniteElementSpace &fes) {
       added++;
     }
   };
+  auto add_rotation = [&](int c) {
+    if (map) {
+      MappedRotation rot(*map, c);
+      add(rot);
+    } else {
+      RigidRotation rot(dim, c);
+      add(rot);
+    }
+  };
   for (int c = 0; c < dim; c++) {
     RigidTranslation tr(dim, c);
     add(tr);
   }
   if (dim == 2) {
-    RigidRotation rot(2, 2);
-    add(rot);
+    add_rotation(2);
   } else {
     for (int c = 0; c < 3; c++) {
-      RigidRotation rot(3, c);
-      add(rot);
+      add_rotation(c);
     }
   }
   return added;
 }
 
 std::unique_ptr<NullSpaceProjector> MakeRigidModeProjector(
-    mfem::FiniteElementSpace &fes) {
+    mfem::FiniteElementSpace &fes, Diffeomorphism *map) {
   std::unique_ptr<NullSpaceProjector> P;
 #ifdef MFEM_USE_MPI
   if (auto *pfes = dynamic_cast<mfem::ParFiniteElementSpace *>(&fes)) {
@@ -133,7 +148,7 @@ std::unique_ptr<NullSpaceProjector> MakeRigidModeProjector(
   {
     P = std::make_unique<NullSpaceProjector>();
   }
-  AddRigidModes(*P, fes);
+  AddRigidModes(*P, fes, map);
   return P;
 }
 

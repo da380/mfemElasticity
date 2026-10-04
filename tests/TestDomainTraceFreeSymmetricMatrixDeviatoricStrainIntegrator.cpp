@@ -3,6 +3,11 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int q v : dev(sym(grad u)) for u = B x and a constant symmetric
+// trace-free field v = A, stored without its last diagonal component,
+// against DomainLFDeformationGradientIntegrator with q A (equal because A
+// is symmetric and trace-free): checks the trace-free packing, in which
+// the omitted diagonal entry is minus the sum of the others.
 TEST_P(BilinearFormIntegratorTests,
        DomainTraceFreeSymmetricMatrixDeviatoricStrainIntegrator) {
   const auto& current_tuple = GetParam();

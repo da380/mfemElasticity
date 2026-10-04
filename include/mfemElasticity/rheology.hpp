@@ -21,6 +21,8 @@
 
 namespace mfemElasticity {
 
+class Diffeomorphism;
+
 namespace detail {
 
 /**
@@ -86,10 +88,11 @@ class ElasticStiffness {
   virtual ~ElasticStiffness() = default;
 
   /**
-   * @brief Add the stiffness integrators to @p form (called once; the form
-   * does not own them). With @p marker (element attributes, not owned, must
-   * outlive the form and every form borrowing its integrators) they act on
-   * the marked elements only.
+   * @brief Add the stiffness integrators to @p form (called once per form;
+   * the form takes ownership of them, and other forms may borrow them from
+   * it). With @p marker (element attributes, not owned, must outlive the
+   * form and every form borrowing its integrators) they act on the marked
+   * elements only.
    */
   virtual void AddIntegrators(mfem::BilinearForm& form,
                               mfem::Array<int>* marker = nullptr) = 0;
@@ -132,8 +135,8 @@ class ElasticStiffness {
  * operator with the integrators of MakeStiffness(), and the viscoelastic
  * operator reads the branch data from here, so the two layers cannot
  * disagree. When TraceFreeInternalVariables() is true the internal
- * variables are trace-free and BranchShearModulus() applies @f$C_k = 2\mu_k
- * P_{dev}@f$ as a scalar; otherwise they are full symmetric tensors and
+ * variables are trace-free and BranchShearModulus() supplies the scalar
+ * @f$\mu_k@f$ of @f$C_k = 2\mu_k P_{dev}@f$; otherwise they are full symmetric tensors and
  * BranchModulus() supplies @f$C_k@f$ pointwise (Mandel form, see
  * SymmetricTensorBasis).
  */
@@ -187,6 +190,15 @@ class Rheology {
    * internal variable on the marked elements only; the branch modulus must
    * vanish outside them. */
   virtual const mfem::Array<int>* BranchMarker(int k) const { return nullptr; }
+
+  /** @brief The equilibrium mapping @f$\varphi_e@f$ when the reference
+   * state is *non-natural* in the sense of Al-Attar & Crawford 2016 (the
+   * particle label is not the equilibrium position); null means natural
+   * labels, @f$\varphi_e = \mathrm{id}@f$. The stiffness integrators of
+   * MakeStiffness() carry the mapping themselves; problems consult this
+   * for everything else that depends on it (rigid modes of the mapped
+   * positions, boundary-area factors). */
+  virtual Diffeomorphism* EquilibriumMapping() const { return nullptr; }
 };
 
 // ---------------------------------------------------------------------------
@@ -302,8 +314,9 @@ class AnisotropicElasticRheology : public Rheology {
 
 /**
  * @brief One Prony branch of an isotropic generalised Maxwell body: a
- * relaxable shear modulus @f$\mu_k@f$ and its relaxation time @f$\tau_k =
- * \eta_k/\mu_k@f$. Both coefficients are non-owning.
+ * relaxable shear modulus @f$\mu_k@f$, its relaxation time @f$\tau_k =
+ * \eta_k/\mu_k@f$ (the reference time @f$\tau_{k0}@f$ when a law is set)
+ * and an optional RelaxationLaw (null: linear). All three are non-owning.
  */
 struct MaxwellBranch {
   mfem::Coefficient* mu = nullptr;
@@ -423,7 +436,8 @@ class IsotropicMaxwellRheology : public Rheology {
  * SymmetricTensorBasis ordering, e.g. a
  * DeviatoricProjectionElasticTensorCoefficient or a
  * TransverselyIsotropicElasticTensorCoefficient with only L and N) and its
- * relaxation time. Non-owning.
+ * relaxation time, with an optional RelaxationLaw as for MaxwellBranch.
+ * Non-owning.
  */
 struct AnisotropicBranch {
   mfem::MatrixCoefficient* C = nullptr;
@@ -460,9 +474,10 @@ class AnisotropicMaxwellRheology : public Rheology {
                              const std::vector<AnisotropicBranch>& branches);
 
   /**
-   * @brief Maxwell body relaxing the deviatoric part of @p C: @f$C_1 =
-   * P_{dev} C P_{dev}@f$, @f$C_\infty = C - C_1@f$ (owned coefficients).
-   * For an isotropic @p C this is IsotropicMaxwellRheology::Maxwell().
+   * @brief Maxwell body relaxing the deviatoric part of the tensor
+   * @f$C@f$, with one branch @f$C_1 = P_{dev} C P_{dev}@f$ and
+   * @f$C_\infty = C - C_1@f$ (owned coefficients). For an isotropic
+   * @f$C@f$ this is IsotropicMaxwellRheology::Maxwell().
    */
   static AnisotropicMaxwellRheology DeviatoricMaxwell(
       int dim, mfem::MatrixCoefficient& C, mfem::Coefficient& tau,

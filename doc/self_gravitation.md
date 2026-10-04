@@ -1,10 +1,24 @@
 # The self-gravitating quasi-static problem
 
-Method notes for `LinearQuasiStaticSelfGravitatingProblem`
-(`self_gravitating.hpp`): the equations, how each term is assembled, the
-solvers and the null space, and what the verification runs have shown. The
-weak form follows Al-Attar & Tromp (2014, eq. 2.52) and Yu, Al-Attar, Syvret
-& Lloyd (2025, eq. 3 and Appendix A).
+Method notes for `LinearQuasiStaticMixedSelfGravitatingProblem`
+(`mixed_problem.hpp`): the equations, the fluid–solid interface
+conditions, how each term is assembled, the solvers and the null space,
+and how the class is verified. The weak form follows Al-Attar & Tromp
+(2014, *Geophys. J. Int.* 196, 34–77, eq. 2.52) and Yu, Al-Attar, Syvret
+& Lloyd (2025, *Geophys. J. Int.* 240, 329–348, eq. 3 and Appendix A).
+The fluid treatment described here is Dahlen's. The class also has a
+gauged mode, in which the fluid keeps its displacement and the interface
+and fluid mass terms below never arise (`SetGaugedFluid`, or its
+exact-gauge variant `EnableGaugeKKT`); that mode is described in
+`doc/gauged_fluid.md`. Everything in this note is the hydrostatic,
+natural specialisation of the general linearised theory of
+`doc/gravitating_elasticity.md` — including the fact that the moduli fed
+to this class are correctly the seismological (PREM) ones, which ceases
+to hold for the general initial-stress form described there (the
+referential classes take the bare tensor through
+`BareElasticTensorCoefficient`). The per-class model summary is
+`doc/quasi_static_models.tex`, section "The mixed self-gravitating
+problem (Dahlen organisation)".
 
 ## 1. Continuous problem
 
@@ -67,6 +81,85 @@ traction on the solid is −p m, which gives (F2) and the u′-half of (F3). The
 φ′-half of (F3) is the surface mass ρ_F (m·u) displaced across the
 interface, and (F1) is the Eulerian density perturbation ρ′_F φ in the fluid.
 
+### Fluid–solid interface conditions
+
+(F1)–(F3) are the weak form of the following conditions on every
+fluid–solid interface Σ_F (written for the core–mantle boundary, CMB,
+but valid with the same m-convention at the inner-core boundary).
+
+- **Kinematic**: the normal displacement is continuous, m·u_F = m·u on
+  Σ_F; the tangential displacement may jump (the fluid is inviscid). The
+  fluid's displacement never appears: only the solid's normal component
+  is needed below.
+- **Dynamic**: the solid's traction on Σ_F is purely normal and equal to
+  the fluid's Lagrangian pressure perturbation,
+
+  ```
+  t = −p m,     p = −ρ_F (φ + u·∇Φ₀) = −ρ_F (φ + (m·u)(m·∇Φ₀))   on Σ_F,
+  ```
+
+  i.e. zero shear traction, a "potential stress" −ρ_F φ and a buoyancy
+  term −ρ_F (m·∇Φ₀)(m·u).
+- **Gravitational**: [φ] = 0 and [∇φ·m + 4πGρ u·m] = 0 across Σ_F (and
+  across every other interface), natural in the weak form. Because the
+  fluid displacement is eliminated, the jump of normal displacement
+  times density appears as the surface mass ρ_F (m·u) on Σ_F — the
+  φ′-half of (F3).
+- **In the fluid**: the Eulerian density perturbation is ρ′_F φ, which
+  is (F1).
+
+*Derivation sketch.* In a hydrostatic fluid, ∇p⁰ = −ρ∇Φ₀ and ρ = ρ(Φ₀)
+(barotropy), and every fluid–solid interface is a level surface of Φ₀.
+The linearised static balance in the fluid, −∇p¹ = ρ∇φ + ρ¹∇Φ₀ (p¹, ρ¹
+the Eulerian pressure and density perturbations), is processed as in
+Al-Attar & Woodhouse (2010, *Geophys. J. Int.* 181, 567–576, §2.2–2.3;
+the modern rendering of Dahlen's argument, summarised in
+`doc/gravitating_elasticity.md`, section "Dahlen's hydrostatic-region
+argument, and where it stops"): its tangential part makes p¹ + ρφ
+constant on each level surface; for a spherical reference, absorbing the
+degree-0 parts into the reference leaves the Eulerian pressure slaved,
+p¹ = −ρφ, and a further curl slaves the density, ρ¹ = ρ′_F φ. The
+Lagrangian pressure perturbation is p¹ + u·∇p⁰ = −ρ(φ + u·∇Φ₀), and on a
+level surface u·∇Φ₀ = (m·u)(m·∇Φ₀) involves the normal displacement
+only. Traction continuity with an inviscid fluid gives the dynamic
+condition; the gravitational conditions are those of Poisson's equation
+with the displaced density. The elimination leaves one constant pressure
+perturbation per connected fluid region undetermined (degree 0); the
+conditions above take it as zero, so the treatment does not represent
+the fluid's compression at degree 0 (see `doc/gauged_fluid.md`,
+"Degree 0", for the formulation that does). About an aspherical
+reference the free data become a function on the level surfaces rather
+than a constant, and the elimination is no longer exact. The
+published forms (Woodhouse & Deuss 2007, *Treatise on Geophysics* vol. 1,
+eqs. 23–24; Al-Attar & Tromp 2014, eq. 2.52) treat a fluid below and a
+fluid above the solid separately, with opposite signs; with m the solid's
+outward normal both are (F2)–(F3).
+
+### The CMB approximations of the GIA literature
+
+Glacial-isostatic-adjustment (GIA) codes do not mesh the core; they
+replace it by a boundary condition on the mantle side of the CMB for a
+**uniform, incompressible, inviscid** core: zero shear traction, a normal
+traction ρ_c(φ + g u_r) ("potential stress plus buoyancy"), and a surface
+mass density ρ_c u_r that is the core's only contribution to the
+potential perturbation, with ρ_c the core-top density (e.g. Latychev et
+al. 2005, *Geophys. J. Int.* 161, 421–444, eqs. 11–12; Huang et al. 2023,
+*Geophys. J. Int.* 235, 2231–2256). Relative to the conditions above it
+makes two approximations: ρ_F is the constant core-top value instead of
+the fluid-side density on each interface, and (F1) is absent (ρ′_F ≡ 0).
+The class realises the steps between the two as degenerate settings of
+`FluidRegion` (§2, "The CMB approximation rungs"): `full` (F1)+(F2)+(F3),
+`nomass` (F2)+(F3), `uniform` (F2)+(F3) with constant ρ_F — the standard
+condition — and `winkler` (F2) alone. In every rung the core's
+*background* density still generates Φ₀; only its perturbation physics is
+approximated.
+
+The published statements, the translation into (F1)–(F3), the definition
+of the ladder and its accuracy are in `doc/quasi_static_models.tex`,
+section "Fluid regions and the ladder of CMB approximations"; the
+measurements are in `doc/benchmarks.tex`, sections "The CMB treatments"
+and "The CMB approximations: results".
+
 ### Rows of the system
 
 With the coupling form
@@ -108,6 +201,21 @@ transformation, which is outward from the SubMesh for MFEM's boundary
 elements, on interfaces inherited from the parent and on cut ones alike (the
 tests check ∫ x·m dS on both).
 
+**The CMB approximation rungs.** The rungs of §1 ("The CMB
+approximations of the GIA literature") are settings of `FluidRegion`,
+selected in the Love-number benchmarks by the driver option `-cmb`
+(`run.py --cmb`, method `dahlen`):
+
+| Rung | FluidRegion settings |
+|---|---|
+| `full` | defaults |
+| `nomass` | `density_gradient` a zero coefficient |
+| `uniform` | as `nomass`, plus a constant `interface_density` (the region's outermost fluid-side value, e.g. the core-top density) |
+| `winkler` | as `uniform`, plus `interface_potential_coupling = false` (both halves of (F3) dropped, so the operator stays symmetric) |
+
+The gauged treatment is a separate formulation (benchmark method
+`gauged`), not a rung of this ladder.
+
 **Where coefficients are evaluated.** The solid density is evaluated on the
 SubMesh. A fluid density is evaluated on the *parent's* fluid elements (for
 Φ₀ and ρ′_F) **and** on the *SubMesh's boundary elements* on Σ_F (for
@@ -118,8 +226,13 @@ attribute. Hence the separate `FluidRegion::interface_density`.
 ## 3. Solvers
 
 **Block MINRES (default).** MINRES on the `[u; φ]` system, which is
-symmetric and indefinite (a saddle point: the energy is minimised in u and
-maximised in φ), with a block-diagonal SPD preconditioner: Gauss–Seidel or
+symmetric; the *physical* functional is a saddle (minimised in u,
+maximised in φ), but the assembled symmetric system is congruent to
+`diag(S, A_φφ)` and hence positive definite for a gravitationally
+stable body — CG on the projected block system is admissible
+(`SolverType::BlockCG`, available as a diagnostic; its cost matches
+MINRES on the stable and steep three-layer test models). The solve uses
+a block-diagonal SPD preconditioner: Gauss–Seidel or
 BoomerAMG with elasticity options on `A_uu`, and on the shifted Laplacian
 `(K + εM)/4πG`, without `M_F`.
 

@@ -15,10 +15,15 @@ namespace mfemElasticity {
 /**
  * @brief The local state at an internal-variable node, as full symmetric
  * tensor components (unscaled, SymmetricTensorBasis ordering: lower
- * triangle column-major, 11 12 13 22 23 33 in 3-D): the strain
- * @f$\varepsilon@f$, the stress @f$\sigma = C_U\varepsilon - \sum_j C_j
- * m_j@f$, and the branch's own internal variable @f$m_k@f$. For a
- * trace-free representation the dropped diagonal component is filled in.
+ * triangle column-major, 11 12 13 22 23 33 in 3-D): the strain, the
+ * stress and the branch's own internal variable @f$m_k@f$. With full
+ * (anisotropic) internal variables the strain is @f$\varepsilon@f$ and the
+ * stress @f$\sigma = C_U\varepsilon - \sum_j C_j m_j@f$. With trace-free
+ * (isotropic) ones the strain is @f$d = \mathrm{dev}\,\varepsilon@f$ and
+ * the stress is the full deviatoric stress @f$2\mu_\infty d + \sum_j
+ * 2\mu_j (d - m_j)@f$ over the branches present at the node (computed as
+ * @f$C_U d - \sum_j 2\mu_j m_j@f$), and the dropped diagonal component of
+ * each tensor is filled in from the trace-free condition.
  */
 struct LocalState {
   int dim = 0;
@@ -39,9 +44,9 @@ struct LocalState {
  * viscoelastic operator samples once at the internal nodes and passes back
  * as an array in the order of Parameter(i).
  *
- * A law with IsStateDependent() false is linear (the operator then never
- * re-evaluates it); the default for a branch without a law is
- * @f$F = 1@f$.
+ * A law with IsStateDependent() false is treated as linear: the operator
+ * never evaluates it and uses @f$\tau_{k0}@f$, exactly as for a branch
+ * without a law (@f$F = 1@f$).
  */
 class RelaxationLaw {
  public:

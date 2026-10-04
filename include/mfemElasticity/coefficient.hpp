@@ -1,15 +1,15 @@
 /**
  * @file coefficient.hpp
- * @brief General-purpose coefficients: the unit radial vector, a radial
- * diffeomorphism and the pull-back of a function by a mapping (for problems
- * posed on a reference domain, see TransformedDiffusionIntegrator), and, for
- * the self-gravitating fluid–solid problems, the normal component of a vector
+ * @brief General-purpose coefficients: the unit radial vector and, for the
+ * self-gravitating fluid–solid problems, the normal component of a vector
  * coefficient on boundary elements and the barotropic density gradient
- * @f$d\rho/d\Phi_0@f$ of a fluid.
+ * @f$d\rho/d\Phi_0@f$ of a fluid; and a matrix-valued delta function for
+ * moment-tensor point sources.
  *
  * Coefficients tied to one subsystem live with it: the elasticity tensors in
  * elastic_tensor.hpp, harmonic expansions in spherical_harmonics.hpp, the
- * rigid modes in null_space.hpp.
+ * rigid modes in null_space.hpp, mappings and their pull-backs in
+ * mappings.hpp.
  */
 
 #pragma once
@@ -37,42 +37,6 @@ class RadialUnitVectorCoefficient : public mfem::VectorCoefficient {
 };
 
 /**
- * @brief The radial mapping @f$\boldsymbol{\xi}(\mathbf{x}) =
- * f(\mathbf{x})\,\mathbf{x}@f$ for a scalar coefficient @f$f@f$ (not owned),
- * with position measured from the origin.
- */
-class RadialDiffeomorphismCoefficient : public mfem::VectorCoefficient {
- public:
-  RadialDiffeomorphismCoefficient(int dim, mfem::Coefficient& Q);
-
-  void Eval(mfem::Vector& V, mfem::ElementTransformation& T,
-            const mfem::IntegrationPoint& ip) override;
-
- private:
-  mfem::Coefficient* Q_ = nullptr;
-};
-
-/**
- * @brief The pull-back @f$f \circ \boldsymbol{\xi}@f$ of a function of
- * position by a mapping @f$\boldsymbol{\xi}@f$ (not owned): a field given on
- * the physical domain, evaluated on the reference domain.
- */
-class TransformedFunctionCoefficient : public mfem::Coefficient {
- public:
-  TransformedFunctionCoefficient(
-      mfem::VectorCoefficient& xi,
-      std::function<mfem::real_t(const mfem::Vector&)> f)
-      : xi_{&xi}, f_{std::move(f)} {}
-
-  mfem::real_t Eval(mfem::ElementTransformation& T,
-                    const mfem::IntegrationPoint& ip) override;
-
- private:
-  mfem::VectorCoefficient* xi_;
-  std::function<mfem::real_t(const mfem::Vector&)> f_;
-};
-
-/**
  * @brief @f$\mathbf{V}\cdot\mathbf{n}@f$ on boundary elements, with
  * @f$\mathbf{n}@f$ the boundary element's unit normal (mfem::CalcOrtho of the
  * boundary transformation's Jacobian, normalised: the outward normal for
@@ -85,7 +49,7 @@ class TransformedFunctionCoefficient : public mfem::Coefficient {
  * mfem::GradientGridFunctionCoefficient (MFEM evaluates the gradient in the
  * adjacent element) and for coefficients of position.
  *
- * With @f$\mathbf{V} = \nabla\Phi_0@f$ this gives @f$\mathbf{m}\cdot
+ * With @f$\mathbf{V} = \nabla\Phi_0@f$ this gives @f$\mathbf{n}\cdot
  * \nabla\Phi_0 = \pm g@f$ on a fluid–solid interface, the sign selecting
  * between a fluid below and a fluid above the solid.
  */
@@ -139,6 +103,76 @@ class BarotropicDensityGradientCoefficient : public mfem::Coefficient {
   mfem::VectorCoefficient* grad_rho_;
   mfem::VectorCoefficient* grad_phi0_;
   mfem::Vector gr_, gp_;
+};
+
+/**
+ * @brief A matrix-valued delta function @f$\mathbf{M}\,\delta(\mathbf{x} -
+ * \mathbf{x}_c)@f$: a constant matrix (a moment tensor, or a point stress
+ * glut) times an mfem::DeltaCoefficient, following the pattern of
+ * mfem::VectorDeltaCoefficient.
+ *
+ * Passed to a DomainLFDeformationGradientIntegrator it assembles the point
+ * source @f$v \mapsto M_{ij}\,\partial_j v_i(\mathbf{x}_c)@f$ (times the
+ * delta's scale and optional weight), the weak form of the equivalent body
+ * force @f$-\mathrm{Div}[\mathbf{M}\,\delta(\mathbf{x}-\mathbf{x}_c)]@f$ of
+ * a moment-tensor point source. The center, scale and time dependence are
+ * the wrapped DeltaCoefficient's. Like its scalar and vector counterparts
+ * it cannot be Eval()uated pointwise.
+ *
+ * In parallel the source is assembled on the rank whose local mesh contains
+ * the center (MFEM's delta machinery); a center placed exactly on a shared
+ * element boundary may be found by more than one rank, so keep point
+ * sources strictly inside elements.
+ */
+class MatrixDeltaCoefficient : public mfem::MatrixCoefficient {
+ public:
+  /** @brief A unit delta at the origin times @p M (square, its dimension
+   * the space dimension); @p M is copied. */
+  explicit MatrixDeltaCoefficient(const mfem::DenseMatrix& M)
+      : mfem::MatrixCoefficient(M.Height()), M_(M) {}
+
+  /** @brief 2-D: @f$s\,\mathbf{M}\,\delta(\mathbf{x} - (x,y))@f$. */
+  MatrixDeltaCoefficient(const mfem::DenseMatrix& M, mfem::real_t x,
+                         mfem::real_t y, mfem::real_t s)
+      : mfem::MatrixCoefficient(M.Height()), M_(M), d_(x, y, s) {}
+
+  /** @brief 3-D: @f$s\,\mathbf{M}\,\delta(\mathbf{x} - (x,y,z))@f$. */
+  MatrixDeltaCoefficient(const mfem::DenseMatrix& M, mfem::real_t x,
+                         mfem::real_t y, mfem::real_t z, mfem::real_t s)
+      : mfem::MatrixCoefficient(M.Height()), M_(M), d_(x, y, z, s) {}
+
+  /** @brief Set the time in the wrapped DeltaCoefficient (for a
+   * time-dependent weight). */
+  void SetTime(mfem::real_t t) override;
+
+  /** @brief The wrapped scalar DeltaCoefficient (center, scale, weight). */
+  mfem::DeltaCoefficient& GetDeltaCoefficient() { return d_; }
+
+  void SetScale(mfem::real_t s) { d_.SetScale(s); }
+  void SetDeltaCenter(const mfem::Vector& center) {
+    d_.SetDeltaCenter(center);
+  }
+  void GetDeltaCenter(mfem::Vector& center) { d_.GetDeltaCenter(center); }
+
+  /** @brief Replace the matrix (same dimensions). */
+  void SetMatrix(const mfem::DenseMatrix& M);
+
+  /** @brief The matrix @f$\mathbf{M}@f$. */
+  const mfem::DenseMatrix& Matrix() const { return M_; }
+
+  /** @brief @f$\mathbf{M}@f$ times DeltaCoefficient::EvalDelta() of the
+   * wrapped delta. */
+  virtual void EvalDelta(mfem::DenseMatrix& M, mfem::ElementTransformation& T,
+                         const mfem::IntegrationPoint& ip);
+
+  /** @brief A delta function cannot be evaluated pointwise: calling this
+   * is an MFEM error, as for mfem::VectorDeltaCoefficient. */
+  void Eval(mfem::DenseMatrix& M, mfem::ElementTransformation& T,
+            const mfem::IntegrationPoint& ip) override;
+
+ private:
+  mfem::DenseMatrix M_;
+  mfem::DeltaCoefficient d_;
 };
 
 }  // namespace mfemElasticity

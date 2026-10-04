@@ -1,6 +1,6 @@
 #include <numbers>
 
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*

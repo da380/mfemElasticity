@@ -456,6 +456,10 @@ void BoundaryHarmonicCoefficients::Reduce(Vector& c) const {
 #endif
 }
 
+// Hidden from Doxygen, which cannot match these overloads to their
+// declarations: the unqualified mfem types here do not resolve without the
+// MFEM headers in its input.
+/// @cond
 void BoundaryHarmonicCoefficients::Coefficients(const GridFunction& f,
                                                 Vector& c) const {
   MFEM_VERIFY(f.Size() == M_.Height(),
@@ -501,6 +505,8 @@ void BoundaryHarmonicCoefficients::Coefficients(VectorCoefficient& f,
   });
   Reduce(c);
 }
+
+/// @endcond
 
 void BoundaryHarmonicCoefficients::LoadVector(const Vector& c,
                                               Vector& b) const {

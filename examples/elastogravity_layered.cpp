@@ -3,7 +3,7 @@
 //
 // Self-gravitating elastic deformation of a body under a surface mass load
 // or a tidal potential, as a driver of
-// LinearQuasiStaticSelfGravitatingProblem (mfemElasticity/self_gravitating.hpp).
+// LinearQuasiStaticMixedSelfGravitatingProblem (mfemElasticity/mixed_problem.hpp).
 // The models and loads are those of layered_model.hpp, chosen by the mesh:
 //
 //   uniform      a solid of constant density and moduli (-rho, -kappa, -mu),
@@ -19,7 +19,7 @@
 //
 // One source serves the serial and the parallel build: against an MFEM with
 // MPI the mesh, the spaces and the fields are the parallel ones and the
-// program runs under mpirun, on any number of ranks.
+// program runs under mpiexec, on any number of ranks.
 //
 // Meshes (../data):
 //   elastogravity_2d.msh, coupled_poisson.msh          uniform, 2-D and 3-D
@@ -29,17 +29,17 @@
 //   elastogravity_two_layer_2d.msh, elastogravity_three_layer_2d.msh,
 //   elastogravity_three_layer_3d.msh                   (meshes/layered_earth.py)
 //
-// Sample runs (with mpirun -np N in front in a parallel build):
+// Sample runs (with mpiexec -np N in front in a parallel build):
 //    ./elastogravity_layered -o 2
 //    ./elastogravity_layered -m ../data/elastogravity_2d.msh -o 2 -s 2 -diag
 //    ./elastogravity_layered -m ../data/coupled_poisson.msh -o 2 -mu 50e9
 //    ./elastogravity_layered -m ../data/elastogravity_three_layer_2d.msh -o 2
-//    -s 2 -diag
+//        -s 2 -diag
 //    ./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1
 //    ./elastogravity_layered -o 2 -load 0 -tidal 1.0
 //    ./elastogravity_layered -o 2 -solid-core
 //    ./elastogravity_layered -m ../data/elastogravity_three_layer_3d.msh -o 1
-//    -no-fluid-mass
+//        -no-fluid-mass
 //
 // -s 2 runs both solvers and reports their difference (they solve the same
 // restricted system and agree to solver tolerance). -diag prints the
@@ -51,9 +51,14 @@
 // the degree-2 tidal potential A (r/a)^2 P_2 with A in m^2/s^2 (with -load 0
 // it is the only forcing). -no-fluid-mass drops the hydrostatic Poisson term
 // rho'_F phi (the fluid becomes unstratified in the Eulerian sense); for the
-// PREM-like core it changes the response by a factor of about three, the
-// potential block sitting at about half its positivity margin
-// (doc/self_gravitation.md).
+// PREM-like core it changes the response by a factor of about three, because
+// the potential block is not far from losing its positivity
+// (doc/self_gravitation.md, "3. Solvers", "Definiteness of the potential
+// block").
+//
+// Output: iterations, time and norms of each solve, the maximum displacement
+// in metres, and with -vis the displacement and the potential perturbation
+// in GLVis (-pv: a ParaView collection).
 // ============================================================================
 
 #include <chrono>
@@ -84,7 +89,7 @@ using FieldType = GridFunction;
 bool Root() { return true; }
 #endif
 
-using Problem = LinearQuasiStaticSelfGravitatingProblem;
+using Problem = LinearQuasiStaticMixedSelfGravitatingProblem;
 
 // The largest absolute value of a field, over all ranks.
 real_t MaxAbs(const FieldType& f) {

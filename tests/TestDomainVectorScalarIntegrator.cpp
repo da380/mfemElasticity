@@ -3,6 +3,10 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int (q . v) u for q = x, v = x and u the H1 interpolant of |x|, against
+// MFEM's VectorDomainLFIntegrator with the coefficient |x| q acting on v
+// (the exact |x| in place of its interpolant, so the two agree to
+// interpolation error).
 TEST_P(BilinearFormIntegratorTests, DomainVectorScalarIntegrator) {
   const auto& current_tuple = GetParam();
 

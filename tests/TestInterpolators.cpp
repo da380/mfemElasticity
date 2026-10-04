@@ -1,5 +1,13 @@
 #include "TestCommon.hpp"
 
+/*
+  Tests for the discrete interpolators of bilininteg.hpp, which map an H1
+  displacement to an L2 field of its deformation gradient, strain or
+  deviatoric strain. A linear displacement u = A x has constant gradient,
+  so each interpolated field must equal the exact constant (in the
+  library's component order) to round-off on every element type.
+*/
+
 class InterpolatorTests : public testing::TestWithParam<DimOrderTypeTuple> {
  protected:
   void SetUp() {
@@ -84,6 +92,7 @@ class InterpolatorTests : public testing::TestWithParam<DimOrderTypeTuple> {
   std::unique_ptr<VectorFunctionCoefficient> uF, FF, EF, DF;
 };
 
+// Du = A, stored column-major (dim * dim components).
 TEST_P(InterpolatorTests, DeformationGradientInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
@@ -100,6 +109,7 @@ TEST_P(InterpolatorTests, DeformationGradientInterpolator) {
   EXPECT_TRUE(error < 1.e-8);
 }
 
+// sym A, lower triangle column by column (SymmetricComponentOrder).
 TEST_P(InterpolatorTests, StrainInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);
@@ -115,6 +125,8 @@ TEST_P(InterpolatorTests, StrainInterpolator) {
   EXPECT_TRUE(error < 1.e-8);
 }
 
+// dev sym A, with the last diagonal component dropped (it is fixed by the
+// zero trace).
 TEST_P(InterpolatorTests, DeviatoricStrainInterpolator) {
   auto u = GridFunction(vector_fes.get());
   u.ProjectCoefficient(*uF);

@@ -60,6 +60,36 @@ with λ = κ − 2μ/d, so MFEM's `ElasticityIntegrator(coef, q_λ, q_μ)` (whic
 sets λ = q_λ·coef, μ = q_μ·coef) gives both parts: `(κ, 1, 0)` and
 `(μ, −2/d, 1)`.
 
+### The rheology classes
+
+| Class | Material | Stiffness integrators | Internal variables |
+|---|---|---|---|
+| `IsotropicElasticRheology(dim, κ, μ)` | isotropic elastic, no branches | two `ElasticityIntegrator`s (κ/μ split) | none |
+| `AnisotropicElasticRheology(dim, C)` | elastic with a Mandel tensor (`elastic_tensors.md`), no branches | one `ElasticTensorIntegrator` | none |
+| `IsotropicMaxwellRheology(dim, κ, μ_∞, branches)` | isotropic generalised Maxwell; each `MaxwellBranch` is (μ_k, τ_k, optional law); `Maxwell(dim, κ, μ, τ [, law])` is the classical body | the κ/μ split with μ_U or μ_∞ + Σ β_k μ_k | trace-free |
+| `AnisotropicMaxwellRheology(dim, C_∞, branches)` | anisotropic generalised Maxwell; each `AnisotropicBranch` is (C_k, τ_k, optional law); `DeviatoricMaxwell(dim, C, τ [, law])` relaxes P_dev C P_dev | one `ElasticTensorIntegrator` with C_U or C_∞ + Σ β_k C_k | full symmetric |
+| `CompositeRheology(dim, regions)` | different rheologies on disjoint sets of element attributes (§6) | each region's, restricted to its marker | trace-free only if every region's are |
+| `ReferentialElasticRheology(dim, Ĉ, S_e, φ_e)` (`referential_problem.hpp`) | the general pre-stressed elastic state of the referential formulation, no branches | `MaterialStiffnessIntegrator` + `GeometricStiffnessIntegrator` (`elastic_tensors.md`) | none |
+
+A purely elastic rheology passes through the viscoelastic operator with an
+empty internal state (a purely elastic evolution under time-dependent
+loads); its relaxation-weight calls are no-ops. The Maxwell classes provide
+`UnrelaxedElastic()` and `LongTermElastic()`, the instantaneous (t = 0⁺) and
+fully relaxed (t → ∞) elastic solids, which are the limits a time-domain run
+must approach. All rheologies hold pointers to the caller's coefficients,
+which must outlive them; they are movable, not copyable.
+
+**Reference state.** `Rheology::EquilibriumMapping()` returns the
+equilibrium mapping φ_e when the reference state is non-natural in the sense
+of Al-Attar & Crawford (2016) (the particle label is not the equilibrium
+position), and null for natural labels (φ_e = id). Every class above except
+`ReferentialElasticRheology` returns null; that one always returns its
+mapping (the identity for a natural state). The stiffness integrators carry
+the mapping themselves; problems consult it for everything else that depends
+on it, such as the rigid modes of the mapped positions (`null_space.md`) and
+boundary-area factors. Whether the equilibrium stress is hydrostatic is
+likewise a property of the rheology's data, not of the problem class.
+
 ## 2. The problem interface
 
 Per evaluation time `t`:
@@ -87,6 +117,53 @@ Solve();            // displacement <- K⁻¹ (external + increments)
 - There is one displacement field. Several solid regions share it on a
   possibly disconnected SubMesh, and regional material differences belong to
   the rheology (§6).
+- `Solve()` returns false if the linear solver did not converge. Problems
+  carrying further unknowns (a potential) keep them internal.
+
+### The problem classes
+
+`LinearQuasiStaticProblem` is the abstract interface above;
+`LinearQuasiStaticProblemBase` implements it on a serial or parallel
+displacement space (the space decides) with the rheology's stiffness,
+time-dependent load registration (`RegisterTimeDependent`), lazy
+reassembly, the default preconditioned CG (Gauss–Seidel in serial,
+BoomerAMG with elasticity options in parallel; default relative tolerance
+1e-12) and the gauged-fluid option. The concrete classes:
+
+| Class | Header | Problem |
+|---|---|---|
+| `LinearQuasiStaticTractionProblem` | `quasi_static_problem.hpp` | traction on marked boundaries, no essential conditions; CG on P A P with the rigid-mode projector (`null_space.md`); optional mass-weighted gauge (`SetMassWeightedGauge`) |
+| `LinearQuasiStaticClampedProblem` | `quasi_static_problem.hpp` | prescribed displacement on one set of boundary attributes (time-dependent or homogeneous), traction on another |
+| `LinearQuasiStaticMixedSelfGravitatingProblem` | `mixed_problem.hpp` | self-gravitating body, referential displacement with the spatial potential perturbation on an enclosing ball (`self_gravitation.md`) |
+| `LinearQuasiStaticReferentialSelfGravitatingProblem` | `referential_problem.hpp` | self-gravitating body, fully referential (displacement and potential), general reference state through a `ReferentialElasticRheology` (`gravitating_elasticity.md`) |
+| `LinearQuasiStaticReferentialSelfGravitatingSlipProblem` | `referential_problem.hpp` | the referential problem with a slipping fluid–solid interface (`slip_interface.tex`) |
+
+The class names are built from fixed slots, `[Linear|Nonlinear]
+[QuasiStatic|Dynamic] [Mixed|Referential]? [SelfGravitating]? [variant]
+Problem`. The elasticity is referential in every class; the `Mixed` /
+`Referential` slot says how the *gravity* is described and so appears only
+for self-gravitating problems. Properties of the reference state belong to
+the rheology, not to the class name; a class that requires a special
+reference state says so (the mixed formulation requires a hydrostatic,
+natural one). The traction and clamped problems accept a
+`ReferentialElasticRheology` and are then the non-gravitating referential
+problem; their tractions and prescribed values are referential fields.
+
+The viscoelastic operator needs `SupportsRelaxationWeights()` for the
+trapezoid and implicit schemes. The base class and the mixed problem
+support it; the referential classes take a `ReferentialElasticRheology`,
+which has no branches, so they are used elastically.
+
+**Gauged fluids.** `SetGaugedFluid(marker, μ_g, ε, refinements, penalty,
+map)` treats the marked attributes as an inviscid fluid in the relabelling
+formulation: the rheology supplies the fluid's bulk stiffness (zero shear),
+and a gauge-fixing shear penalty ε Q is added to the *solver* operator only.
+`Solve()` removes the O(ε) bias by iterated Tikhonov refinement, each
+refinement solve starting from zero. With a non-identity `map` the
+deviatoric penalty is assembled covariantly with
+`ElasticTensorIntegrator(C_dev, map)` (`elastic_tensors.md`, section
+"Material and geometric stiffness"). The formulation and its verification
+are in `gauged_fluid.md`.
 
 **Relaxation weights.** The implicit and exponential-trapezoid schemes
 eliminate `m^{n+1}` and need the stiffness reassembled as
@@ -104,7 +181,8 @@ integrators from a never-assembled template form, rather than calling
 `Finalize(skip_zeros)` may have dropped entries the new coefficient needs
 (`mfem_notes.md`).
 
-**Warm starts.** MFEM's relative tolerance is relative to the *initial*
+**Warm starts.** The main solve of a problem is warm-started from its
+previous solution. MFEM's relative tolerance is relative to the *initial*
 residual. A warm-started solve, the normal case in time stepping, starts
 from a residual of about 1e-12 ‖b‖, so the target becomes about 1e-24 and CG
 stalls at its iteration limit. `SetWarmStartTolerance` sets an absolute
@@ -129,21 +207,85 @@ implicit schemes taken with the effective modulus `C_∞ + Σ_k β_k C_k` of §2
 |---|---|---|---|
 | explicit RK (`Mult`) | any explicit MFEM solver | one per stage, `K_U` | RK order; dt ≲ 2.8 τ_min for RK4 |
 | ETD1 (`ExponentialEulerStep`) | `e^{−h} m + (1−e^{−h}) dⁿ` | one per step, `K_U` | 1st; unconditionally stable |
-| exponential trapezoid | `e^{−h} m + a dⁿ + b d^{n+1}`, a = (1−e^{−h})/h − e^{−h}, b = 1 − (1−e^{−h})/h | one per step with weights β_k = 1 − b_k and force `Bᵀ Σ C_k (e^{−h_k} m_kⁿ + a_k dⁿ)` | 2nd; exact for a strain linear in time; no step restriction |
+| exponential trapezoid (`ExponentialTrapezoidStep`) | `e^{−h} m + a dⁿ + b d^{n+1}`, a = (1−e^{−h})/h − e^{−h}, b = 1 − (1−e^{−h})/h | one per step with weights β_k = 1 − b_k and force `Bᵀ Σ C_k (e^{−h_k} m_kⁿ + a_k dⁿ)` | 2nd; exact for a strain linear in time; no step restriction |
 | backward Euler (`ImplicitSolve`) | `(m + h d^{n+1})/(1+h)` | weights β_k = 1/(1+h_k), force `Bᵀ Σ C_k m_kⁿ/(1+h_k)` | 1st; L-stable |
-| SDIRK (`ImplicitSolve`) | as backward Euler with γ·dt per stage | one per stage | 2nd–3rd |
+| SDIRK (`ImplicitSolve`) | as backward Euler with γ·dt per stage | one per stage | `SDIRK23Solver(2)`: 2nd, L-stable |
 
-The exponential trapezoid is the workhorse for loading problems with
-dt ≫ τ in part of the domain: second order, one solve per step, and a
-constant operator while dt is constant. Crank–Nicolson is deliberately
+The exponential trapezoid and SDIRK23 are the second-order fixed-step
+schemes for loading problems with dt ≫ τ in part of the domain: the
+exponential trapezoid takes one solve per step and keeps a constant
+operator while dt is constant; SDIRK23 takes two and keeps its order on
+stiff multi-branch bodies ("Choosing a scheme" below). Crank–Nicolson is deliberately
 absent; it is not L-stable and oscillates for h ≫ 1.
 
-What `examples/viscoelastic_schemes.cpp` shows on a clamped beam: when
-nothing is stiff RK4 is cheapest and the first-order schemes are hopeless.
-With a stiff second branch or a power law, the second-order L-stable SDIRK23
-is the best fixed-step scheme, the adaptive trapezoid the best at tight
-tolerances, and backward Euler or ETD1 cost 10–100 times more for the same
-error.
+### Driving the operator
+
+`ViscoelasticOperator` is an `mfem::TimeDependentOperator`, so MFEM's
+`ODESolver`s drive it directly for the explicit and implicit schemes. The
+exponential schemes are reached through adaptors in `viscoelastic.hpp`:
+
+| Scheme | Solver object |
+|---|---|
+| explicit RK | any explicit MFEM solver (e.g. `RK4Solver`) on `Mult` |
+| backward Euler | `mfem::BackwardEulerSolver` on `ImplicitSolve` |
+| SDIRK23 | `mfem::SDIRK23Solver(2)`, the L-stable second-order variant (MFEM's default `SDIRK23Solver()` is the third-order, A- but not L-stable one; `mfem_notes.md`) |
+| ETD1 | `ExponentialEulerSolver` |
+| exponential trapezoid | `ExponentialTrapezoidSolver` |
+| adaptive exponential trapezoid | `AdaptiveExponentialTrapezoidSolver` (§5) |
+
+`SolveElastic(m, t)` makes the problem's displacement consistent with any
+`(m, t)` and is how a driver observes the displacement between steps;
+`SyncFields(m)` copies the state into the output fields registered by
+`RegisterFields(dc)`, and `MinRelaxationTime()` gives the explicit stability
+scale.
+
+**Load jumps.** A step that ends at a jump of the external load is taken
+with the load's left limit; the next step must start from the right limit.
+The displacement cache is keyed on `(m, t)` and cannot tell the two apart,
+so a driver calls `InvalidateDisplacement()` at the jump. Jumps should also
+lie on the step grid: a jump inside a step costs every scheme its order,
+while a kink (a jump in the load's derivative) costs a second-order scheme
+nothing and caps RK4 at second order.
+
+### Choosing a scheme
+
+The schemes trade order, stability and the number of operator assemblies
+(cost is best counted in elastic solves, since each is one quasi-static
+system):
+
+- **Nothing stiff** (τ_max/τ_min modest, dt limited by accuracy rather
+  than by τ_min): RK4 is the cheapest at tight tolerances; its operator
+  never changes, so it never reassembles.
+- **Stiff bodies** (a wide range of relaxation times, laterally varying
+  viscosity, a power law): RK4 is bound by dt ≲ 2.8 τ_min whatever the
+  accuracy wanted. The exponential trapezoid and SDIRK23 are the robust
+  fixed-step choices and cost about the same per unit accuracy (one solve
+  per step against two with a smaller error constant). The exponential
+  trapezoid wins when the strain is close to linear over a step (it is
+  exact for a piecewise-linear strain); SDIRK23 wins on a stiff
+  multi-branch body under stress control, where the exponential
+  trapezoid's order drops to about 1.5 (stiff branches put components
+  into the strain that vary inside a step; SDIRK23's L-stable stages damp
+  them).
+- **Relaxation after a step load** (a Heaviside load, load and unload):
+  the adaptive trapezoid is cheapest, taking small steps through each
+  transient and striding once the response is quiet.
+- **Sustained periodic forcing**: adaptivity is the worst choice, because
+  the conservative error estimate keeps every step small for the whole run;
+  use a fixed-step second-order scheme.
+- **First-order schemes** (ETD1, backward Euler) are not competitive
+  beyond errors of about 1e-3. ETD1 is exact for a piecewise-constant
+  strain and needs no reassembly; it lags systematically under creep.
+- **Assembly cost.** The adaptive trapezoid reassembles the effective
+  operator at every accepted step, a fixed-step implicit or trapezoid
+  scheme once per step size, RK4 and ETD1 never. Where assembly and
+  preconditioner setup dominate, this counts against adaptivity
+  (preconditioner reuse, §2, softens it).
+
+The evidence is `examples/viscoelastic_schemes.cpp`, the stepping survey of
+`benchmarks/viscoelastic/stepping/`, and the box benchmarks of
+`benchmarks/viscoelastic/box/`, documented in `benchmarks.tex` (the
+viscoelastic family).
 
 Details that matter:
 
@@ -152,11 +294,13 @@ Details that matter:
   may be needed per step.
 - The switch between the unrelaxed and an effective operator is lazy and
   costs one reassembly, so mixing schemes works but is not free.
-- After a trapezoid or implicit step the problem's displacement is already
-  consistent with the new state. The operator caches the `(m, t)` for which
-  that holds (compared exactly, with an all-reduce in parallel), and the next
-  step's dⁿ or a call to `SolveElastic` reuses it. ETD1 and explicit stages
-  invalidate the cache.
+- After a trapezoid or backward-Euler step the problem's displacement is
+  already consistent with the new state; after an SDIRK step it belongs to
+  the last stage state, so an observation costs an extra unrelaxed solve.
+  The operator caches the `(m, t)` for which the displacement is consistent
+  (compared exactly, with an all-reduce in parallel), and the next step's
+  dⁿ or a call to `SolveElastic` reuses it. ETD1 and explicit stages
+  invalidate the cache, and so does `InvalidateDisplacement()`.
 - There is one elastic solve per stage, in `ElasticUpdate`, and never one
   inside the pointwise kernels, so that the solve count is predictable.
 
@@ -218,8 +362,11 @@ A `RelaxationLaw` is therefore a pointwise factor with parameter fields
 sampled at the internal nodes, plus an optional gradient with respect to the
 stress (for adjoints). There is one operator, and linearity is a property of
 the rheology (`IsLinear()`): a linear body skips the re-evaluation and the
-corrector. The nodal stress comes from data already at the nodes; in the
-trace-free isotropic case T = Σ 2μ_k (d − m_k), with no need for `C_U`.
+corrector. The nodal stress is σ = C_U ε − Σ_k C_k m_k from the unrelaxed
+and branch moduli sampled at the nodes; in the trace-free isotropic case its
+deviator is T = 2μ_∞ d + Σ_k 2μ_k (d − m_k) = 2μ_U d − Σ_k 2μ_k m_k, the full
+deviatoric stress (the long-term part included), which is what drives the
+effective relaxation time.
 
 τ can drop by one or two orders of magnitude at stresses a few times the
 transition stress, which rules out explicit stepping and changes the
@@ -239,7 +386,8 @@ Backward Euler does the same with the end state. Each pass is an elastic
 solve with a *different* effective operator, which is what preconditioner
 reuse (§2) is for.
 
-**Adaptive stepping.** Exponential integrators have no stability limit here,
+**Adaptive stepping** (`AdaptiveExponentialTrapezoidSolver`). Exponential
+integrators have no stability limit here,
 so adaptivity is purely about accuracy: resolving the times when τ collapses
 and striding across quiet periods. After a trapezoid step its ETD1 companion
 (nodal work only, no solve) gives an embedded first-order estimate,
@@ -251,9 +399,14 @@ dt ← dt · clamp(0.9 err^{−1/2}, 0.2, 4),    reject and retry when err > 1.
 
 The estimate is that of the first-order companion, so the tolerance is
 conservative for the second-order solution that is propagated, by a factor
-of order τ/dt. A sharp estimate would need a second-order companion (step
-doubling, three solves per step). A linear body benefits in the same way,
-since its effective operator depends on dt.
+of order τ/dt; choose rtol accordingly. A linear body benefits in the same
+way, since its effective operator depends on dt. The controls are
+`SetTolerances(rtol, atol)` (defaults 1e-4, 1e-10), `SetStepBounds(dt_min,
+dt_max)` and `SetStepFactors(shrink, grow, safety)` (defaults 0.2, 4, 0.9).
+`Step(x, t, dt)` takes a step of at most `dt` and returns the proposed next
+step in `dt`; `Integrate(x, t, t_final, dt)` runs to `t_final`, hitting it
+exactly; `NumAcceptedSteps()`, `NumRejectedSteps()` and
+`LastErrorEstimate()` report.
 
 ## 6. Composite rheologies
 
@@ -290,4 +443,19 @@ law in one region only.
   one. The strain map stays global, since it is computed once per elastic
   solve for all branches. A whole-mesh rheology has exactly the unrestricted
   layout.
-- Output fields are named `internal_variable_<region>_<branch>`.
+- Output fields. `RegisterFields` names branch k's field
+  `internal_variable_<label>` with the rheology's `BranchLabel(k)`:
+  `branch<k>` by default, and `<region>_branch<j>` for a composite (region
+  names default to `region<r>`). A rheology with a single branch under the
+  default label keeps the plain name `internal_variable`.
+
+## References
+
+- Al-Attar, D. and Crawford, O. (2016). Particle relabelling
+  transformations in elastodynamics. *Geophysical Journal International*,
+  205(1), 575–593.
+- Crawford, O., Al-Attar, D., Tromp, J. and Mitrovica, J. X. (2017). Forward
+  and inverse modelling of post-seismic deformation. *Geophysical Journal
+  International*, 208(2), 845–876.
+- Simo, J. C. and Hughes, T. J. R. (1998). *Computational Inelasticity*.
+  Springer, New York.

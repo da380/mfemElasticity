@@ -1,18 +1,27 @@
 // -----------------------------------------------------------------------------
-// A tour of SubMeshDofInjection (serial).
+// A tour of SubMeshDofInjection. One source serves the serial and the
+// parallel build; the #ifdef blocks below are the tour's actual content —
+// they mark exactly what changes in parallel.
 //
-// Mesh: data/circular_offset.msh (meshes/offset_disc.py) — a disk M
-// (attribute 1) inside a larger offset disk Ω (attribute 2 is the surrounding
-// region). Boundary attribute
-// 1 is the internal circle ∂M, attribute 2 the outer circle ∂Ω.
+// Mesh: ../data/circular_offset.msh (meshes/offset_disc.py) — an off-centre
+// disk M (attribute 1) inside a larger disk Ω centred on the origin
+// (attribute 2 is the surrounding region). Boundary attribute 1 is the
+// internal circle ∂M, attribute 2 the outer circle ∂Ω.
 //
 // Part A. Moving fields between the parent mesh and the submesh.
 //
 //   The injection is built from a space on the parent mesh and its "shadow"
 //   on the submesh (same FE collection object, vdim and ordering — made by
-//   MakeShadowSpace). Its MultTranspose restricts a parent field to the
-//   submesh (identical to SubMesh::Transfer, which we verify); its Mult
-//   injects a submesh field back, extended by zero.
+//   MakeShadowSpace). Serially its MultTranspose restricts a parent field
+//   to the submesh dof-wise (identical to SubMesh::Transfer, which we
+//   verify) and its Mult injects a submesh field back, extended by zero.
+//   IN PARALLEL the same roles are played by the true-dof matrix
+//
+//       Pi = injection.NewTrueDofMatrix()  (parent true dofs × sub true dofs),
+//
+//   a boolean (±1) HypreParMatrix with Pi^T Pi = I; ParSubMesh inherits
+//   the parent's partition, so some ranks may hold no submesh elements,
+//   and nothing below needs to care.
 //
 // Part B. A toy coupled problem, solved through the injection.
 //
@@ -24,11 +33,12 @@
 //   The cross terms ∫_M u φ' and ∫_M φ u' are integrals over the submesh in
 //   which one field lives on the parent mesh — exactly the structure of the
 //   elastogravity coupling ∫_M ρ ∇φ·u'. With the injection they need no
-//   custom assembly: if M_sub is the plain mass matrix on the submesh
-//   (between the shadow space and itself), then
+//   custom assembly: with M_sub the plain mass matrix on the submesh,
 //
-//       B  = P M_sub  = RemapRows(M_sub)     (parent rows × sub cols),
-//       Bᵀ = M_sub Pᵀ = RemapColumns(M_sub)  (sub rows × parent cols),
+//       serial:    B  = P M_sub  = RemapRows(M_sub)     (pure re-indexing),
+//                  Bᵀ = M_sub Pᵀ = RemapColumns(M_sub);
+//       parallel:  B  = ParMult(Pi, M̂),  Bᵀ = B->Transpose()
+//                  (M̂ the true-dof mass matrix; no communication code),
 //
 //   and the block system reads
 //
@@ -37,17 +47,23 @@
 //
 //   The toy is chosen to be self-checking, in two independent ways:
 //
-//   1. The second equation says M U = Bᵀ Φ = M_sub (Pᵀ Φ), i.e. u is exactly
-//      the dof-wise restriction of φ to the submesh: U = Pᵀ Φ.
-//   2. Eliminating u gives A Φ + P M_sub Pᵀ Φ = F, which is precisely the
-//      single-mesh problem "Poisson with a reaction term confined to M":
-//      assemble it directly on the parent mesh with an attribute-restricted
-//      MassIntegrator and the two solutions must agree to solver tolerance.
+//   1. The second equation says M U = Bᵀ Φ, i.e. u is exactly the dof-wise
+//      restriction of φ to the submesh: U = Pᵀ Φ (Pi^T Φ in parallel).
+//   2. Eliminating u gives precisely the single-mesh problem "Poisson with
+//      a reaction term confined to M": assemble it directly on the parent
+//      mesh with an attribute-restricted MassIntegrator and the two
+//      solutions must agree to solver tolerance.
 //
-// Sample run:  ./submesh_injection -o 2
+// Output: the two transfer errors of Part A and, for Part B, the MINRES
+// iteration count and the two check errors, all of which should be at
+// round-off or solver tolerance; with -vis, φ and u are sent to GLVis.
+//
+// Sample runs:  ./submesh_injection -o 2 -vis
+//               mpiexec -np 4 ./submesh_injection -o 2   (parallel build)
 // -----------------------------------------------------------------------------
 
 #include <cmath>
+#include <memory>
 
 #include "mfem.hpp"
 #include "mfemElasticity.hpp"
@@ -56,7 +72,40 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
+namespace {
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SubMeshType = ParSubMesh;
+using SpaceType = ParFiniteElementSpace;
+using FieldType = ParGridFunction;
+using FormType = ParBilinearForm;
+using LFType = ParLinearForm;
+using MatType = HypreParMatrix;
+bool Root() { return Mpi::Root(); }
+double GlobalMax(double v) {
+  return GlobalLpNorm(infinity(), v, MPI_COMM_WORLD);
+}
+#else
+using MeshType = Mesh;
+using SubMeshType = SubMesh;
+using SpaceType = FiniteElementSpace;
+using FieldType = GridFunction;
+using FormType = BilinearForm;
+using LFType = LinearForm;
+using MatType = SparseMatrix;
+bool Root() { return true; }
+double GlobalMax(double v) { return v; }
+#endif
+
+}  // namespace
+
 int main(int argc, char *argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   const char *mesh_file = "../data/circular_offset.msh";
   int order = 2;
   real_t rel_tol = 1e-12;
@@ -70,59 +119,104 @@ int main(int argc, char *argv[]) {
                  "--no-visualization", "Enable or disable GLVis.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (Root()) {
+      args.PrintUsage(cout);
+    }
     return 1;
   }
-  args.PrintOptions(cout);
+  if (Root()) {
+    args.PrintOptions(cout);
+  }
 
   // ---------------------------------------------------------------------------
   // Meshes and spaces. The u space *is* the shadow space: the restriction of
   // the parent φ space to the submesh.
   // ---------------------------------------------------------------------------
-  Mesh mesh(mesh_file, 1, 1);
-  const int dim = mesh.Dimension();
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+#ifdef MFEM_USE_MPI
+  MeshType mesh(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType &mesh = smesh;
+#endif
 
   Array<int> patch_attr({1});
-  SubMesh patch(SubMesh::CreateFromDomain(mesh, patch_attr));
+  auto patch = SubMeshType::CreateFromDomain(mesh, patch_attr);
 
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes(&mesh, &fec);
+  SpaceType fes(&mesh, &fec);
   auto shadow = SubMeshDofInjection::MakeShadowSpace(fes, patch);
-
-  const int m = fes.GetVSize();
-  const int n = shadow->GetVSize();
-  cout << "\nParent dofs: " << m << ",  submesh dofs: " << n << endl;
 
   auto injection = SubMeshDofInjection(*shadow, fes);
 
+  // The sizes and, in parallel, the true-dof injection matrix: the one
+  // object that replaces the serial dof-wise Mult/MultTranspose.
+  const int m = fes.GetTrueVSize();
+  const int n = shadow->GetTrueVSize();
+#ifdef MFEM_USE_MPI
+  auto Pi = injection.NewTrueDofMatrix();
+  // Collective on every rank, root prints.
+  const auto n_parent_glob = fes.GlobalTrueVSize();
+  const auto n_sub_glob = shadow->GlobalTrueVSize();
+  if (Root()) {
+    cout << "\nGlobal parent true dofs: " << n_parent_glob
+         << ",  global submesh true dofs: " << n_sub_glob << endl;
+  }
+  cout << "  rank " << Mpi::WorldRank() << ": " << m << " parent / " << n
+       << " submesh true dofs" << endl;
+#else
+  cout << "\nParent dofs: " << m << ",  submesh dofs: " << n << endl;
+#endif
+
   // ---------------------------------------------------------------------------
-  // Part A: field transfer, both directions.
+  // Part A: field transfer, both directions, against (Par)SubMesh::Transfer
+  // (which works on L-vectors with its own communication; the injection
+  // needs none).
   // ---------------------------------------------------------------------------
   auto g_coeff = FunctionCoefficient([](const Vector &x) {
     return sin(3.0 * x[0]) * cos(2.0 * x[1]) + 0.5 * x[0] * x[1];
   });
 
-  GridFunction g(&fes);
+  FieldType g(&fes);
   g.ProjectCoefficient(g_coeff);
+  FieldType g_sub_ref(shadow.get());
+  g_sub_ref = 0.0;
+  SubMeshType::Transfer(g, g_sub_ref);
 
-  // Parent -> submesh: MultTranspose is an exact dof-wise restriction, and
-  // agrees with MFEM's own SubMesh::Transfer.
-  GridFunction g_sub(shadow.get()), g_sub_ref(shadow.get());
+#ifdef MFEM_USE_MPI
+  // Parallel: everything at true-dof level through Pi.
+  Vector g_t(m), g_sub_t(n), g_sub_ref_t(n);
+  g.GetTrueDofs(g_t);
+  g_sub_ref.GetTrueDofs(g_sub_ref_t);
+  Pi->MultTranspose(g_t, g_sub_t);
+  g_sub_ref_t -= g_sub_t;
+  const double transfer_err = GlobalMax(g_sub_ref_t.Normlinf());
+
+  Vector g_ext_t(m), g_round_t(n);
+  Pi->Mult(g_sub_t, g_ext_t);
+  Pi->MultTranspose(g_ext_t, g_round_t);
+  g_round_t -= g_sub_t;
+  const double round_err = GlobalMax(g_round_t.Normlinf());
+#else
+  // Serial: the injection acts on the grid functions themselves.
+  FieldType g_sub(shadow.get());
   injection.MultTranspose(g, g_sub);
-  SubMesh::Transfer(g, g_sub_ref);
   g_sub_ref -= g_sub;
-  cout << "\nPart A: field transfer" << endl;
-  cout << "  ||P^T g - Transfer(g)||_inf     = " << g_sub_ref.Normlinf()
-       << endl;
+  const double transfer_err = g_sub_ref.Normlinf();
 
-  // Submesh -> parent: Mult extends by zero. The round trip P^T P is the
-  // identity on the submesh.
-  GridFunction g_ext(&fes);
+  FieldType g_ext(&fes), g_round(shadow.get());
   injection.Mult(g_sub, g_ext);
-  GridFunction g_round(shadow.get());
   injection.MultTranspose(g_ext, g_round);
   g_round -= g_sub;
-  cout << "  ||P^T (P g_sub) - g_sub||_inf   = " << g_round.Normlinf() << endl;
+  const double round_err = g_round.Normlinf();
+#endif
+
+  if (Root()) {
+    cout << "\nPart A: field transfer" << endl;
+    cout << "  ||P^T g - Transfer(g)||_inf     = " << transfer_err << endl;
+    cout << "  ||P^T (P g_sub) - g_sub||_inf   = " << round_err << endl;
+  }
 
   // ---------------------------------------------------------------------------
   // Part B: the coupled toy problem.
@@ -146,40 +240,48 @@ int main(int argc, char *argv[]) {
   {
     Array<int> ess_vdofs;
     fes.GetEssentialVDofs(bdr_marker, ess_vdofs);
-    for (int i = 0; i < n; i++) {
+    for (int i = 0; i < injection.SubVSize(); i++) {
       MFEM_VERIFY(ess_vdofs[injection.ParentVDofs()[i]] == 0,
                   "The submesh touches the essential boundary.");
     }
   }
 
   // A: stiffness on the parent, with essential elimination.
-  BilinearForm a(&fes);
+  FormType a(&fes);
   a.AddDomainIntegrator(new DiffusionIntegrator(one));
   a.Assemble();
 
-  LinearForm b(&fes);
+  LFType b(&fes);
   b.AddDomainIntegrator(new DomainLFIntegrator(f_coeff));
   b.Assemble();
 
-  GridFunction phi(&fes);
+  FieldType phi(&fes);
   phi = 0.0;
 
-  SparseMatrix A;
+  MatType A;
   Vector Phi, F;
   a.FormLinearSystem(ess_tdof_list, phi, b, A, Phi, F);
 
-  // M: mass on the submesh. B and B^T then come from the injection by pure
-  // re-indexing — no cross-mesh assembly anywhere.
-  BilinearForm m_form(shadow.get());
+  // M: mass on the submesh. B and B^T then come from the injection — by
+  // pure re-indexing serially, by hypre products in parallel; no
+  // cross-mesh assembly anywhere in either build.
+  FormType m_form(shadow.get());
   m_form.AddDomainIntegrator(new MassIntegrator(one));
   m_form.Assemble();
   m_form.Finalize();
-  SparseMatrix &M = m_form.SpMat();
-
+#ifdef MFEM_USE_MPI
+  unique_ptr<MatType> M_owned(m_form.ParallelAssemble());
+  MatType &M = *M_owned;
+  unique_ptr<MatType> B(ParMult(Pi.get(), M_owned.get()));  // parent × sub
+  unique_ptr<MatType> Bt(B->Transpose());                   // sub × parent
+#else
+  MatType &M = m_form.SpMat();
   auto B = injection.RemapRows(M);      // = P M   (parent × sub)
   auto Bt = injection.RemapColumns(M);  // = M P^T (sub × parent) = B^T
+#endif
 
-  // Block system and MINRES.
+  // Block system and MINRES. (The preconditioner is the build's:
+  // diagonal smoothing serially, AMG + diagonal scaling in parallel.)
   Array<int> offsets({0, m, m + n});
   BlockOperator block_op(offsets);
   block_op.SetBlock(0, 0, &A);
@@ -187,7 +289,15 @@ int main(int argc, char *argv[]) {
   block_op.SetBlock(1, 0, Bt.get());
   block_op.SetBlock(1, 1, &M, -1.0);
 
+#ifdef MFEM_USE_MPI
+  HypreBoomerAMG prec_A(A);
+  prec_A.SetPrintLevel(0);
+  HypreDiagScale prec_M(M);
+  MINRESSolver minres(MPI_COMM_WORLD);
+#else
   DSmoother prec_A(A), prec_M(M);
+  MINRESSolver minres;
+#endif
   BlockDiagonalPreconditioner prec(offsets);
   prec.SetDiagonalBlock(0, &prec_A);
   prec.SetDiagonalBlock(1, &prec_M);
@@ -198,7 +308,6 @@ int main(int argc, char *argv[]) {
   Rhs = 0.0;
   Rhs.GetBlock(0) = F;
 
-  MINRESSolver minres;
   minres.SetRelTol(rel_tol);
   minres.SetMaxIter(20000);
   minres.SetPrintLevel(0);
@@ -206,53 +315,80 @@ int main(int argc, char *argv[]) {
   minres.SetPreconditioner(prec);
   minres.Mult(Rhs, X);
 
-  cout << "\nPart B: block solve" << endl;
-  cout << "  MINRES iterations               = " << minres.GetNumIterations()
-       << (minres.GetConverged() ? "" : "  (NOT converged)") << endl;
+  if (Root()) {
+    cout << "\nPart B: block solve" << endl;
+    cout << "  MINRES iterations               = "
+         << minres.GetNumIterations()
+         << (minres.GetConverged() ? "" : "  (NOT converged)") << endl;
+  }
 
-  // Note: not RecoverFEMSolution here. In serial legacy assembly the X
-  // returned by FormLinearSystem aliases phi's memory and RecoverFEMSolution
-  // relies on that aliasing; our solution lives in a BlockVector instead, so
-  // copy it back explicitly (conforming serial space: vdofs = tdofs, and the
+  FieldType u(shadow.get());
+#ifdef MFEM_USE_MPI
+  a.RecoverFEMSolution(X.GetBlock(0), b, phi);
+  u.SetFromTrueDofs(X.GetBlock(1));
+#else
+  // Not RecoverFEMSolution here: in serial legacy assembly the X returned
+  // by FormLinearSystem aliases phi's memory and RecoverFEMSolution relies
+  // on that aliasing; our solution lives in a BlockVector instead, so copy
+  // it back explicitly (conforming serial space: vdofs = tdofs, and the
   // eliminated boundary values were carried through the solve).
-  GridFunction u(shadow.get());
   phi = X.GetBlock(0);
   u = X.GetBlock(1);
+#endif
 
   // Check 1: the second block equation forces u to be the dof-wise
   // restriction of φ.
-  GridFunction phi_restricted(shadow.get());
-  injection.MultTranspose(phi, phi_restricted);
-  phi_restricted -= u;
-  cout << "  ||u - P^T phi||_inf             = " << phi_restricted.Normlinf()
-       << "   (solver tolerance)" << endl;
+  {
+#ifdef MFEM_USE_MPI
+    Vector phi_t(m), phi_restricted_t(n);
+    phi.GetTrueDofs(phi_t);
+    Pi->MultTranspose(phi_t, phi_restricted_t);
+    phi_restricted_t -= X.GetBlock(1);
+    const double u_err = GlobalMax(phi_restricted_t.Normlinf());
+#else
+    FieldType phi_restricted(shadow.get());
+    injection.MultTranspose(phi, phi_restricted);
+    phi_restricted -= u;
+    const double u_err = phi_restricted.Normlinf();
+#endif
+    if (Root()) {
+      cout << "  ||u - P^T phi||_inf             = " << u_err
+           << "   (solver tolerance)" << endl;
+    }
+  }
 
   // Check 2: eliminating u gives the single-mesh problem with the reaction
   // term confined to the patch, assembled here directly on the parent mesh
   // with an attribute marker.
-  GridFunction phi_mono(&fes);
+  FieldType phi_mono(&fes);
   phi_mono = 0.0;
   {
     Array<int> patch_marker(mesh.attributes.Max());
     patch_marker = 0;
     patch_marker[0] = 1;
 
-    BilinearForm a_mono(&fes);
+    FormType a_mono(&fes);
     a_mono.AddDomainIntegrator(new DiffusionIntegrator(one));
     a_mono.AddDomainIntegrator(new MassIntegrator(one), patch_marker);
     a_mono.Assemble();
 
-    LinearForm b_mono(&fes);
+    LFType b_mono(&fes);
     b_mono.AddDomainIntegrator(new DomainLFIntegrator(f_coeff));
     b_mono.Assemble();
 
-    SparseMatrix A_mono;
+    MatType A_mono;
     Vector Phi_mono, F_mono;
     a_mono.FormLinearSystem(ess_tdof_list, phi_mono, b_mono, A_mono, Phi_mono,
                             F_mono);
 
+#ifdef MFEM_USE_MPI
+    HypreBoomerAMG prec_mono(A_mono);
+    prec_mono.SetPrintLevel(0);
+    CGSolver cg(MPI_COMM_WORLD);
+#else
     GSSmoother prec_mono(A_mono);
     CGSolver cg;
+#endif
     cg.SetRelTol(rel_tol);
     cg.SetMaxIter(20000);
     cg.SetPrintLevel(0);
@@ -263,26 +399,41 @@ int main(int argc, char *argv[]) {
     a_mono.RecoverFEMSolution(Phi_mono, b_mono, phi_mono);
   }
 
-  GridFunction diff(phi_mono);
-  diff -= phi;
-  cout << "  ||phi - phi_monolithic||_inf    = " << diff.Normlinf()
-       << "   (solver tolerance; ||phi||_inf = " << phi.Normlinf() << ")"
-       << endl;
+  {
+    FieldType diff(phi_mono);
+    diff -= phi;
+    const double mono_err = GlobalMax(diff.Normlinf());
+    const double phi_norm = GlobalMax(phi.Normlinf());
+    if (Root()) {
+      cout << "  ||phi - phi_monolithic||_inf    = " << mono_err
+           << "   (solver tolerance; ||phi||_inf = " << phi_norm << ")"
+           << endl;
+    }
+  }
 
   if (visualization) {
     char vishost[] = "localhost";
     int visport = 19916;
 
     socketstream phi_sock(vishost, visport);
+#ifdef MFEM_USE_MPI
+    phi_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
+             << "\n";
+#endif
     phi_sock.precision(8);
     phi_sock << "solution\n"
-             << mesh << phi << "window_title 'phi on the parent mesh'" << endl;
+             << mesh << phi << "window_title 'phi on the parent mesh'"
+             << flush;
     phi_sock << "keys Rjlbc\n" << flush;
 
     socketstream u_sock(vishost, visport);
+#ifdef MFEM_USE_MPI
+    u_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
+           << "\n";
+#endif
     u_sock.precision(8);
     u_sock << "solution\n"
-           << patch << u << "window_title 'u on the submesh'" << endl;
+           << patch << u << "window_title 'u on the submesh'" << flush;
     u_sock << "keys Rjlbc\n" << flush;
   }
 

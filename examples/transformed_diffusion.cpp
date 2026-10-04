@@ -1,28 +1,11 @@
-#include <cassert>
-#include <cstddef>
-#include <fstream>
-#include <iostream>
-#include <memory>
-#include <numbers>  // For std::numbers::pi_v
-
-// Main MFEM library header
-#include "mfem.hpp"
-// Headers from a custom MFEM-based library (e.g., for elasticity,
-// transformations)
-#include "mfemElasticity.hpp"
-
-// Use standard C++ and MFEM namespaces
-using namespace std;
-using namespace mfem;
-using namespace mfemElasticity;
-
 //------------------------------------------------------------------------------
 //
 // PURPOSE:
 //
-// This example (transformed_diffusion) demonstrates how to solve a partial differential
-// equation (PDE) on a deformed domain using the "transformed domain"
-// or "pullback" approach.
+// This example (transformed_diffusion) demonstrates how to solve a partial
+// differential equation (PDE) on a deformed domain using the "transformed
+// domain" or "pullback" approach, the approach of the library's referential
+// problems.
 //
 // The core idea is to perform all calculations on a simple,
 // undeformed *reference mesh* (a disk or a ball).
@@ -36,8 +19,7 @@ using namespace mfemElasticity;
 // 2. **Define Transformation:** It defines a smooth coordinate
 //    transformation (a diffeomorphism, $q(x)$) that deforms the mesh.
 //    In this case, it's an interior "twist" that leaves the boundary
-//    and center fixed.
-//
+//    and centre fixed.
 //
 // 3. **Solve Transformed Problem:** It solves the *transformed*
 //    Laplace equation on the *same reference mesh*. This is done
@@ -45,10 +27,14 @@ using namespace mfemElasticity;
 //    handles the geometric factors (Jacobians) from the
 //    transformation $q(x)$. The resulting solution, $\zeta(x)$, is the
 //    "pullback" of the physical solution $u$, meaning $\zeta(x) = u(q(x))$.
+//    The twist maps the disk (ball) onto itself and fixes its boundary,
+//    so the boundary data are the same as in step 1.
 //
 // 4. **Error Calculation:** It computes the L2 error for both the
 //    standard solution ($\phi$) and the transformed solution ($\zeta$)
-//    by comparing them to their respective exact solutions.
+//    by comparing them to their respective exact solutions: the harmonic
+//    function $xy$ (2-D) or $yz$ (3-D), and its pullback. Both errors are
+//    printed and should decrease with refinement.
 //
 // 5. **Visualization:**
 //    a. Visualizes $\phi$ on the reference mesh.
@@ -60,10 +46,32 @@ using namespace mfemElasticity;
 //
 // One source serves the serial and the parallel build: against an MFEM with
 // MPI the mesh, the spaces and the matrices are the parallel ones, the
-// preconditioner is BoomerAMG in place of Gauss-Seidel, and the program runs
-// under mpirun on any number of ranks.
+// preconditioner is BoomerAMG in place of Gauss-Seidel, the -pr option
+// refines the partitioned mesh, and the program runs under mpiexec on any
+// number of ranks.
+//
+// Sample runs:  ./transformed_diffusion
+//               ./transformed_diffusion -d 3 -o 1 -th 30
+//               mpiexec -np 4 ./transformed_diffusion -r 1   (parallel build)
 //
 //------------------------------------------------------------------------------
+
+#include <cassert>
+#include <cstddef>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <numbers>  // For std::numbers::pi_v
+
+// Main MFEM library header
+#include "mfem.hpp"
+// The mfemElasticity library
+#include "mfemElasticity.hpp"
+
+// Use standard C++ and MFEM namespaces
+using namespace std;
+using namespace mfem;
+using namespace mfemElasticity;
 
 #ifdef MFEM_USE_MPI
 using MeshType = ParMesh;

@@ -110,6 +110,7 @@ meshes_add(unit_disc.py        disk)
 meshes_add(unit_ball.py        ball)
 meshes_add(offset_disc.py      circular_offset)
 meshes_add(disc_with_buffer.py elastogravity_2d)
+meshes_add(disc_with_wide_buffer.py elastogravity_2d_wide)
 meshes_add(ball_with_buffer.py coupled_poisson)
 meshes_add(layered_earth.py    elastogravity_two_layer_2d
                                elastogravity_three_layer_2d
@@ -117,6 +118,10 @@ meshes_add(layered_earth.py    elastogravity_two_layer_2d
                                ARGS --all)
 meshes_add(aspherical_body.py  aspherical_2d aspherical_buffer_2d
                                aspherical_3d aspherical_buffer_3d
+                               aspherical_fluid_core_buffer_2d
+                               spherical_fluid_core_buffer_2d
+                               aspherical_fluid_core_buffer_3d
+                               spherical_fluid_core_buffer_3d
                                MFEM ARGS --all)
 
 add_custom_target(meshes ALL DEPENDS ${MESHES_OUTPUTS})

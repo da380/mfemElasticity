@@ -32,12 +32,19 @@
 // tau = tau0 / (1 + g (|dev sigma| / 2 mu0)^(n-1)) with mu0 the unrelaxed
 // shear modulus; -rtol r > 0 replaces the fixed steps by the adaptive
 // exponential trapezoid solver with that relative tolerance.
+//
+// One source serves the serial and the parallel build; the genuine
+// differences are the mesh partitioning, the global reductions on the
+// printed norms and counts, the per-rank native-format save and the
+// GLVis stream header. (Run with mpiexec -np N in a parallel build.)
 // ============================================================================
 
 #include <cmath>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 
 #include "mfemElasticity.hpp"
 
@@ -45,11 +52,54 @@ using namespace std;
 using namespace mfem;
 using namespace mfemElasticity;
 
+namespace {
+
+#ifdef MFEM_USE_MPI
+using MeshType = ParMesh;
+using SpaceType = ParFiniteElementSpace;
+bool Root() { return Mpi::Root(); }
+double GlobalSum(double v) {
+  double g = 0.0;
+  MPI_Allreduce(&v, &g, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  return g;
+}
+#else
+using MeshType = Mesh;
+using SpaceType = FiniteElementSpace;
+bool Root() { return true; }
+double GlobalSum(double v) { return v; }
+#endif
+
+// The internal-variable vector is distributed in parallel: its norm and
+// its length need reductions.
+double GlobalNorm(const Vector& v) {
+  return std::sqrt(GlobalSum(v * v));
+}
+
+string RankName(const string& base) {
+#ifdef MFEM_USE_MPI
+  ostringstream name;
+  name << base << "." << setfill('0') << setw(6) << Mpi::WorldRank();
+  return name.str();
+#else
+  return base;
+#endif
+}
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
+#ifdef MFEM_USE_MPI
+  Mpi::Init(argc, argv);
+  Hypre::Init();
+#endif
+
   // Set the default options.
   const char* mesh_file = "../data/star.mesh";
   int order = 2;
-  int m_order = -1;  // internal-variable order; < 0 means order - 1
+  // Internal-variable order; < 0 means order - 1 on simplices and order on
+  // tensor-product elements (the smallest order resolving eps(u) exactly).
+  int m_order = -1;
   real_t ti_factor = 0.0;
   real_t gamma0 = 0.0, nexp = 3.0, rtol = 0.0;
   int ref_levels = 1;
@@ -69,7 +119,9 @@ int main(int argc, char* argv[]) {
   args.AddOption(&order, "-o", "--order",
                  "Finite element order for the displacement.");
   args.AddOption(&m_order, "-mo", "--m-order",
-                 "Order of the internal-variable space (< 0: order - 1).");
+                 "Order of the internal-variable space (< 0: the order "
+                 "resolving eps(u) exactly: order - 1 on simplices, order "
+                 "on tensor-product elements).");
   args.AddOption(&ref_levels, "-r", "--refinement",
                  "Number of uniform mesh refinements.");
   args.AddOption(&problem_type, "-p", "--problem",
@@ -80,7 +132,7 @@ int main(int argc, char* argv[]) {
                  "Euler, 2 = backward Euler, 3 = SDIRK23, 4 = RK4, "
                  "5 = forward Euler.");
   args.AddOption(&map_type, "-map", "--strain-map",
-                 "Strain map: 0 = Galerkin (M^{-1} B), 1 = interpolation.");
+                 "Strain map: 0 = Galerkin projection, 1 = interpolation.");
   args.AddOption(&t_final, "-tf", "--t-final", "Final time.");
   args.AddOption(&n_steps, "-n", "--n-steps", "Number of time steps.");
   args.AddOption(&tau0, "-tau", "--relaxation-time",
@@ -103,22 +155,32 @@ int main(int argc, char* argv[]) {
                  "Send the final displacement to a running GLVis server.");
   args.Parse();
   if (!args.Good()) {
-    args.PrintUsage(cout);
+    if (Root()) {
+      args.PrintUsage(cout);
+    }
     return 1;
   }
-  args.PrintOptions(cout);
-
-  // Read in the mesh and refine if requested.
-  Mesh mesh(mesh_file, 1, 1);
-  const int dim = mesh.Dimension();
-  for (int l = 0; l < ref_levels; l++) {
-    mesh.UniformRefinement();
+  if (Root()) {
+    args.PrintOptions(cout);
   }
+
+  // Read in the mesh, refine if requested, and partition in parallel.
+  Mesh smesh(mesh_file, 1, 1);
+  const int dim = smesh.Dimension();
+  for (int l = 0; l < ref_levels; l++) {
+    smesh.UniformRefinement();
+  }
+#ifdef MFEM_USE_MPI
+  MeshType mesh(MPI_COMM_WORLD, smesh);
+  smesh.Clear();
+#else
+  MeshType& mesh = smesh;
+#endif
 
   // Displacement space and material. kappa = 1 + 2/d so that the unrelaxed
   // state has lambda = mu = 1 when mu_inf + mu_1 = 1.
   H1_FECollection fec(order, dim);
-  FiniteElementSpace fes(&mesh, &fec, dim);
+  SpaceType fes(&mesh, &fec, dim);
   ConstantCoefficient kappa(1.0 + 2.0 / dim), mu_inf(mu_inf0),
       mu1(1.0 - mu_inf0), tau(tau0);
   ConstantCoefficient gamma_c(gamma0), n_c(nexp), mu0_c(1.0);
@@ -186,7 +248,9 @@ int main(int argc, char* argv[]) {
     problem = make_unique<LinearQuasiStaticClampedProblem>(
         &fes, rheology, ess_bdr, traction, marker);
   } else {
-    cerr << "Unknown problem type: " << problem_type << "\n";
+    if (Root()) {
+      cerr << "Unknown problem type: " << problem_type << "\n";
+    }
     return 1;
   }
   problem->SetPrintLevel(IterativeSolver::PrintLevel().Summary());
@@ -195,8 +259,20 @@ int main(int argc, char* argv[]) {
                        ? ViscoelasticOperator::StrainMap::Galerkin
                        : ViscoelasticOperator::StrainMap::Interpolation;
   ViscoelasticOperator visco(*problem, m_order, map);
-  cout << "Displacement unknowns:      " << fes.GetTrueVSize() << "\n"
-       << "Internal-variable unknowns: " << visco.Height() << "\n";
+  {
+    // Collective calls on every rank, root prints.
+    const double n_m = GlobalSum(visco.Height());
+#ifdef MFEM_USE_MPI
+    const auto n_u = fes.GlobalTrueVSize();
+#else
+    const auto n_u = fes.GetTrueVSize();
+#endif
+    if (Root()) {
+      cout << "Displacement unknowns:      " << n_u << "\n";
+      cout << "Internal-variable unknowns: " << static_cast<long>(n_m)
+           << "\n";
+    }
+  }
 
   // Select the time integrator.
   unique_ptr<ODESolver> ode;
@@ -211,7 +287,7 @@ int main(int argc, char* argv[]) {
       ode = make_unique<BackwardEulerSolver>();
       break;
     case 3:
-      ode = make_unique<SDIRK23Solver>();
+      ode = make_unique<SDIRK23Solver>(2);  // the L-stable variant
       break;
     case 4:
       ode = make_unique<RK4Solver>();
@@ -220,7 +296,9 @@ int main(int argc, char* argv[]) {
       ode = make_unique<ForwardEulerSolver>();
       break;
     default:
-      cerr << "Unknown solver type: " << solver_type << "\n";
+      if (Root()) {
+        cerr << "Unknown solver type: " << solver_type << "\n";
+      }
       return 1;
   }
   ode->Init(visco);
@@ -238,7 +316,7 @@ int main(int argc, char* argv[]) {
   Vector m(visco.Height());
   m = 0.0;
 
-  if (solver_type >= 4 && dt > 2.5 * visco.MinRelaxationTime()) {
+  if (Root() && solver_type >= 4 && dt > 2.5 * visco.MinRelaxationTime()) {
     cout << "Warning: dt = " << dt
          << " exceeds the explicit stability limit of roughly 2.8 tau_min = "
          << 2.8 * visco.MinRelaxationTime()
@@ -257,7 +335,9 @@ int main(int argc, char* argv[]) {
 
   // Initial state: relaxed internal variable, elastic response at t = 0.
   if (!visco.SolveElastic(m, t)) {
-    cerr << "Elastic solve failed at t = " << t << "\n";
+    if (Root()) {
+      cerr << "Elastic solve failed at t = " << t << "\n";
+    }
     return 2;
   }
   visco.SyncFields(m);
@@ -268,25 +348,32 @@ int main(int argc, char* argv[]) {
   }
 
   // March through time. SolveElastic() makes (u, m) consistent for output;
-  // it is free after a trapezoid or implicit step and costs one solve after
-  // an explicit or exponential-Euler one.
+  // it is free after an exponential-trapezoid or backward-Euler step and
+  // costs one solve after an SDIRK, explicit or exponential-Euler one.
   for (int step = 1; step <= n_steps; step++) {
     if (rtol > 0.0) {
       const real_t t_target = step * t_final / n_steps;
       const int n = adaptive.Integrate(m, t, t_target, dt_adaptive);
-      cout << "  adaptive: " << n << " steps to t = " << t << ", next dt "
-           << dt_adaptive << "\n";
+      if (Root()) {
+        cout << "  adaptive: " << n << " steps to t = " << t << ", next dt "
+             << dt_adaptive << "\n";
+      }
     } else {
       ode->Step(m, t, dt);
     }
 
     if (!visco.SolveElastic(m, t)) {
-      cerr << "Elastic solve failed at t = " << t << "\n";
+      if (Root()) {
+        cerr << "Elastic solve failed at t = " << t << "\n";
+      }
       return 2;
     }
     visco.SyncFields(m);
-    cout << "step " << step << ", t = " << t << ", ||m||_2 = " << m.Norml2()
-         << "\n";
+    const double m_norm = GlobalNorm(m);
+    if (Root()) {
+      cout << "step " << step << ", t = " << t << ", ||m||_2 = " << m_norm
+           << "\n";
+    }
 
     if (paraview) {
       dc.SetCycle(step);
@@ -299,23 +386,26 @@ int main(int argc, char* argv[]) {
     Vector zero(dim);
     zero = 0.0;
     VectorConstantCoefficient z(zero);
-    cout.precision(10);
-    cout << "Final ||u||_L2 = " << problem->Displacement().ComputeL2Error(z)
-         << "\n";
-    if (rtol > 0.0) {
-      cout << "Adaptive steps: " << adaptive.NumAcceptedSteps()
-           << " accepted, " << adaptive.NumRejectedSteps() << " rejected\n";
+    const double u_norm = problem->Displacement().ComputeL2Error(z);
+    if (Root()) {
+      cout.precision(10);
+      cout << "Final ||u||_L2 = " << u_norm << "\n";
+      if (rtol > 0.0) {
+        cout << "Adaptive steps: " << adaptive.NumAcceptedSteps()
+             << " accepted, " << adaptive.NumRejectedSteps() << " rejected\n";
+      }
+      cout << "Preconditioner setups: " << problem->NumPreconditionerSetups()
+           << "\n";
     }
-    cout << "Preconditioner setups: " << problem->NumPreconditionerSetups()
-         << "\n";
   }
 
-  // Save the final state in MFEM's native format.
+  // Save the final state in MFEM's native format (one file per rank in
+  // parallel).
   {
-    ofstream mesh_ofs("refined.mesh");
+    ofstream mesh_ofs(RankName("refined.mesh"));
     mesh_ofs.precision(8);
     mesh.Print(mesh_ofs);
-    ofstream sol_ofs("sol.gf");
+    ofstream sol_ofs(RankName("sol.gf"));
     sol_ofs.precision(8);
     problem->Displacement().Save(sol_ofs);
   }
@@ -326,6 +416,10 @@ int main(int argc, char* argv[]) {
     int visport = 19916;
     socketstream sol_sock(vishost, visport);
     sol_sock.precision(8);
+#ifdef MFEM_USE_MPI
+    sol_sock << "parallel " << Mpi::WorldSize() << " " << Mpi::WorldRank()
+             << "\n";
+#endif
     sol_sock << "solution\n";
     mesh.Print(sol_sock);
     problem->Displacement().Save(sol_sock);

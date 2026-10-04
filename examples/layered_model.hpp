@@ -1,8 +1,8 @@
 // ============================================================================
 // layered_model.hpp
 //
-// The PREM-like layered Earth models of the elastogravity_layered examples,
-// shared by the serial and parallel drivers.
+// The PREM-like layered Earth models shared by the elastogravity_layered and
+// self_gravitating_relaxation examples.
 //
 // Three models, recognised from the mesh's number of domain attributes
 // (SetModel):
@@ -177,8 +177,9 @@ inline real_t BulkModulus(const Vector& x) {
 }
 
 // Surface mass load sigma (non-dimensional; positive = mass added): a
-// degree-2 pressure pattern between 1 and 10 MPa (times load_factor) with
-// an azimuthal perturbation, converted to mass per area.
+// degree-2 pressure pattern between 0.1 and 1 MPa (times load_factor) with
+// a 20% azimuthal perturbation, converted to mass per area with the
+// gravity scale.
 inline real_t SurfaceLoad(const Vector& x) {
   const real_t r = x.Norml2();
   if (r == 0.0) {

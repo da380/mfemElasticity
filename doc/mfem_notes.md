@@ -1,15 +1,17 @@
 # MFEM facts and pitfalls
 
-Things about MFEM (checked against 4.9) that shaped this library or cost
-time to find. Each entry says where the library deals with it.
+MFEM behaviours (checked against MFEM 4.9) that the library relies on or
+works around. Each entry says where the library deals with it; the subject
+notes (`submesh_coupling.md`, `null_space.md`, `viscoelasticity.md`) give
+the context.
 
 ## Solvers
 
 - **The relative tolerance of the Krylov solvers is relative to the
   *initial* residual**, not to ‖b‖. A warm-started solve that begins near
   the solution therefore chases a target far below round-off and runs to its
-  iteration limit. Set an absolute tolerance from ‖b‖ whenever
-  `iterative_mode` is on
+  iteration limit. Set an absolute tolerance from the preconditioned norm of b,
+  rel_tol·√(M b, b), whenever `iterative_mode` is on
   (`LinearQuasiStaticProblemBase::SetWarmStartTolerance`).
 - **CG's stopping criterion is on the squared residual** (the preconditioned
   inner product), so a relative tolerance below about 1e-13 is beyond
@@ -17,13 +19,15 @@ time to find. Each entry says where the library deals with it.
 - **An unprojected preconditioner on a projected singular system diverges
   at round-off.** BoomerAMG or a shifted Laplacian amplifies the round-off
   null component of the residual at every iteration. Project the
-  preconditioner as well as the operator (`null_space.md`). It appears in
-  parallel; serial Gauss–Seidel happens not to show it.
+  preconditioner as well as the operator (`null_space.md`). It is observed in
+  parallel; it is not observed with serial Gauss–Seidel.
 - **`OrthoSolver` is not a projected operator.** It runs the inner solver on
   `A` with a projected right-hand side. When the constant is only
   approximately null (the 2-D potential block with a fluid mass term) that
   is a different regularisation from CG on `P A P`, and the two give
-  different answers. The library uses `P A P` throughout.
+  different answers. The library uses `P A P` throughout; only
+  `examples/poisson_dtn.cpp` uses `OrthoSolver`, for the singular 2-D case
+  of a stand-alone Poisson problem.
 - **Setting the operator of an `IterativeSolver` also sets it on its
   preconditioner.** When the two must differ, set the operator first and the
   preconditioner second (`SetupCG`).
@@ -32,7 +36,7 @@ time to find. Each entry says where the library deals with it.
   alone, for the Laplacian and for elasticity with the elasticity options.
 - **`SDIRK23Solver()` defaults to the third-order, A-stable but not
   L-stable variant.** The second-order L-stable scheme is
-  `SDIRK23Solver(2)`.
+  `SDIRK23Solver(2)`, which the examples and benchmarks use.
 - **`ImplicitSolve(dt, x, k)` must return the rate** `k` with
   `k = f(x + dt·k)`, not the new state, and SDIRK schemes call it with γ·dt.
 - **Explicit `ODESolver`s call `SetTime(t + cᵢ dt)` before each `Mult`.** Use

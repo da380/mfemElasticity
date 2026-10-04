@@ -1,11 +1,12 @@
 #include "QuasiStaticTestCommon.hpp"
-#include "SelfGravitatingTestCommon.hpp"
+#include "MixedProblemTestCommon.hpp"
 #include "TestCommon.hpp"
 
 /*
   Tests for CompositeRheology, against single global rheologies with
-  piecewise coefficients. The bar of the quasi-static tests is split into
-  two attribute regions (x < 0.4 and x > 0.4).
+  piecewise coefficients. The unit square/cube of the quasi-static tests,
+  loaded by the uniaxial traction on x = 0 and x = 1, is split into two
+  attribute regions (x < 0.4 and x > 0.4).
 
   1. A Maxwell bar with the same rheology in both regions equals the unsplit
      bar to round-off for the exponential trapezoid and backward Euler:
@@ -22,11 +23,13 @@
      with a piecewise weight.
   4. An isotropic Maxwell region beside an anisotropic (deviatoric Maxwell,
      isotropic tensor) region uses full internal variables and reproduces the
-     all-isotropic composite; the branch moduli vanish outside their regions.
-  5. Smoke: a three-layer self-gravitating body with an elastic inner core
-     and a Maxwell mantle steps through the viscoelastic operator.
-  Plus the bookkeeping: branch numbering, labels, region lookup, and the
-  construction checks (overlap, coverage).
+     all-isotropic composite.
+  5. Smoke: a three-layer self-gravitating body with an elastic inner core,
+     a fluid outer core and a Maxwell mantle steps through the viscoelastic
+     operator, and the mantle relaxes under the sustained load.
+  Plus the bookkeeping: branch numbering, labels, region lookup, the
+  masked branch data (relaxation time and branch moduli outside a branch's
+  region), and the construction checks (overlap, coverage).
 */
 
 namespace {
@@ -141,8 +144,9 @@ class CompositeRheologyTest : public testing::TestWithParam<Param> {
     return std::make_unique<PWCoefficient>(attrs, coefs);
   }
 
-  // Run `steps` steps of `scheme` for the traction problem with `rheology`;
-  // returns the state, leaves the displacement in `problem`.
+  // Run `steps` steps of size `dt` of `scheme` (0 exponential trapezoid,
+  // 1 backward Euler) from the zero state; returns the state and leaves
+  // the displacement of the final state in the operator's problem.
   Vector Run(ViscoelasticOperator& visco, int scheme, int steps, double dt) {
     auto ode = MakeScheme(scheme);
     ode->Init(visco);
@@ -411,7 +415,7 @@ INSTANTIATE_TEST_SUITE_P(Composite, CompositeRheologyTest,
                                           testing::Values(0, 1),
                                           testing::Values(1, 2)));
 
-TEST(CompositeRheologySelfGravitating, ElasticCoreMaxwellMantle) {
+TEST(CompositeRheologyMixedProblem, ElasticCoreMaxwellMantle) {
   using namespace self_grav_test;
   const int dim = 2, order = 1;
   Mesh parent(ThreeLayerMeshFile(dim).c_str(), 1, 1);
@@ -437,7 +441,7 @@ TEST(CompositeRheologySelfGravitating, ElasticCoreMaxwellMantle) {
   EXPECT_EQ(composite.BranchLabel(0), "mantle_branch0");
 
   std::vector<FluidRegion> fluids{OuterCore(solid, rho_f)};
-  LinearQuasiStaticSelfGravitatingProblem problem(&fes_u, &fes_phi, composite,
+  LinearQuasiStaticMixedSelfGravitatingProblem problem(&fes_u, &fes_phi, composite,
                                                   rho_s, kG, kDtNDegree,
                                                   nullptr, fluids);
   problem.SetSurfaceLoad(sigma, SurfaceMarker(solid));

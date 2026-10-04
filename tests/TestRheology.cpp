@@ -246,7 +246,8 @@ TEST_P(RheologyTest, AnisotropicTensors) {
       C_u.Eval(Cb, *T, ip);
       Ca -= Cb;
       EXPECT_LT(Ca.MaxMaxNorm(), 1e-13 * Cb.MaxMaxNorm());
-      // Branch moduli: the anisotropic C_1 and the isotropic 2 mu_1 P_dev.
+      // Branch moduli: the anisotropic C_1 equals the isotropic body's
+      // 2 mu_1 P_dev, and the isotropic branch 1 is 2 mu_2 P_dev.
       r.BranchModulus(0, *T, ip, Ca);
       iso.BranchModulus(0, *T, ip, Cb);
       Ca -= Cb;

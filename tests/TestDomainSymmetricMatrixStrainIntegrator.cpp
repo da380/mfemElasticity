@@ -3,6 +3,11 @@
 class BilinearFormIntegratorTests
     : public ::testing::TestWithParam<DimOrderTypeTuple> {};
 
+// int q v : sym(grad u) for u = B x and a constant symmetric field v = A,
+// packed as the lower triangle in column-major order, against
+// DomainLFDeformationGradientIntegrator with q A (equal because A is
+// symmetric): checks the packed ordering and the weighting of the
+// off-diagonal components.
 TEST_P(BilinearFormIntegratorTests, DomainSymmetricMatrixStrainIntegrator) {
   const auto& current_tuple = GetParam();
 
