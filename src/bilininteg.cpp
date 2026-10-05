@@ -874,13 +874,13 @@ void ReferentialGravityIntegrator::AssembleElementMatrix(
     MultAAt(F_, a_);
     a_ *= J;  // a_e = J F^{-1} F^{-T}
     g0_->Eval(g0v_, Trans, ip);
-    a_.Mult(g0v_, w_);                  // w = a_e g0
-    const auto c0 = g0v_ * w_;          // <a_e g0, g0>
-    Mult(gshape_, F_, M_);              // M(a,k) = grad(phi_a) . f_k = tr H
-    gshape_.Mult(w_, beta_);            // beta_a = grad(phi_a) . w
-    F_.MultTranspose(g0v_, gamma_);     // gamma_k = f_k . g0
-    Mult(gshape_, a_, ag_);             // a_e grad(phi_a)
-    MultABt(ag_, gshape_, P_);          // P(a,b) = grad(phi_a) . a_e grad(phi_b)
+    a_.Mult(g0v_, w_);               // w = a_e g0
+    const auto c0 = g0v_ * w_;       // <a_e g0, g0>
+    Mult(gshape_, F_, M_);           // M(a,k) = grad(phi_a) . f_k = tr H
+    gshape_.Mult(w_, beta_);         // beta_a = grad(phi_a) . w
+    F_.MultTranspose(g0v_, gamma_);  // gamma_k = f_k . g0
+    Mult(gshape_, a_, ag_);          // a_e grad(phi_a)
+    MultABt(ag_, gshape_, P_);       // P(a,b) = grad(phi_a) . a_e grad(phi_b)
 
     // <a''(u,v) g0, g0> for the rank-one H of each basis pair (a,k),(b,l):
     //   c0 [M_ak M_bl - M_al M_bk]
@@ -892,13 +892,12 @@ void ReferentialGravityIntegrator::AssembleElementMatrix(
         const auto row = uidx(a, k);
         for (auto l = 0; l < dim; l++) {
           for (auto b = 0; b < dof; b++) {
-            const auto val =
-                c0 * (M_(a, k) * M_(b, l) - M_(a, l) * M_(b, k)) -
-                2.0 * (M_(a, k) * beta_(b) * gamma_(l) +
-                       M_(b, l) * beta_(a) * gamma_(k)) +
-                2.0 * (M_(a, l) * beta_(b) * gamma_(k) +
-                       M_(b, k) * beta_(a) * gamma_(l)) +
-                2.0 * gamma_(k) * gamma_(l) * P_(a, b);
+            const auto val = c0 * (M_(a, k) * M_(b, l) - M_(a, l) * M_(b, k)) -
+                             2.0 * (M_(a, k) * beta_(b) * gamma_(l) +
+                                    M_(b, l) * beta_(a) * gamma_(k)) +
+                             2.0 * (M_(a, l) * beta_(b) * gamma_(k) +
+                                    M_(b, k) * beta_(a) * gamma_(l)) +
+                             2.0 * gamma_(k) * gamma_(l) * P_(a, b);
             elmat(row, uidx(b, l)) += wq * val;
           }
         }
@@ -939,9 +938,9 @@ void ReferentialGravityCouplingIntegrator::AssembleElementMatrix2(
 
   const IntegrationRule* ir = IntRule;
   if (ir == nullptr) {
-    ir = &IntRules.Get(trial_fe.GetGeomType(),
-                       trial_fe.GetOrder() + test_fe.GetOrder() +
-                           Trans.OrderGrad(&test_fe));
+    ir = &IntRules.Get(
+        trial_fe.GetGeomType(),
+        trial_fe.GetOrder() + test_fe.GetOrder() + Trans.OrderGrad(&test_fe));
   }
 
   for (auto q = 0; q < ir->GetNPoints(); q++) {
@@ -1389,8 +1388,7 @@ void SlipInterfacePressureIntegrator::AssembleElementMatrix(
     Mult(PT_, Fi_, dir_);
     Mult(gshape_, dir_, T);
 
-    const auto w =
-        ip.weight * Trans.Weight() * pi_->Eval(Trans, ip);
+    const auto w = ip.weight * Trans.Weight() * pi_->Eval(Trans, ip);
     for (int i = 0; i < dim; i++) {
       for (int p = 0; p < dof; p++) {
         const double row = w * nu_[i];
@@ -1495,8 +1493,8 @@ void SlipInterfaceGravityIntegrator::AssembleElementMatrix(
   const auto* ir = IntRule ? IntRule : &GetRule(el, Trans);
   for (auto q = 0; q < ir->GetNPoints(); q++) {
     const auto& ip = ir->IntPoint(q);
-    if (!SlipSurfaceData(el, Trans, ip, map_, shape_, dshape_, gshape_,
-                         normal_, nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
+    if (!SlipSurfaceData(el, Trans, ip, map_, shape_, dshape_, gshape_, normal_,
+                         nu_, F_, Fi_, PT_, Jt_, JtJ_)) {
       continue;
     }
     dir_.SetSize(dim);
