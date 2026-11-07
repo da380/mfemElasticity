@@ -139,7 +139,7 @@
  * @section docs Documentation index
  * Paths are relative to the source tree.
  *
- * Reference (how the library works and why):
+ * How the library works and why:
  * - `doc/quasi_static_models.tex` (PDF beside it): every problem class —
  *   model, assumptions, discretisation, solvers, verification.
  * - `doc/gravitating_elasticity.md`: the linearised theory of
@@ -162,10 +162,6 @@
  *   GIA codes and benchmarks, set against the library's treatments.
  * - `INSTALL.md`, `examples/README.md`, `meshes/README.md`,
  *   `benchmarks/README.md`.
- *
- * Planning (open issues and future work, not a description of the code):
- * `doc/planning/`, indexed by its `README.md` — `open_issues.md`,
- * `solvers.md`, `future_work.md`, `equilibrium_figures.md`.
  *
  * @section install Installation
  * MFEM must be built first, serial or parallel. Configuration is with CMake;

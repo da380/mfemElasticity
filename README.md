@@ -62,9 +62,7 @@ load and tidal Love numbers read off one solve per degree.
 ## Documentation
 
 The API is documented in the headers (Doxygen; build with `BUILD_DOCS`). The
-documents in the source tree are of two kinds.
-
-**Reference** — how the library works and why:
+documents in the source tree say how the library works and why:
 
 | Document | Subject |
 |---|---|
@@ -86,10 +84,6 @@ documents in the source tree are of two kinds.
 | `examples/README.md` | how to run the examples, and what each one does |
 | `meshes/README.md` | mesh generation, the files written and the attribute conventions |
 | `benchmarks/README.md` | the benchmark families: comparisons with independent reference solutions |
-
-**Planning** — open issues and future work, not a description of the code:
-`doc/planning/`, indexed by its `README.md` (`open_issues.md`, `solvers.md`,
-`future_work.md`, `equilibrium_figures.md`).
 
 ## Installation
 
